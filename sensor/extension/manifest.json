@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Starlee Capture",
+  "version": "0.1.0",
+  "description": "Save rendered articles and YouTube transcripts to your local Starlee brain.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Save to Starlee" },
+  "options_page": "options.html",
+  "content_scripts": [{
+    "matches": ["http://*/*", "https://*/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }]
+}

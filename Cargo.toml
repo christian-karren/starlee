@@ -1,0 +1,27 @@
+[package]
+name = "starlee"
+version = "0.1.0"
+edition = "2024"
+description = "A local-first, agent-native digital brain"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+bytemuck = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+fastembed = { version = "5.17", default-features = false, features = ["hf-hub-native-tls", "ort-download-binaries-native-tls"] }
+getrandom = "0.4"
+rusqlite = { version = "0.37", features = ["bundled"] }
+scraper = "0.27"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+sqlite-vec = "=0.1.7-alpha.2"
+tiny_http = "0.12"
+ureq = { version = "3.3", features = ["json"] }
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"

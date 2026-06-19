@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Starlee Capture Settings</title>
+<style>
+  body { max-width: 560px; margin: 48px auto; padding: 0 20px; font: 15px/1.5 system-ui; color: #17152b; }
+  label { display: block; margin: 18px 0 6px; font-weight: 650; }
+  input { box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #bbb; border-radius: 8px; }
+  button { margin-top: 20px; padding: 10px 18px; border: 0; border-radius: 999px; background: #17152b; color: white; font-weight: 650; }
+  #status { margin-left: 12px; color: #287a4b; }
+</style>
+<h1>Starlee Capture</h1>
+<p>Your token stays in Chrome’s local extension storage and is sent only to your loopback Starlee engine.</p>
+<form>
+  <label for="token">Capture token</label>
+  <input id="token" type="password" autocomplete="off" required>
+  <label for="port">Local port</label>
+  <input id="port" type="number" min="1024" max="65535" required>
+  <button type="submit">Save settings</button><span id="status" role="status"></span>
+</form>
+<script type="module" src="options.js"></script>
+</html>

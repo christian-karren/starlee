@@ -1,0 +1,2 @@
+var a=document.querySelector("form"),e=document.querySelector("#token"),t=document.querySelector("#port"),c=document.querySelector("#status"),o=await chrome.storage.local.get(["captureToken","capturePort"]);e.value=o.captureToken||"";t.value=o.capturePort||47291;a.addEventListener("submit",async r=>{r.preventDefault(),await chrome.storage.local.set({captureToken:e.value.trim(),capturePort:Number(t.value)}),c.textContent="Saved locally."});
+//# sourceMappingURL=options.js.map

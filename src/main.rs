@@ -1,0 +1,347 @@
+mod bundle;
+mod capture;
+mod config;
+mod embedding;
+mod engine;
+mod http;
+mod index;
+mod mcp;
+mod model;
+mod public_fetch;
+mod sensor_assets;
+mod vault;
+mod youtube;
+
+use std::{path::PathBuf, sync::Arc};
+
+use anyhow::Result;
+use clap::{Parser, Subcommand, ValueEnum};
+use engine::Engine;
+use model::{Access, CaptureInput, SearchScope, SourceType};
+
+#[derive(Parser)]
+#[command(name = "starlee", version, about)]
+struct Cli {
+    #[arg(long, env = "STARLEE_HOME")]
+    home: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Setup,
+    CaptureText {
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        text: String,
+        #[arg(long)]
+        url: Option<String>,
+        #[arg(long)]
+        author: Option<String>,
+        #[arg(long)]
+        site: Option<String>,
+        #[arg(long, value_enum, default_value = "note")]
+        r#type: TypeArg,
+        #[arg(long, value_enum, default_value = "restricted")]
+        access: AccessArg,
+        #[arg(long)]
+        tag: Vec<String>,
+    },
+    CaptureUrl {
+        url: String,
+    },
+    Search {
+        query: String,
+        #[arg(short, long, default_value_t = 5)]
+        limit: usize,
+        #[arg(long, value_enum, default_value = "both")]
+        scope: ScopeArg,
+    },
+    Recent {
+        #[arg(short, long, default_value_t = 10)]
+        limit: usize,
+    },
+    Get {
+        id: String,
+    },
+    Status,
+    Reindex,
+    Bookmarklet,
+    ConfigureYoutube {
+        #[arg(long)]
+        api_key: String,
+    },
+    Export {
+        path: PathBuf,
+        #[arg(long)]
+        include_public_bodies: bool,
+    },
+    Ingest {
+        path: PathBuf,
+    },
+    Serve,
+    Mcp,
+}
+
+#[derive(Clone, ValueEnum)]
+enum TypeArg {
+    Article,
+    Youtube,
+    Note,
+}
+#[derive(Clone, ValueEnum)]
+enum AccessArg {
+    Public,
+    Restricted,
+}
+#[derive(Clone, ValueEnum)]
+enum ScopeArg {
+    Own,
+    Borrowed,
+    Both,
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let engine = Arc::new(Engine::new(cli.home.unwrap_or_else(default_home)));
+    let value = match cli.command {
+        Command::Setup => serde_json::to_value(engine.onboarding()?)?,
+        Command::CaptureText {
+            title,
+            text,
+            url,
+            author,
+            site,
+            r#type,
+            access,
+            tag,
+        } => {
+            let source_type = match r#type {
+                TypeArg::Article => SourceType::Article,
+                TypeArg::Youtube => SourceType::Youtube,
+                TypeArg::Note => SourceType::Note,
+            };
+            let access = match access {
+                AccessArg::Public => Access::Public,
+                AccessArg::Restricted => Access::Restricted,
+            };
+            serde_json::to_value(engine.capture(CaptureInput {
+                title,
+                text,
+                source_type,
+                access,
+                author,
+                site,
+                url,
+                published_at: None,
+                duration: None,
+                video_id: None,
+                summary: None,
+                tags: tag,
+            })?)?
+        }
+        Command::CaptureUrl { url } => serde_json::to_value(engine.capture_public_url(&url)?)?,
+        Command::Search {
+            query,
+            limit,
+            scope,
+        } => {
+            let scope = match scope {
+                ScopeArg::Own => SearchScope::Own,
+                ScopeArg::Borrowed => SearchScope::Borrowed,
+                ScopeArg::Both => SearchScope::Both,
+            };
+            serde_json::to_value(engine.search_scoped(&query, limit, scope)?)?
+        }
+        Command::Recent { limit } => serde_json::to_value(engine.recent(limit)?)?,
+        Command::Get { id } => serde_json::to_value(engine.get_any(&id)?)?,
+        Command::Status => serde_json::to_value(engine.status()?)?,
+        Command::Reindex => serde_json::to_value(engine.reindex()?)?,
+        Command::Bookmarklet => serde_json::to_value(config::bookmarklet(&engine.local_config()?))?,
+        Command::ConfigureYoutube { api_key } => {
+            engine.configure_youtube_api_key(api_key)?;
+            serde_json::json!({"configured":true})
+        }
+        Command::Export {
+            path,
+            include_public_bodies,
+        } => serde_json::to_value(engine.export_bundle(&path, include_public_bodies)?)?,
+        Command::Ingest { path } => serde_json::to_value(engine.ingest_bundle(&path)?)?,
+        Command::Serve => {
+            engine.setup()?;
+            let server = http::spawn(engine.clone(), engine.local_config()?)?;
+            eprintln!(
+                "Starlee capture endpoint listening on http://{}",
+                server.address
+            );
+            return server.wait();
+        }
+        Command::Mcp => {
+            engine.setup()?;
+            let _capture_server = http::spawn(engine.clone(), engine.local_config()?)?;
+            return mcp::serve(engine.as_ref());
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn default_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Starlee")
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::embedding::{EMBEDDING_DIMENSION, Embedder};
+    use std::sync::Arc;
+
+    struct TestEmbedder;
+
+    impl Embedder for TestEmbedder {
+        fn embed_documents(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|text| test_vector(text)).collect())
+        }
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+            Ok(test_vector(text))
+        }
+        fn name(&self) -> &'static str {
+            "deterministic-test-embedder"
+        }
+    }
+
+    fn test_vector(text: &str) -> Vec<f32> {
+        let mut vector = vec![0.0; EMBEDDING_DIMENSION];
+        let lower = text.to_lowercase();
+        if lower.contains("search") || lower.contains("recall") || lower.contains("forgotten") {
+            vector[0] = 1.0;
+        }
+        if lower.contains("cooking") {
+            vector[1] = 1.0;
+        }
+        vector
+    }
+
+    #[test]
+    fn capture_search_and_reindex_round_trip() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let captured = engine.capture(CaptureInput {
+            title: "Knowledge compounds".into(),
+            text: "A durable digital brain makes forgotten ideas searchable again.".into(),
+            source_type: SourceType::Note,
+            access: Access::Restricted,
+            author: None,
+            site: None,
+            url: None,
+            published_at: None,
+            duration: None,
+            video_id: None,
+            summary: None,
+            tags: vec!["memory".into()],
+        })?;
+        assert!(PathBuf::from(&captured.file_path).exists());
+        assert_eq!(
+            engine
+                .search_scoped("forgotten searchable", 5, SearchScope::Own)?
+                .len(),
+            1
+        );
+        assert_eq!(
+            engine.search_scoped("recall", 5, SearchScope::Own)?[0].title,
+            "Knowledge compounds"
+        );
+        let before = engine.status()?;
+        let after = engine.reindex()?;
+        assert_eq!(before.capture_count, after.capture_count);
+        assert_eq!(
+            engine.get(&captured.metadata.id)?.unwrap().body,
+            captured.body
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn share_bundle_strips_restricted_bodies_and_searches_read_only() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let owner = Engine::with_embedder(temp.path().join("owner"), Arc::new(TestEmbedder));
+        owner.capture(CaptureInput {
+            title: "Private memory".into(),
+            text: "A restricted searchable insight about memory systems.".into(),
+            source_type: SourceType::Article,
+            access: Access::Restricted,
+            author: None,
+            site: Some("paid.example".into()),
+            url: Some("https://paid.example/story".into()),
+            published_at: None,
+            duration: None,
+            video_id: None,
+            summary: Some("An insight about memory systems.".into()),
+            tags: Vec::new(),
+        })?;
+        let bundle_path = temp.path().join("shared.starlee");
+        let audit = owner.export_bundle(&bundle_path, true)?;
+        assert!(audit.valid);
+        assert_eq!(audit.restricted_body_count, 0);
+
+        let borrower = Engine::with_embedder(temp.path().join("borrower"), Arc::new(TestEmbedder));
+        borrower.ingest_bundle(&bundle_path)?;
+        let hits = borrower.search_scoped("recall", 5, SearchScope::Borrowed)?;
+        assert_eq!(hits[0].title, "Private memory");
+        assert!(hits[0].source.starts_with("borrowed:"));
+        match borrower.get_any(&hits[0].id)?.unwrap() {
+            crate::model::GetResult::Borrowed { record } => {
+                assert_eq!(record.summary, "An insight about memory systems.");
+            }
+            crate::model::GetResult::Own { .. } => panic!("borrowed record reported as own"),
+        }
+
+        let connection = rusqlite::Connection::open(&bundle_path)?;
+        connection.execute(
+            "UPDATE chunks SET text='forbidden leak' WHERE access='restricted'",
+            [],
+        )?;
+        drop(connection);
+        assert!(crate::bundle::validate(&bundle_path).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn recapturing_a_url_updates_the_existing_markdown_record() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let input = |text: &str| CaptureInput {
+            title: "Same story".into(),
+            text: text.into(),
+            source_type: SourceType::Article,
+            access: Access::Public,
+            author: None,
+            site: Some("example.com".into()),
+            url: Some("https://example.com/same-story".into()),
+            published_at: None,
+            duration: None,
+            video_id: None,
+            summary: None,
+            tags: Vec::new(),
+        };
+        let first = engine.capture(input("The first version of the article."))?;
+        let second = engine.capture(input(
+            "The updated version contains better searchable recall.",
+        ))?;
+        assert_eq!(first.metadata.id, second.metadata.id);
+        assert_eq!(engine.status()?.capture_count, 1);
+        assert!(
+            engine
+                .get(&first.metadata.id)?
+                .unwrap()
+                .body
+                .contains("updated version")
+        );
+        Ok(())
+    }
+}

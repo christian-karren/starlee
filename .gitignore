@@ -1,0 +1,9 @@
+/target
+/.starlee
+*.db
+*.db-shm
+*.db-wal
+/sensor/node_modules
+/sensor/dist/**/*.map
+/release
+.DS_Store

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>A durable browser memory</title>
+  <meta name="author" content="Starlee Test">
+  <meta property="og:site_name" content="Starlee Fixture">
+  <link rel="canonical" href="http://127.0.0.1:4173/test/fixture.html">
+  <script type="application/ld+json">{"@type":"Article","isAccessibleForFree":true}</script>
+  <script>
+    window.starleeMessages = [];
+    window.chrome = {
+      runtime: {
+        onMessage: { addListener() {} },
+        async sendMessage(message) {
+          window.starleeMessages.push(message);
+          document.querySelector("#captured-payload").textContent = JSON.stringify(message);
+          return { ok: true };
+        }
+      }
+    };
+  </script>
+</head>
+<body>
+  <article>
+    <h1>A durable browser memory</h1>
+    <p>People consume useful ideas every day, but those ideas disappear when they are not captured in a durable and searchable form. Starlee keeps a local Markdown record so knowledge can compound over time.</p>
+    <p>This fixture is deliberately long enough for reader-mode detection. It verifies that the built browser sensor finds an article, offers a one-click save affordance, and emits a normalized public payload.</p>
+    <p>A useful capture system should require almost no ceremony. The browser already knows what the reader can lawfully see, while the local engine already knows how to preserve, index, retrieve, and cite that material later.</p>
+    <p>Keeping those responsibilities separate makes the privacy boundary legible. The sensor observes the rendered page and the engine owns durable storage. No hosted corpus or remote inference provider sits between them.</p>
+    <p>Once captured, the original source remains traceable through its canonical URL and metadata. Search can retrieve the relevant passage while the agent composes a useful answer with evidence rather than vague recollection.</p>
+  </article>
+  <pre id="captured-payload" hidden></pre>
+  <script type="module" src="../dist/extension/content.js"></script>
+</body>
+</html>

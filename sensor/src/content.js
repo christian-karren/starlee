@@ -1,0 +1,37 @@
+import { capturePayload, detectedType } from "./payload.js";
+
+const type = detectedType(document);
+if (type && !document.getElementById("starlee-save-button")) mountButton(type);
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "STARLEE_CAPTURE_NOW") return;
+  capture(message, sendResponse);
+  return true;
+});
+
+function mountButton(type) {
+  const button = document.createElement("button");
+  button.id = "starlee-save-button";
+  button.textContent = type === "youtube" ? "Save video to Starlee" : "Save article to Starlee";
+  Object.assign(button.style, {
+    position: "fixed", zIndex: "2147483647", right: "18px", bottom: "18px",
+    border: "0", borderRadius: "999px", padding: "11px 16px", cursor: "pointer",
+    background: "#17152b", color: "#fff", font: "600 13px system-ui", boxShadow: "0 6px 24px #0004"
+  });
+  button.addEventListener("click", () => capture({}, (result) => {
+    button.textContent = result.ok ? "Saved to Starlee ✓" : `Starlee: ${result.error}`;
+    setTimeout(() => { button.textContent = "Save to Starlee"; }, 3500);
+  }));
+  document.documentElement.append(button);
+}
+
+async function capture(_message, sendResponse) {
+  try {
+    const payload = capturePayload(document);
+    const response = await chrome.runtime.sendMessage({ type: "STARLEE_CAPTURE", payload });
+    sendResponse(response);
+  } catch (error) {
+    sendResponse({ ok: false, error: error.message });
+  }
+}
+
