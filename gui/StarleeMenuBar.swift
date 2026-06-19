@@ -9,8 +9,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Starlee")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "★ Starlee"
+        NSApplication.shared.setActivationPolicy(.accessory)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let image = NSImage(systemSymbolName: "sparkle.magnifyingglass", accessibilityDescription: "Starlee") {
+            image.isTemplate = true
+            statusItem.button?.image = image
+        } else {
+            statusItem.button?.title = "★"
+        }
+        statusItem.button?.toolTip = "Starlee"
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         rebuildMenu()
     }
