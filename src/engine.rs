@@ -1,13 +1,18 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
+use chrono::Utc;
+use sha2::{Digest, Sha256};
 
 use crate::{
     bundle::{self, BundleAudit},
-    config::{ConfigStore, LocalConfig},
+    config::{CaptureRequestState, ConfigStore, ExtensionState, LocalConfig},
     embedding::{Embedder, FastEmbedder},
     index::Index,
-    model::{CaptureInput, GetResult, Record, SearchHit, SearchScope, SetupReport, Status},
+    model::{
+        CaptureInput, DoctorCheck, DoctorReport, GetResult, Record, SearchHit, SearchScope,
+        SetupReport, Status,
+    },
     public_fetch, sensor_assets,
     vault::Vault,
     youtube::enrich_youtube,
@@ -170,6 +175,117 @@ impl Engine {
         ConfigStore::new(&self.home).load_or_create()
     }
 
+    pub fn doctor(&self) -> Result<DoctorReport> {
+        let status = self.status()?;
+        let config = self.local_config()?;
+        let extension_path = self.home.join("sensor-extension");
+        let launch_agent_path = home_dir().join("Library/LaunchAgents/com.starlee.capture.plist");
+        let mut checks = vec![
+            DoctorCheck {
+                name: "vault".into(),
+                ok: self.home.join("vault").is_dir(),
+                detail: self.home.join("vault").display().to_string(),
+            },
+            DoctorCheck {
+                name: "index".into(),
+                ok: self.home.join("index.db").exists(),
+                detail: self.home.join("index.db").display().to_string(),
+            },
+            DoctorCheck {
+                name: "extension_assets".into(),
+                ok: extension_path.join("manifest.json").exists(),
+                detail: extension_path.display().to_string(),
+            },
+            DoctorCheck {
+                name: "token".into(),
+                ok: config.capture_token.len() == 64,
+                detail: format!("sha256:{}", token_fingerprint(&config.capture_token)),
+            },
+            DoctorCheck {
+                name: "launch_agent".into(),
+                ok: launch_agent_path.exists(),
+                detail: launch_agent_path.display().to_string(),
+            },
+        ];
+        let extension_seen = config.extension.last_handshake_at.is_some();
+        checks.push(DoctorCheck {
+            name: "extension_handshake".into(),
+            ok: extension_seen,
+            detail: config
+                .extension
+                .last_handshake_at
+                .clone()
+                .unwrap_or_else(|| "no extension handshake recorded".into()),
+        });
+
+        let next_actions = checks
+            .iter()
+            .filter(|check| !check.ok)
+            .map(|check| match check.name.as_str() {
+                "extension_assets" => "Run `starlee setup` to generate browser extension assets.",
+                "launch_agent" => "Run `scripts/install-service.sh` from the Starlee repository.",
+                "extension_handshake" => {
+                    "Load or reload ~/Starlee/sensor-extension in your browser."
+                }
+                _ => "Run `starlee setup` and then `starlee doctor` again.",
+            })
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        Ok(DoctorReport {
+            ok: checks.iter().all(|check| check.ok),
+            status,
+            checks,
+            next_actions,
+        })
+    }
+
+    pub fn record_extension_hello(
+        &self,
+        browser: Option<String>,
+        extension_version: Option<String>,
+        can_capture_active_tab: bool,
+    ) -> Result<ExtensionState> {
+        let store = ConfigStore::new(&self.home);
+        let mut config = store.load_or_create()?;
+        config.extension = ExtensionState {
+            browser,
+            extension_version,
+            can_capture_active_tab,
+            last_handshake_at: Some(Utc::now().to_rfc3339()),
+        };
+        store.save(&config)?;
+        Ok(config.extension)
+    }
+
+    pub fn create_capture_request(&self, source: impl Into<String>) -> Result<CaptureRequestState> {
+        let store = ConfigStore::new(&self.home);
+        let mut config = store.load_or_create()?;
+        let source = source.into();
+        let id_material = format!(
+            "{}:{}:{}",
+            config.capture_token,
+            Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+            source
+        );
+        let id = token_fingerprint(&id_material);
+        let request = CaptureRequestState {
+            id,
+            requested_at: Utc::now().to_rfc3339(),
+            source,
+        };
+        config.pending_capture_request = Some(request.clone());
+        store.save(&config)?;
+        Ok(request)
+    }
+
+    pub fn take_capture_request(&self) -> Result<Option<CaptureRequestState>> {
+        let store = ConfigStore::new(&self.home);
+        let mut config = store.load_or_create()?;
+        let request = config.pending_capture_request.take();
+        store.save(&config)?;
+        Ok(request)
+    }
+
     pub fn configure_youtube_api_key(&self, api_key: String) -> Result<()> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
@@ -197,4 +313,19 @@ impl Engine {
         }
         Ok(audit)
     }
+}
+
+fn token_fingerprint(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    hasher.finalize()[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }

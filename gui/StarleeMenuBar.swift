@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UserNotifications
 
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -10,18 +11,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "★ Starlee"
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         rebuildMenu()
     }
 
     private func rebuildMenu() {
         let menu = NSMenu()
-        let status = runJSON(["status"])
+        let doctor = runJSON(["doctor"])
+        let status = doctor?["status"] as? [String: Any]
         let count = (status?["capture_count"] as? NSNumber)?.intValue ?? 0
-        let summary = NSMenuItem(title: "\(count) captures · local", action: nil, keyEquivalent: "")
+        let ok = (doctor?["ok"] as? Bool) ?? false
+        let summary = NSMenuItem(title: "\(ok ? "●" : "●") \(count) captures · \(ok ? "ready" : "needs setup")", action: nil, keyEquivalent: "")
+        summary.attributedTitle = coloredTitle(summary.title, ok ? .systemGreen : .systemOrange)
         summary.isEnabled = false
         menu.addItem(summary)
         menu.addItem(.separator())
 
+        menu.addItem(item("Save Current Article", #selector(saveCurrentArticle), key: "s"))
+        menu.addItem(.separator())
         menu.addItem(item("Search Starlee…", #selector(search)))
         menu.addItem(item("Capture pasted text…", #selector(captureText)))
 
@@ -41,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(recentItem)
 
         menu.addItem(.separator())
+        menu.addItem(item("Browser Setup…", #selector(browserSetup)))
+        menu.addItem(item("Run Setup Diagnostics…", #selector(showDoctor)))
         menu.addItem(item("Open Vault", #selector(openVault)))
         menu.addItem(item("Start Capture Endpoint", #selector(startEngine)))
         menu.addItem(item("Stop Capture Endpoint", #selector(stopEngine)))
@@ -50,10 +59,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    private func item(_ title: String, _ action: Selector) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+    private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.target = self
         return item
+    }
+
+    @objc private func saveCurrentArticle() {
+        startEngine()
+        guard let config = localConfig(), let token = config["capture_token"] as? String else {
+            show(title: "Starlee setup needed", message: "Run Starlee setup, then reload the browser extension.")
+            return
+        }
+        let port = (config["capture_port"] as? NSNumber)?.intValue ?? 47291
+        let result = postJSON(
+            url: URL(string: "http://127.0.0.1:\(port)/capture-request")!,
+            token: token,
+            body: ["source": "menu-bar"]
+        )
+        if result.ok {
+            notify(title: "Starlee capture requested", body: "The browser extension will save the active article.")
+        } else {
+            notify(title: "Starlee capture needs attention", body: result.message)
+            show(title: "Starlee capture needs attention", message: result.message)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.rebuildMenu() }
     }
 
     @objc private func search() {
@@ -79,8 +109,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(home.appendingPathComponent("vault"))
     }
 
+    @objc private func browserSetup() {
+        let extensionURL = home.appendingPathComponent("sensor-extension")
+        NSWorkspace.shared.activateFileViewerSelecting([extensionURL])
+        if let chromeURL = URL(string: "chrome://extensions") {
+            NSWorkspace.shared.open(chromeURL)
+        }
+        show(
+            title: "Browser setup",
+            message: "Load or reload the selected folder in your Chromium browser:\n\n\(extensionURL.path)\n\nSafari support will use a bundled Safari Web Extension in the next slice."
+        )
+    }
+
+    @objc private func showDoctor() {
+        show(title: "Starlee Diagnostics", message: run(["doctor"]))
+    }
+
     @objc private func startEngine() {
         guard engineProcess?.isRunning != true else { return }
+        if healthCheck() { return }
         let process = Process()
         process.executableURL = cliURL()
         process.arguments = ["--home", home.path, "serve"]
@@ -116,6 +163,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
+    private func notify(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
     private func run(_ arguments: [String]) -> String {
         let process = Process()
         let pipe = Pipe()
@@ -135,6 +190,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func runJSONArray(_ arguments: [String]) -> [[String: Any]]? {
         guard let data = run(arguments).data(using: .utf8) else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+    }
+
+    private func localConfig() -> [String: Any]? {
+        let url = home.appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private func healthCheck() -> Bool {
+        guard
+            let config = localConfig(),
+            let port = (config["capture_port"] as? NSNumber)?.intValue,
+            let url = URL(string: "http://127.0.0.1:\(port)/health")
+        else { return false }
+        return (try? String(contentsOf: url).contains("ready")) == true
+    }
+
+    private func postJSON(url: URL, token: String, body: [String: Any]) -> (ok: Bool, message: String) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: (Bool, String) = (false, "No response from Starlee.")
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            if let error {
+                result = (false, error.localizedDescription)
+                return
+            }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if (200..<300).contains(status) {
+                result = (true, "Capture request sent.")
+            } else {
+                let text = data.flatMap { String(data: $0, encoding: .utf8) } ?? "HTTP \(status)"
+                result = (false, text)
+            }
+        }.resume()
+        _ = semaphore.wait(timeout: .now() + 3)
+        return result
+    }
+
+    private func coloredTitle(_ title: String, _ color: NSColor) -> NSAttributedString {
+        NSAttributedString(string: title, attributes: [.foregroundColor: color])
     }
 
     private func cliURL() -> URL {

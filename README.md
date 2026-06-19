@@ -15,7 +15,8 @@ Starlee includes:
 - extract rendered articles with Mozilla Readability and rendered YouTube transcripts;
 - export audited, restricted-body-free share bundles and mount them read-only;
 - install as a Codex Plugin with bundled Starlee MCP tools and workflow guidance;
-- provide an optional macOS menu-bar app over the same engine.
+- provide a macOS menu-bar app that can request one-click capture from the
+  browser extension.
 
 ## Install
 
@@ -31,13 +32,25 @@ The installer:
 - initializes `~/Starlee`;
 - installs Starlee as a local Codex Plugin from the personal marketplace;
 - starts the loopback capture service with a macOS LaunchAgent;
+- installs `Starlee.app` to `~/Applications/Starlee.app`;
 - generates an unpacked Chromium extension in `~/Starlee/sensor-extension`.
 
 Load `~/Starlee/sensor-extension` once in `chrome://extensions` with Developer
 Mode enabled. The generated extension folder includes the local-only capture
-configuration, so the “Save article to Starlee” page button works without
-pasting the capture token by hand. If you regenerate setup, reload the unpacked
-extension in Chrome.
+configuration, so the “Save article to Starlee” page button and the Starlee
+menu-bar “Save Current Article” action work without pasting the capture token
+by hand. If you regenerate setup, reload the unpacked extension in Chrome.
+
+Open the menu-bar app:
+
+```sh
+open ~/Applications/Starlee.app
+```
+
+The menu-bar app includes Save Current Article, Recent Captures, Browser Setup,
+diagnostics, vault access, and capture-service controls. The Save Current
+Article action writes a local capture request; the browser extension polls the
+loopback service and extracts the active tab when browser permissions allow it.
 
 You can still run setup manually:
 
@@ -66,6 +79,7 @@ starlee capture-text \
   --access public
 starlee search "durable knowledge"
 starlee status
+starlee doctor
 ```
 
 Run `starlee mcp` to start the stdio transport. The MCP tools cover setup,
@@ -75,6 +89,8 @@ The MCP process also serves browser capture on `http://127.0.0.1:47291` by
 default. Run `starlee serve` when only the capture endpoint is needed.
 Run `starlee bookmarklet` (or call the MCP `bookmarklet` tool) to generate
 a personalized zero-install capture link containing the local token.
+Run `starlee doctor` for redacted setup diagnostics; it reports token
+fingerprints instead of token values.
 
 `setup` creates a random 256-bit capture token in `<home>/config.json`; on Unix,
 that file is mode `0600`. Browser sensors must send it as `Authorization: Bearer

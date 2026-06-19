@@ -134,6 +134,21 @@ pub struct Status {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorReport {
+    pub ok: bool,
+    pub status: Status,
+    pub checks: Vec<DoctorCheck>,
+    pub next_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorCheck {
+    pub name: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupReport {
     pub status: Status,
     pub bookmarklet: String,

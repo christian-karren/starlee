@@ -30,6 +30,10 @@ query -> local BGE embedding -> reciprocal-rank fusion -> cited result
   write vault files directly.
 - The MCP process co-hosts a bearer-authenticated capture endpoint bound to
   `127.0.0.1`; the token lives only in the local mode-`0600` config file.
+- The macOS menu-bar app does not read browser DOM directly. It creates a
+  local pending capture request; the browser extension polls the loopback
+  service, extracts the active tab, and posts the rendered payload back to
+  `/capture`.
 - Share bundles are standalone SQLite files containing metadata, summaries, and
   vectors. Restricted chunk text is always `NULL`, enforced by a pre-write audit.
 - Borrowed bundles are opened read-only and searched without copying them into

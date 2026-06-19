@@ -67,6 +67,7 @@ enum Command {
         id: String,
     },
     Status,
+    Doctor,
     Reindex,
     Bookmarklet,
     ConfigureYoutube {
@@ -158,6 +159,7 @@ fn main() -> Result<()> {
         Command::Recent { limit } => serde_json::to_value(engine.recent(limit)?)?,
         Command::Get { id } => serde_json::to_value(engine.get_any(&id)?)?,
         Command::Status => serde_json::to_value(engine.status()?)?,
+        Command::Doctor => serde_json::to_value(engine.doctor()?)?,
         Command::Reindex => serde_json::to_value(engine.reindex()?)?,
         Command::Bookmarklet => serde_json::to_value(config::bookmarklet(&engine.local_config()?))?,
         Command::ConfigureYoutube { api_key } => {

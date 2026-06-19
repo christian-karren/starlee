@@ -64,3 +64,48 @@ available, the item is still captured with `[Transcript unavailable]`.
 
 `GET /health` is intentionally unauthenticated and returns no user data or
 secrets. `OPTIONS` supports browser CORS preflight.
+
+## Extension handshake
+
+Browser extensions should announce themselves after startup or reload:
+
+```http
+POST http://127.0.0.1:47291/extension/hello
+Authorization: Bearer <local token>
+Content-Type: application/json
+```
+
+```json
+{
+  "browser": "Chromium",
+  "extension_version": "0.1.0",
+  "can_capture_active_tab": true
+}
+```
+
+The response records local setup state only. It never returns the token.
+
+## Menu-bar capture bridge
+
+The macOS menu-bar app requests browser capture by creating a local pending
+request:
+
+```http
+POST http://127.0.0.1:47291/capture-request
+Authorization: Bearer <local token>
+Content-Type: application/json
+```
+
+```json
+{ "source": "menu-bar" }
+```
+
+The browser extension polls:
+
+```http
+GET http://127.0.0.1:47291/capture-request
+Authorization: Bearer <local token>
+```
+
+When a request is present, the extension captures the active tab with the same
+rendered-DOM payload used by the toolbar button and posts it to `/capture`.

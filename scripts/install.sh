@@ -20,6 +20,14 @@ if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_SERVICE:-1}" != "0" ]; t
   STARLEE_BIN="$DEST/starlee" "$ROOT/scripts/install-service.sh"
 fi
 
+if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_APP:-1}" != "0" ]; then
+  APP_PATH=$("$ROOT/scripts/build-gui.sh")
+  APP_DEST="${STARLEE_APP_DIR:-$HOME/Applications}"
+  mkdir -p "$APP_DEST"
+  rm -rf "$APP_DEST/Starlee.app"
+  cp -R "$APP_PATH" "$APP_DEST/Starlee.app"
+fi
+
 mkdir -p "$PLUGIN_HOME" "$(dirname "$MARKETPLACE_PATH")"
 ln -sfn "$ROOT" "$PLUGIN_HOME/starlee"
 
@@ -62,6 +70,9 @@ fi
 
 printf 'Installed Starlee to %s\n' "$DEST/starlee"
 printf 'Initialized local vault at %s\n' "$HOME/Starlee"
+if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_APP:-1}" != "0" ]; then
+  printf 'Installed Starlee app to %s\n' "${STARLEE_APP_DIR:-$HOME/Applications}/Starlee.app"
+fi
 printf 'Installed Codex plugin source at %s\n' "$PLUGIN_HOME/starlee"
 printf 'Registered personal plugin marketplace at %s\n' "$MARKETPLACE_PATH"
 printf 'Browser extension folder: %s\n' "$HOME/Starlee/sensor-extension"

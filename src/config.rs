@@ -14,9 +14,33 @@ pub struct LocalConfig {
     pub capture_port: u16,
     pub capture_token: String,
     #[serde(default)]
+    pub extension: ExtensionState,
+    #[serde(default)]
+    pub pending_capture_request: Option<CaptureRequestState>,
+    #[serde(default)]
     pub youtube_api_key: Option<String>,
     #[serde(default)]
     pub borrowed_bundles: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExtensionState {
+    #[serde(default)]
+    pub browser: Option<String>,
+    #[serde(default)]
+    pub extension_version: Option<String>,
+    #[serde(default)]
+    pub can_capture_active_tab: bool,
+    #[serde(default)]
+    pub last_handshake_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureRequestState {
+    pub id: String,
+    pub requested_at: String,
+    #[serde(default)]
+    pub source: String,
 }
 
 pub struct ConfigStore {
@@ -51,6 +75,8 @@ impl ConfigStore {
             version: 1,
             capture_port: DEFAULT_CAPTURE_PORT,
             capture_token: generate_token()?,
+            extension: ExtensionState::default(),
+            pending_capture_request: None,
             youtube_api_key: None,
             borrowed_bundles: Vec::new(),
         };
@@ -65,7 +91,12 @@ impl ConfigStore {
     pub fn load(&self) -> Result<LocalConfig> {
         let bytes = fs::read(&self.path)
             .with_context(|| format!("read local config {}", self.path.display()))?;
-        serde_json::from_slice(&bytes).context("parse local Starlee config")
+        let mut config: LocalConfig =
+            serde_json::from_slice(&bytes).context("parse local Starlee config")?;
+        if config.version == 0 {
+            config.version = 1;
+        }
+        Ok(config)
     }
 
     pub fn save(&self, config: &LocalConfig) -> Result<()> {
@@ -120,6 +151,8 @@ mod tests {
             version: 1,
             capture_port: 49999,
             capture_token: "abc123".into(),
+            extension: ExtensionState::default(),
+            pending_capture_request: None,
             youtube_api_key: None,
             borrowed_bundles: Vec::new(),
         };

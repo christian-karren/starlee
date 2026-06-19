@@ -90,6 +90,56 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                 "status":"ready", "service":"starlee-capture", "payload_version":1
             }),
         ),
+        (&Method::Post, "/extension/hello") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            let body = read_body(&mut request)?;
+            let value = serde_json::from_str::<serde_json::Value>(&body)?;
+            let state = engine.record_extension_hello(
+                value
+                    .get("browser")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                value
+                    .get("extension_version")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                value
+                    .get("can_capture_active_tab")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+            )?;
+            respond(request, StatusCode(200), serde_json::to_value(state)?)
+        }
+        (&Method::Post, "/capture-request") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            let body = read_body(&mut request)?;
+            let value =
+                serde_json::from_str::<serde_json::Value>(&body).unwrap_or_else(|_| json!({}));
+            let source = value
+                .get("source")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("menu-bar");
+            let capture_request = engine.create_capture_request(source)?;
+            respond(
+                request,
+                StatusCode(202),
+                serde_json::to_value(capture_request)?,
+            )
+        }
+        (&Method::Get, "/capture-request") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            respond(
+                request,
+                StatusCode(200),
+                json!({"request": engine.take_capture_request()?}),
+            )
+        }
         (&Method::Post, "/capture") => {
             if !authorized(&request, &config.capture_token) {
                 return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
@@ -101,18 +151,7 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                     json!({"error":"capture payload too large"}),
                 );
             }
-            let mut body = String::new();
-            request
-                .as_reader()
-                .take((MAX_CAPTURE_BYTES + 1) as u64)
-                .read_to_string(&mut body)?;
-            if body.len() > MAX_CAPTURE_BYTES {
-                return respond(
-                    request,
-                    StatusCode(413),
-                    json!({"error":"capture payload too large"}),
-                );
-            }
+            let body = read_body(&mut request)?;
             let result = serde_json::from_str::<CapturePayload>(&body)
                 .map_err(Into::into)
                 .and_then(CapturePayload::into_input)
@@ -124,6 +163,18 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
         }
         _ => respond(request, StatusCode(404), json!({"error":"not found"})),
     }
+}
+
+fn read_body(request: &mut Request) -> Result<String> {
+    let mut body = String::new();
+    request
+        .as_reader()
+        .take((MAX_CAPTURE_BYTES + 1) as u64)
+        .read_to_string(&mut body)?;
+    if body.len() > MAX_CAPTURE_BYTES {
+        anyhow::bail!("capture payload too large");
+    }
+    Ok(body)
 }
 
 fn authorized(request: &Request, token: &str) -> bool {
@@ -195,6 +246,8 @@ mod tests {
             version: 1,
             capture_port: 0,
             capture_token: "secret-token".into(),
+            extension: Default::default(),
+            pending_capture_request: None,
             youtube_api_key: None,
             borrowed_bundles: Vec::new(),
         };
@@ -221,15 +274,76 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn records_extension_handshake_and_serves_capture_request() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Arc::new(Engine::with_embedder(
+            temp.path().to_owned(),
+            Arc::new(TestEmbedder),
+        ));
+        let config = LocalConfig {
+            version: 1,
+            capture_port: 0,
+            capture_token: "secret-token".into(),
+            extension: Default::default(),
+            pending_capture_request: None,
+            youtube_api_key: None,
+            borrowed_bundles: Vec::new(),
+        };
+        let server = spawn(engine.clone(), config)?;
+        let hello = post_path(
+            &server.address,
+            "/extension/hello",
+            r#"{"browser":"Chrome","extension_version":"0.1.0","can_capture_active_tab":true}"#,
+            Some("secret-token"),
+        )?;
+        assert!(hello.starts_with("HTTP/1.1 200"));
+        assert!(engine.local_config()?.extension.last_handshake_at.is_some());
+
+        let created = post_path(
+            &server.address,
+            "/capture-request",
+            r#"{"source":"test"}"#,
+            Some("secret-token"),
+        )?;
+        assert!(created.starts_with("HTTP/1.1 202"));
+
+        let first = get_path(&server.address, "/capture-request", Some("secret-token"))?;
+        assert!(first.contains("\"request\""));
+        assert!(first.contains("\"id\""));
+        let second = get_path(&server.address, "/capture-request", Some("secret-token"))?;
+        assert!(second.contains("\"request\":null"));
+        drop(server);
+        Ok(())
+    }
+
     fn post(address: &str, body: &str, token: Option<&str>) -> Result<String> {
+        post_path(address, "/capture", body, token)
+    }
+
+    fn post_path(address: &str, path: &str, body: &str, token: Option<&str>) -> Result<String> {
         let mut stream = TcpStream::connect(address)?;
         let authorization = token
             .map(|token| format!("Authorization: Bearer {token}\r\n"))
             .unwrap_or_default();
         write!(
             stream,
-            "POST /capture HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{authorization}Connection: close\r\n\r\n{body}",
+            "POST {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{authorization}Connection: close\r\n\r\n{body}",
             body.len()
+        )?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+        Ok(response)
+    }
+
+    fn get_path(address: &str, path: &str, token: Option<&str>) -> Result<String> {
+        let mut stream = TcpStream::connect(address)?;
+        let authorization = token
+            .map(|token| format!("Authorization: Bearer {token}\r\n"))
+            .unwrap_or_default();
+        write!(
+            stream,
+            "GET {path} HTTP/1.1\r\nHost: {address}\r\n{authorization}Connection: close\r\n\r\n"
         )?;
         let mut response = String::new();
         stream.read_to_string(&mut response)?;
