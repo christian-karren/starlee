@@ -180,7 +180,15 @@ fn main() -> Result<()> {
         }
         Command::Mcp => {
             engine.setup()?;
-            let _capture_server = http::spawn(engine.clone(), engine.local_config()?)?;
+            let _capture_server = match http::spawn(engine.clone(), engine.local_config()?) {
+                Ok(server) => Some(server),
+                Err(error) => {
+                    eprintln!(
+                        "Starlee MCP continuing without owning the capture endpoint: {error:#}"
+                    );
+                    None
+                }
+            };
             return mcp::serve(engine.as_ref());
         }
     };

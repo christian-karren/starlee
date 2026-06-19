@@ -1,4 +1,5 @@
 const DEFAULT_PORT = 47291;
+let bundledConfigPromise;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "STARLEE_CAPTURE") return;
@@ -14,11 +15,14 @@ chrome.action.onClicked.addListener(async (tab) => {
 
 async function sendCapture(payload) {
   const { captureToken = "", capturePort = DEFAULT_PORT } = await chrome.storage.local.get(["captureToken", "capturePort"]);
-  if (!captureToken) return { ok: false, error: "Add your local token in extension options" };
+  const bundled = await bundledConfig();
+  const token = captureToken || bundled.captureToken || "";
+  const port = capturePort || bundled.capturePort || DEFAULT_PORT;
+  if (!token) return { ok: false, error: "Run starlee setup, then reload the unpacked extension" };
   try {
-    const response = await fetch(`http://127.0.0.1:${capturePort}/capture`, {
+    const response = await fetch(`http://127.0.0.1:${port}/capture`, {
       method: "POST",
-      headers: { "Authorization": `Bearer ${captureToken}`, "Content-Type": "application/json" },
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
     const result = await response.json();
@@ -29,3 +33,9 @@ async function sendCapture(payload) {
   }
 }
 
+async function bundledConfig() {
+  bundledConfigPromise ||= fetch(chrome.runtime.getURL("starlee-config.json"))
+    .then((response) => response.ok ? response.json() : {})
+    .catch(() => ({}));
+  return bundledConfigPromise;
+}

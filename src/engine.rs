@@ -49,7 +49,7 @@ impl Engine {
     pub fn onboarding(&self) -> Result<SetupReport> {
         let status = self.setup()?;
         let config = self.local_config()?;
-        let extension_path = sensor_assets::install(&self.home)?;
+        let extension_path = sensor_assets::install(&self.home, &config)?;
         Ok(SetupReport {
             status,
             bookmarklet: crate::config::bookmarklet(&config),

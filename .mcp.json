@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "starlee": {
+      "command": "/bin/sh",
+      "args": [
+        "./scripts/starlee-mcp.sh"
+      ],
+      "cwd": ".",
+      "tool_timeout_sec": 900
+    }
+  }
+}

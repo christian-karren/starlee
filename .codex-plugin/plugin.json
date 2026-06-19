@@ -1,0 +1,43 @@
+{
+  "name": "starlee",
+  "version": "0.1.0",
+  "description": "A local-first, shareable digital brain for Codex.",
+  "author": {
+    "name": "Christian Karren",
+    "url": "https://github.com/christian-karren"
+  },
+  "homepage": "https://github.com/christian-karren/starlee",
+  "repository": "https://github.com/christian-karren/starlee",
+  "license": "MIT",
+  "keywords": [
+    "knowledge",
+    "mcp",
+    "browser-capture",
+    "local-first",
+    "search"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Starlee",
+    "shortDescription": "Save and search your local digital brain",
+    "longDescription": "Starlee captures rendered articles, YouTube transcripts, and pasted notes into a private local Markdown vault, indexes them with local hybrid search, and exposes retrieval and sharing tools to Codex.",
+    "developerName": "Christian Karren",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/christian-karren/starlee",
+    "privacyPolicyURL": "https://github.com/christian-karren/starlee",
+    "termsOfServiceURL": "https://github.com/christian-karren/starlee",
+    "defaultPrompt": [
+      "Save this article to Starlee",
+      "Search my Starlee brain",
+      "What have I captured recently?"
+    ],
+    "brandColor": "#17152B",
+    "screenshots": []
+  }
+}

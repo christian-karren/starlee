@@ -4,12 +4,14 @@ const port = document.querySelector("#port");
 const status = document.querySelector("#status");
 
 const saved = await chrome.storage.local.get(["captureToken", "capturePort"]);
-token.value = saved.captureToken || "";
-port.value = saved.capturePort || 47291;
+const bundled = await fetch(chrome.runtime.getURL("starlee-config.json"))
+  .then((response) => response.ok ? response.json() : {})
+  .catch(() => ({}));
+token.value = saved.captureToken || bundled.captureToken || "";
+port.value = saved.capturePort || bundled.capturePort || 47291;
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   await chrome.storage.local.set({ captureToken: token.value.trim(), capturePort: Number(port.value) });
   status.textContent = "Saved locally.";
 });
-

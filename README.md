@@ -14,20 +14,40 @@ Starlee includes:
 - accept authenticated browser captures on a loopback-only HTTP endpoint.
 - extract rendered articles with Mozilla Readability and rendered YouTube transcripts;
 - export audited, restricted-body-free share bundles and mount them read-only;
+- install as a Codex Plugin with bundled Starlee MCP tools and workflow guidance;
 - provide an optional macOS menu-bar app over the same engine.
 
 ## Install
 
-Build and install the CLI locally:
+Build and install the full local experience:
 
 ```sh
 ./scripts/install.sh
+```
+
+The installer:
+
+- builds and installs the CLI to `~/.local/bin/starlee`;
+- initializes `~/Starlee`;
+- installs Starlee as a local Codex Plugin from the personal marketplace;
+- starts the loopback capture service with a macOS LaunchAgent;
+- generates an unpacked Chromium extension in `~/Starlee/sensor-extension`.
+
+Load `~/Starlee/sensor-extension` once in `chrome://extensions` with Developer
+Mode enabled. The generated extension folder includes the local-only capture
+configuration, so the “Save article to Starlee” page button works without
+pasting the capture token by hand. If you regenerate setup, reload the unpacked
+extension in Chrome.
+
+You can still run setup manually:
+
+```sh
 starlee setup
 ```
 
 `setup` initializes `~/Starlee`, downloads the quantized local embedding model,
 installs the unpacked Chromium extension into `~/Starlee/sensor-extension`, and
-returns both extension settings and a personalized bookmarklet.
+returns extension settings plus a personalized bookmarklet.
 
 For a packaged CLI and optional `Starlee.app`:
 
