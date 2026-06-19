@@ -11,12 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let image = NSImage(systemSymbolName: "sparkle.magnifyingglass", accessibilityDescription: "Starlee") {
-            image.isTemplate = true
-            statusItem.button?.image = image
-        } else {
-            statusItem.button?.title = "★"
-        }
+        statusItem.button?.title = "★"
         statusItem.button?.toolTip = "Starlee"
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         rebuildMenu()
