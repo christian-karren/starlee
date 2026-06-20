@@ -79,3 +79,5 @@ printf 'Installed Codex plugin source at %s\n' "$PLUGIN_HOME/starlee"
 printf 'Registered personal plugin marketplace at %s\n' "$MARKETPLACE_PATH"
 printf 'Browser extension folder: %s\n' "$HOME/Starlee/sensor-extension"
 printf 'Load that folder in chrome://extensions once; then use the Save to Starlee page button.\n'
+printf '\nRedacted Starlee doctor report:\n'
+"$DEST/starlee" doctor

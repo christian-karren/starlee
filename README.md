@@ -15,8 +15,8 @@ Starlee includes:
 - extract rendered articles with Mozilla Readability and rendered YouTube transcripts;
 - export audited, restricted-body-free share bundles and mount them read-only;
 - install as a Codex Plugin with bundled Starlee MCP tools and workflow guidance;
-- provide a macOS menu-bar app that can request one-click capture from the
-  browser extension.
+- provide a macOS menu-bar/floating-button app that can request capture from a
+  browser extension after the user has loaded or installed that extension.
 
 ## Install
 
@@ -33,13 +33,19 @@ The installer:
 - installs Starlee as a local Codex Plugin from the personal marketplace;
 - starts the loopback capture service with a macOS LaunchAgent;
 - installs `Starlee.app` to `~/Applications/Starlee.app`;
-- generates an unpacked Chromium extension in `~/Starlee/sensor-extension`.
+- generates unpacked Chromium extension assets in `~/Starlee/sensor-extension`;
+- prints a redacted `starlee doctor` report describing what is installed,
+  running, and still missing.
 
-Load `~/Starlee/sensor-extension` once in `chrome://extensions` with Developer
-Mode enabled. The generated extension folder includes the local-only capture
-configuration, so the “Save article to Starlee” page button and the Starlee
-menu-bar “Save Current Article” action work without pasting the capture token
-by hand. If you regenerate setup, reload the unpacked extension in Chrome.
+Important: the installer generates extension assets, but Chrome does not treat
+that as an installed extension. Load `~/Starlee/sensor-extension` once in
+`chrome://extensions` with Developer Mode enabled. After Chrome loads or reloads
+the extension, `starlee doctor` should show `extension_handshake: true`.
+
+The generated extension folder includes the local-only capture configuration,
+so the “Save article to Starlee” page button and the Starlee menu-bar “Save
+Current Article” action work without pasting the capture token by hand. If you
+regenerate setup, reload the unpacked extension in Chrome.
 
 Open the menu-bar app:
 
@@ -47,10 +53,11 @@ Open the menu-bar app:
 open ~/Applications/Starlee.app
 ```
 
-The menu-bar app includes Save Current Article, Recent Captures, Browser Setup,
-diagnostics, vault access, and capture-service controls. The Save Current
-Article action writes a local capture request; the browser extension polls the
-loopback service and extracts the active tab when browser permissions allow it.
+The app includes a menu-bar item plus a floating `★` button, Save Current
+Article, Recent Captures, Browser Setup, diagnostics, vault access, and
+capture-service controls. The Save Current Article action writes a local capture
+request; the browser extension polls the loopback service and extracts the
+active tab when browser permissions allow it.
 
 You can still run setup manually:
 
@@ -59,8 +66,8 @@ starlee setup
 ```
 
 `setup` initializes `~/Starlee`, downloads the quantized local embedding model,
-installs the unpacked Chromium extension into `~/Starlee/sensor-extension`, and
-returns extension settings plus a personalized bookmarklet.
+generates unpacked Chromium extension assets in `~/Starlee/sensor-extension`,
+and returns extension settings plus a personalized bookmarklet.
 
 For a packaged CLI and optional `Starlee.app`:
 

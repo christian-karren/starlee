@@ -34,6 +34,9 @@ query -> local BGE embedding -> reciprocal-rank fusion -> cited result
   local pending capture request; the browser extension polls the loopback
   service, extracts the active tab, and posts the rendered payload back to
   `/capture`.
+- Generated extension assets are not the same as an installed browser
+  extension. `starlee doctor` treats extension assets and extension handshake as
+  separate checks.
 - Share bundles are standalone SQLite files containing metadata, summaries, and
   vectors. Restricted chunk text is always `NULL`, enforced by a pre-write audit.
 - Borrowed bundles are opened read-only and searched without copying them into

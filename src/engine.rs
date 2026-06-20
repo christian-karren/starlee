@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{net::TcpStream, path::PathBuf, process::Command, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use chrono::Utc;
@@ -179,7 +179,11 @@ impl Engine {
         let status = self.status()?;
         let config = self.local_config()?;
         let extension_path = self.home.join("sensor-extension");
-        let launch_agent_path = home_dir().join("Library/LaunchAgents/com.starlee.capture.plist");
+        let user_home = home_dir();
+        let launch_agent_path = user_home.join("Library/LaunchAgents/com.starlee.capture.plist");
+        let app_path = user_home.join("Applications/Starlee.app");
+        let plugin_path = user_home.join("plugins/starlee");
+        let marketplace_path = user_home.join(".agents/plugins/marketplace.json");
         let mut checks = vec![
             DoctorCheck {
                 name: "vault".into(),
@@ -206,6 +210,30 @@ impl Engine {
                 ok: launch_agent_path.exists(),
                 detail: launch_agent_path.display().to_string(),
             },
+            DoctorCheck {
+                name: "capture_service".into(),
+                ok: capture_service_reachable(config.capture_port),
+                detail: format!("127.0.0.1:{}", config.capture_port),
+            },
+            DoctorCheck {
+                name: "mac_app_installed".into(),
+                ok: app_path.join("Contents/MacOS/StarleeMenuBar").exists(),
+                detail: app_path.display().to_string(),
+            },
+            DoctorCheck {
+                name: "mac_app_running".into(),
+                ok: process_running("Starlee.app/Contents/MacOS/StarleeMenuBar"),
+                detail: "StarleeMenuBar process".into(),
+            },
+            DoctorCheck {
+                name: "codex_plugin_source".into(),
+                ok: plugin_path.exists() && marketplace_path.exists(),
+                detail: format!(
+                    "{} via {}",
+                    plugin_path.display(),
+                    marketplace_path.display()
+                ),
+            },
         ];
         let extension_seen = config.extension.last_handshake_at.is_some();
         checks.push(DoctorCheck {
@@ -224,6 +252,14 @@ impl Engine {
             .map(|check| match check.name.as_str() {
                 "extension_assets" => "Run `starlee setup` to generate browser extension assets.",
                 "launch_agent" => "Run `scripts/install-service.sh` from the Starlee repository.",
+                "capture_service" => {
+                    "Run `starlee serve` or reinstall Starlee to restart the capture service."
+                }
+                "mac_app_installed" => "Run `./scripts/install.sh` to install Starlee.app.",
+                "mac_app_running" => "Open `~/Applications/Starlee.app`.",
+                "codex_plugin_source" => {
+                    "Run `./scripts/install.sh` to install the Codex plugin source."
+                }
                 "extension_handshake" => {
                     "Load or reload ~/Starlee/sensor-extension in your browser."
                 }
@@ -328,4 +364,20 @@ fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn capture_service_reachable(port: u16) -> bool {
+    TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_millis(250),
+    )
+    .is_ok()
+}
+
+fn process_running(pattern: &str) -> bool {
+    Command::new("pgrep")
+        .args(["-f", pattern])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
