@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "package:chrome": "../scripts/package-chrome-extension.sh",
+    "inspect:chrome": "../scripts/inspect-chrome-extension-package.sh",
+    "package:safari": "../scripts/package-safari-extension.sh",
+    "inspect:safari": "../scripts/inspect-safari-extension-package.sh"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0"

@@ -1,4 +1,4 @@
-.PHONY: build test release package clean
+.PHONY: build test release package package-chrome package-safari clean
 
 build:
 	cd sensor && npm install && npm run build
@@ -17,6 +17,12 @@ release:
 
 package: release
 	./scripts/package.sh
+
+package-chrome:
+	./scripts/package-chrome-extension.sh
+
+package-safari:
+	./scripts/package-safari-extension.sh
 
 clean:
 	cargo clean

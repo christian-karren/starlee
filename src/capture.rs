@@ -35,6 +35,8 @@ pub struct DomExtract {
     pub summary: Option<String>,
     #[serde(default)]
     pub html_meta: Value,
+    #[serde(default)]
+    pub selected_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,7 +63,19 @@ impl CapturePayload {
             SourceType::Youtube if self.dom_extract.text.trim().is_empty() => {
                 "[Transcript unavailable]".into()
             }
-            _ => self.dom_extract.text.trim().to_owned(),
+            _ => {
+                let body = self.dom_extract.text.trim();
+                if body.is_empty() {
+                    self.dom_extract
+                        .selected_text
+                        .as_deref()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_owned()
+                } else {
+                    body.to_owned()
+                }
+            }
         };
         if text.is_empty() {
             bail!("captured article text cannot be empty");
@@ -128,6 +142,7 @@ mod tests {
                 published_at: None,
                 summary: None,
                 html_meta: Value::Null,
+                selected_text: None,
             },
             transcript: vec![TranscriptSegment {
                 t: 62.5,
@@ -137,6 +152,33 @@ mod tests {
             tags: Vec::new(),
         };
         assert_eq!(payload.into_input()?.text, "[01:02] A useful idea");
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_selected_text_when_article_body_is_empty() -> Result<()> {
+        let payload = CapturePayload {
+            version: 1,
+            source_type: SourceType::Article,
+            url: "https://example.com/story".into(),
+            dom_extract: DomExtract {
+                title: "Selected passage".into(),
+                byline: None,
+                site: Some("example.com".into()),
+                text: String::new(),
+                published_at: None,
+                summary: None,
+                html_meta: Value::Null,
+                selected_text: Some("A selected passage from the rendered page.".into()),
+            },
+            transcript: Vec::new(),
+            access: Access::Restricted,
+            tags: Vec::new(),
+        };
+        assert_eq!(
+            payload.into_input()?.text,
+            "A selected passage from the rendered page."
+        );
         Ok(())
     }
 }

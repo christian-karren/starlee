@@ -23,6 +23,10 @@
 ```sh
 make test
 ./scripts/legal-invariants.sh
+make package-chrome
+./scripts/inspect-chrome-extension-package.sh release/chrome-extension/starlee-capture-0.1.0.zip
+make package-safari
+./scripts/inspect-safari-extension-package.sh release/safari-extension/starlee-safari-web-extension-0.1.0.zip
 make package
 ```
 
@@ -30,3 +34,24 @@ Before a commercial public release, run the maintained 50-site extraction corpus
 against current publisher pages and obtain counsel review for publisher-specific
 terms and restricted-text embeddings. Those are operational release activities,
 not hidden runtime dependencies.
+
+## Chrome extension release gate
+
+- Upload only the ZIP produced by `scripts/package-chrome-extension.sh`.
+- Confirm package inspection passes before upload.
+- Confirm the Chrome Web Store listing says captured article bodies and
+  transcripts are sent only to the user's local Starlee service.
+- Submit as an unlisted beta before public listing.
+- Verify a clean Chrome profile can install, handshake, toolbar-capture,
+  menu-bar-capture, and YouTube-capture before public launch.
+
+## Safari local extension gate
+
+- Build with `scripts/package-safari-extension.sh`.
+- Confirm Safari package inspection passes before loading into Xcode or Safari.
+- Full Xcode is required to run Apple's `safari-web-extension-converter`; Command
+  Line Tools alone are not enough.
+- For local use, build and run the generated macOS wrapper app in Xcode, then
+  enable Starlee in Safari Settings > Extensions.
+- Verify `starlee doctor`, a Safari article capture, and a Safari YouTube
+  transcript capture before treating the local Safari path as working.

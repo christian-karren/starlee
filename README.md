@@ -75,6 +75,30 @@ For a packaged CLI and optional `Starlee.app`:
 make package
 ```
 
+For a Chrome Web Store-ready extension ZIP:
+
+```sh
+make package-chrome
+./scripts/inspect-chrome-extension-package.sh release/chrome-extension/starlee-capture-0.1.0.zip
+```
+
+The Chrome package is local-only by design: the extension declares loopback
+network access to `127.0.0.1`, strips generated `starlee-config.json`, and does
+not include vault data, local config, model files, source maps, or build caches.
+See [docs/chrome-extension-release.md](docs/chrome-extension-release.md) for the
+permission rationale, store listing draft, and manual Chrome Web Store steps.
+
+For a local Safari Web Extension source package and, when full Xcode is
+installed, an Xcode wrapper app:
+
+```sh
+make package-safari
+./scripts/inspect-safari-extension-package.sh release/safari-extension/starlee-safari-web-extension-0.1.0.zip
+```
+
+See [docs/safari-web-extension-local.md](docs/safari-web-extension-local.md) for
+the local Safari run flow.
+
 ## Try it
 
 ```sh

@@ -8,15 +8,24 @@
   input { box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #bbb; border-radius: 8px; }
   button { margin-top: 20px; padding: 10px 18px; border: 0; border-radius: 999px; background: #17152b; color: white; font-weight: 650; }
   #status { margin-left: 12px; color: #287a4b; }
+  #connection { white-space: pre-line; padding: 14px; border-radius: 12px; background: #f4f3f8; }
+  #connection[data-state="ok"] { background: #edf8f0; }
+  #connection[data-state="warn"] { background: #fff7ed; }
+  .secondary { background: #eceaf5; color: #17152b; }
 </style>
 <h1>Starlee Capture</h1>
-<p>Your token stays in Chrome’s local extension storage and is sent only to your loopback Starlee engine.</p>
+<p>Starlee reads only pages you choose to save and sends captures only to your local Starlee app on <code>127.0.0.1</code>. Your capture token is stored in Chrome’s local extension storage and is never shown here after saving.</p>
+<h2>Connection</h2>
+<p id="connection" role="status">Checking local Starlee…</p>
+<button id="test-connection" class="secondary" type="button">Test connection</button>
 <form>
   <label for="token">Capture token</label>
-  <input id="token" type="password" autocomplete="off" required>
+  <input id="token" type="password" autocomplete="off">
   <label for="port">Local port</label>
   <input id="port" type="number" min="1024" max="65535" required>
   <button type="submit">Save settings</button><span id="status" role="status"></span>
 </form>
+<h2>How capture works</h2>
+<p>Click the Starlee toolbar icon, the page button, or the Starlee Mac menu-bar item. The extension extracts readable text and metadata from the active tab, then posts it to the local Starlee service.</p>
 <script type="module" src="options.js"></script>
 </html>
