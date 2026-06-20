@@ -1,7 +1,6 @@
 import AppKit
 import UserNotifications
 
-@main
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let client = StarleeClient()
@@ -13,9 +12,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.setActivationPolicy(.accessory)
         notifier.requestAuthorization()
 
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.title = "★"
-        statusItem.button?.toolTip = "Starlee"
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.isVisible = true
+        if let button = statusItem.button {
+            button.title = "★ Starlee"
+            button.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+            button.contentTintColor = .labelColor
+            button.toolTip = "Starlee — save the current article"
+            button.setAccessibilityLabel("Starlee menu bar")
+        }
+        NSLog("Starlee menu-bar status item created")
 
         menuController = StatusMenuController(
             statusItem: statusItem,
