@@ -5,6 +5,7 @@ import UserNotifications
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
+    private var floatingPanel: NSPanel?
     private var engineProcess: Process?
     private let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Starlee")
 
@@ -14,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.title = "★"
         statusItem.button?.toolTip = "Starlee"
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        showFloatingButton()
         rebuildMenu()
     }
 
@@ -52,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(item("Browser Setup…", #selector(browserSetup)))
         menu.addItem(item("Run Setup Diagnostics…", #selector(showDoctor)))
+        menu.addItem(item("Show Floating Button", #selector(showFloatingButton)))
+        menu.addItem(item("Hide Floating Button", #selector(hideFloatingButton)))
         menu.addItem(item("Open Vault", #selector(openVault)))
         menu.addItem(item("Start Capture Endpoint", #selector(startEngine)))
         menu.addItem(item("Stop Capture Endpoint", #selector(stopEngine)))
@@ -86,6 +90,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             show(title: "Starlee capture needs attention", message: result.message)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.rebuildMenu() }
+    }
+
+    @objc private func showFloatingButton() {
+        if floatingPanel != nil {
+            floatingPanel?.orderFrontRegardless()
+            return
+        }
+        let size = NSSize(width: 52, height: 52)
+        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+        let frame = NSRect(
+            x: screen.maxX - size.width - 24,
+            y: screen.maxY - size.height - 24,
+            width: size.width,
+            height: size.height
+        )
+        let panel = NSPanel(
+            contentRect: frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.hidesOnDeactivate = false
+
+        let button = NSButton(frame: NSRect(origin: .zero, size: size))
+        button.title = "★"
+        button.font = .systemFont(ofSize: 25, weight: .bold)
+        button.bezelStyle = .circular
+        button.target = self
+        button.action = #selector(saveCurrentArticle)
+        button.toolTip = "Save current article to Starlee"
+        panel.contentView = button
+        panel.orderFrontRegardless()
+        floatingPanel = panel
+    }
+
+    @objc private func hideFloatingButton() {
+        floatingPanel?.close()
+        floatingPanel = nil
     }
 
     @objc private func search() {

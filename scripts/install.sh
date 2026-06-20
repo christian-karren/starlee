@@ -24,8 +24,10 @@ if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_APP:-1}" != "0" ]; then
   APP_PATH=$("$ROOT/scripts/build-gui.sh")
   APP_DEST="${STARLEE_APP_DIR:-$HOME/Applications}"
   mkdir -p "$APP_DEST"
+  pkill -f "$APP_DEST/Starlee.app/Contents/MacOS/StarleeMenuBar" >/dev/null 2>&1 || true
   rm -rf "$APP_DEST/Starlee.app"
   cp -R "$APP_PATH" "$APP_DEST/Starlee.app"
+  open "$APP_DEST/Starlee.app"
 fi
 
 mkdir -p "$PLUGIN_HOME" "$(dirname "$MARKETPLACE_PATH")"
