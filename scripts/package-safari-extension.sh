@@ -18,6 +18,15 @@ rm -f "$ZIP"
 cp -R "$ROOT/sensor/dist/extension/." "$STAGE/"
 find "$STAGE" -name '*.map' -delete
 rm -f "$STAGE/starlee-config.json"
+node - "$STAGE/manifest.json" <<'NODE'
+const fs = require("node:fs");
+const manifestPath = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+if (manifest.background && Object.prototype.hasOwnProperty.call(manifest.background, "type")) {
+  delete manifest.background.type;
+}
+fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
 
 (
   cd "$STAGE"
@@ -59,5 +68,10 @@ rm -rf "$PROJECT_DIR"
   --app-name "Starlee Safari" \
   --bundle-identifier "com.starlee.capture.safari" \
   --no-open
+
+PROJECT_FILE=$(find "$PROJECT_DIR" -name project.pbxproj -print -quit)
+if [ -n "$PROJECT_FILE" ]; then
+  perl -0pi -e 's/PRODUCT_BUNDLE_IDENTIFIER = "?com\.starlee\.capture\.Starlee-Safari"?;/PRODUCT_BUNDLE_IDENTIFIER = com.starlee.capture.safari;/g' "$PROJECT_FILE"
+fi
 
 printf '%s\n' "$PROJECT_DIR"
