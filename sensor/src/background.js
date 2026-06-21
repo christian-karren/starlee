@@ -1,5 +1,6 @@
 const DEFAULT_PORT = 47291;
 const DEFAULT_POLL_MINUTES = 1;
+const FALLBACK_POLL_SECONDS = 3;
 let bundledConfigPromise;
 let polling = false;
 const processedRequests = new Set();
@@ -73,10 +74,12 @@ async function startLocalBridge() {
   if (polling) return;
   polling = true;
   await hello();
+  await pollCaptureRequest();
   chrome.alarms?.create?.("starlee-poll", { periodInMinutes: DEFAULT_POLL_MINUTES });
   chrome.alarms?.onAlarm?.addListener((alarm) => {
     if (alarm.name === "starlee-poll") pollCaptureRequest();
   });
+  setInterval(pollCaptureRequest, FALLBACK_POLL_SECONDS * 1000);
 }
 
 async function hello(_options = {}) {
