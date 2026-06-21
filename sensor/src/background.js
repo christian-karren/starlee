@@ -1,28 +1,44 @@
 const DEFAULT_PORT = 47291;
 const DEFAULT_POLL_MINUTES = 1;
 const FALLBACK_POLL_SECONDS = 3;
+const BADGE_CLEAR_MS = 3500;
+const ALARM_NAME = "starlee-poll";
+const MESSAGE = Object.freeze({
+  capture: "STARLEE_CAPTURE",
+  status: "STARLEE_STATUS",
+  hello: "STARLEE_HELLO",
+  takeCaptureRequest: "STARLEE_TAKE_CAPTURE_REQUEST",
+  captureNow: "STARLEE_CAPTURE_NOW"
+});
+const CAPTURE_STATUS = Object.freeze({
+  saved: "capture_saved",
+  failed: "capture_failed",
+  pickedUp: "picked_up"
+});
 let bundledConfigPromise;
 let polling = false;
 const processedRequests = new Set();
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "STARLEE_CAPTURE") {
+chrome.runtime.onMessage.addListener(handleMessage);
+
+function handleMessage(message, _sender, sendResponse) {
+  if (message?.type === MESSAGE.capture) {
     sendCapture(message.payload, { source: message.source || "content-script" }).then(sendResponse);
     return true;
   }
-  if (message?.type === "STARLEE_STATUS") {
+  if (message?.type === MESSAGE.status) {
     status().then(sendResponse);
     return true;
   }
-  if (message?.type === "STARLEE_HELLO") {
+  if (message?.type === MESSAGE.hello) {
     hello({ force: true }).then(sendResponse);
     return true;
   }
-  if (message?.type === "STARLEE_TAKE_CAPTURE_REQUEST") {
+  if (message?.type === MESSAGE.takeCaptureRequest) {
     takeCaptureRequest().then(sendResponse);
     return true;
   }
-});
+}
 
 chrome.action.onClicked.addListener(async (tab) => {
   const result = await captureTab(tab);
@@ -68,7 +84,7 @@ async function sendCapture(payload, options = {}) {
 async function captureTab(tab) {
   if (!tab?.id) return errorResult("no_active_tab", "No active browser tab is available.");
   try {
-    return await chrome.tabs.sendMessage(tab.id, { type: "STARLEE_CAPTURE_NOW" });
+    return await chrome.tabs.sendMessage(tab.id, { type: MESSAGE.captureNow });
   } catch {
     return errorResult("permission_denied", "Chrome has not granted Starlee access to this page, or this page cannot run extensions.");
   }
@@ -79,9 +95,9 @@ async function startLocalBridge() {
   polling = true;
   await hello();
   await pollCaptureRequest();
-  chrome.alarms?.create?.("starlee-poll", { periodInMinutes: DEFAULT_POLL_MINUTES });
+  chrome.alarms?.create?.(ALARM_NAME, { periodInMinutes: DEFAULT_POLL_MINUTES });
   chrome.alarms?.onAlarm?.addListener((alarm) => {
-    if (alarm.name === "starlee-poll") pollCaptureRequest();
+    if (alarm.name === ALARM_NAME) pollCaptureRequest();
   });
   setInterval(pollCaptureRequest, FALLBACK_POLL_SECONDS * 1000);
 }
@@ -128,7 +144,7 @@ async function pollCaptureRequest() {
   await chrome.storage.local.set({
     lastMenuRequestId: request.id || "",
     lastMenuRequestAt: new Date().toISOString(),
-    lastMenuRequestStatus: result.ok ? "capture_saved" : result.code || "capture_failed"
+    lastMenuRequestStatus: result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed
   });
   await showResult(result);
 }
@@ -149,11 +165,7 @@ async function takeCaptureRequest() {
   if (!request) return { ok: true, request: null };
   if (request.id && processedRequests.has(request.id)) return { ok: true, request: null };
   if (request.id) processedRequests.add(request.id);
-  await chrome.storage.local.set({
-    lastMenuRequestId: request.id || "",
-    lastMenuRequestAt: new Date().toISOString(),
-    lastMenuRequestStatus: "picked_up"
-  });
+  await recordMenuRequest(request, CAPTURE_STATUS.pickedUp);
   return { ok: true, request };
 }
 
@@ -207,8 +219,16 @@ async function recordCaptureResult(result, source = "unknown") {
   await chrome.storage.local.set({
     lastCaptureAt: new Date().toISOString(),
     lastCaptureSource: source,
-    lastCaptureStatus: result.code || (result.ok ? "capture_saved" : "capture_failed"),
+    lastCaptureStatus: result.code || (result.ok ? CAPTURE_STATUS.saved : CAPTURE_STATUS.failed),
     lastCaptureError: result.ok ? "" : result.error
+  });
+}
+
+async function recordMenuRequest(request, status) {
+  await chrome.storage.local.set({
+    lastMenuRequestId: request.id || "",
+    lastMenuRequestAt: new Date().toISOString(),
+    lastMenuRequestStatus: status
   });
 }
 
@@ -217,7 +237,7 @@ async function showResult(result) {
   const badge = result.ok ? "✓" : "!";
   await chrome.action.setBadgeText?.({ text: badge });
   await chrome.action.setBadgeBackgroundColor?.({ color: result.ok ? "#287a4b" : "#b45309" });
-  setTimeout(() => chrome.action.setBadgeText?.({ text: "" }), 3500);
+  setTimeout(() => chrome.action.setBadgeText?.({ text: "" }), BADGE_CLEAR_MS);
   if (!result.ok) {
     console.warn(`Starlee capture ${result.code}: ${result.error}`);
   }

@@ -1,12 +1,19 @@
 import { capturePayload, detectedType } from "./payload.js";
 
 const MENU_BAR_POLL_MS = 3000;
+const MENU_BAR_INITIAL_POLL_MS = 750;
+const BUTTON_RESET_MS = 3500;
+const MESSAGE = Object.freeze({
+  captureNow: "STARLEE_CAPTURE_NOW",
+  capture: "STARLEE_CAPTURE",
+  takeCaptureRequest: "STARLEE_TAKE_CAPTURE_REQUEST"
+});
 const type = detectedType(document);
 if (type && !document.getElementById("starlee-save-button")) mountButton(type);
 startMenuBarBridge();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "STARLEE_CAPTURE_NOW") return;
+  if (message?.type !== MESSAGE.captureNow) return;
   capture(message, sendResponse);
   return true;
 });
@@ -23,7 +30,7 @@ function mountButton(type) {
   });
   button.addEventListener("click", () => capture({}, (result) => {
     button.textContent = result.ok ? "Saved to Starlee ✓" : `Starlee: ${result.error}`;
-    setTimeout(() => { button.textContent = defaultLabel; }, 3500);
+    setTimeout(() => { button.textContent = defaultLabel; }, BUTTON_RESET_MS);
   }));
   document.documentElement.append(button);
 }
@@ -36,7 +43,7 @@ async function capture(_message, sendResponse) {
       payload.dom_extract.selected_text = selectedText;
     }
     const response = await chrome.runtime.sendMessage({
-      type: "STARLEE_CAPTURE",
+      type: MESSAGE.capture,
       payload,
       source: _message?.source || "active-tab"
     });
@@ -47,15 +54,19 @@ async function capture(_message, sendResponse) {
 }
 
 function startMenuBarBridge() {
-  setTimeout(pollMenuBarCaptureRequest, 750);
+  setTimeout(pollMenuBarCaptureRequest, MENU_BAR_INITIAL_POLL_MS);
   setInterval(pollMenuBarCaptureRequest, MENU_BAR_POLL_MS);
 }
 
 async function pollMenuBarCaptureRequest() {
   if (document.visibilityState !== "visible") return;
-  const response = await chrome.runtime
-    .sendMessage({ type: "STARLEE_TAKE_CAPTURE_REQUEST" })
-    .catch(() => null);
+  const response = await takeMenuBarCaptureRequest();
   if (!response?.request) return;
   capture({ source: "menu-bar" }, () => {});
+}
+
+async function takeMenuBarCaptureRequest() {
+  return chrome.runtime
+    .sendMessage({ type: MESSAGE.takeCaptureRequest })
+    .catch(() => null);
 }
