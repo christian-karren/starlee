@@ -18,6 +18,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     hello({ force: true }).then(sendResponse);
     return true;
   }
+  if (message?.type === "STARLEE_TAKE_CAPTURE_REQUEST") {
+    takeCaptureRequest().then(sendResponse);
+    return true;
+  }
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
@@ -116,21 +120,9 @@ async function hello(_options = {}) {
 }
 
 async function pollCaptureRequest() {
-  const { token, port } = await localSettings();
-  if (!token) return;
-  let request;
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/capture-request`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    if (!response.ok) return;
-    request = (await response.json()).request;
-  } catch {
-    return;
-  }
+  const response = await takeCaptureRequest();
+  const request = response.request;
   if (!request) return;
-  if (request.id && processedRequests.has(request.id)) return;
-  if (request.id) processedRequests.add(request.id);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const result = await captureTab(tab);
   await chrome.storage.local.set({
@@ -139,6 +131,30 @@ async function pollCaptureRequest() {
     lastMenuRequestStatus: result.ok ? "capture_saved" : result.code || "capture_failed"
   });
   await showResult(result);
+}
+
+async function takeCaptureRequest() {
+  const { token, port } = await localSettings();
+  if (!token) return { ok: false, request: null, code: "token_missing" };
+  let request;
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/capture-request`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!response.ok) return { ok: false, request: null, code: `http_${response.status}` };
+    request = (await response.json()).request;
+  } catch {
+    return { ok: false, request: null, code: "service_down" };
+  }
+  if (!request) return { ok: true, request: null };
+  if (request.id && processedRequests.has(request.id)) return { ok: true, request: null };
+  if (request.id) processedRequests.add(request.id);
+  await chrome.storage.local.set({
+    lastMenuRequestId: request.id || "",
+    lastMenuRequestAt: new Date().toISOString(),
+    lastMenuRequestStatus: "picked_up"
+  });
+  return { ok: true, request };
 }
 
 async function localSettings() {

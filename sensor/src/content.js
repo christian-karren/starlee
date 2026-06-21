@@ -1,7 +1,9 @@
 import { capturePayload, detectedType } from "./payload.js";
 
+const MENU_BAR_POLL_MS = 3000;
 const type = detectedType(document);
 if (type && !document.getElementById("starlee-save-button")) mountButton(type);
+startMenuBarBridge();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "STARLEE_CAPTURE_NOW") return;
@@ -33,9 +35,27 @@ async function capture(_message, sendResponse) {
     if (selectedText && payload?.dom_extract && payload.type === "article") {
       payload.dom_extract.selected_text = selectedText;
     }
-    const response = await chrome.runtime.sendMessage({ type: "STARLEE_CAPTURE", payload, source: "active-tab" });
+    const response = await chrome.runtime.sendMessage({
+      type: "STARLEE_CAPTURE",
+      payload,
+      source: _message?.source || "active-tab"
+    });
     sendResponse(response);
   } catch (error) {
     sendResponse({ ok: false, code: "empty_extract", error: error.message });
   }
+}
+
+function startMenuBarBridge() {
+  setTimeout(pollMenuBarCaptureRequest, 750);
+  setInterval(pollMenuBarCaptureRequest, MENU_BAR_POLL_MS);
+}
+
+async function pollMenuBarCaptureRequest() {
+  if (document.visibilityState !== "visible") return;
+  const response = await chrome.runtime
+    .sendMessage({ type: "STARLEE_TAKE_CAPTURE_REQUEST" })
+    .catch(() => null);
+  if (!response?.request) return;
+  capture({ source: "menu-bar" }, () => {});
 }
