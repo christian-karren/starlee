@@ -35,6 +35,11 @@ NODE
 
 printf '%s\n' "$ZIP"
 
+LOCAL_CONFIG="${STARLEE_SAFARI_LOCAL_CONFIG:-$HOME/Starlee/sensor-extension/starlee-config.json}"
+if [ -f "$LOCAL_CONFIG" ]; then
+  cp "$LOCAL_CONFIG" "$STAGE/starlee-config.json"
+fi
+
 if [ -z "$CONVERTER" ]; then
   CONVERTER=$(xcrun --find safari-web-extension-converter 2>/dev/null || true)
 fi
