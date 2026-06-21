@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub enum SourceType {
     Article,
     Youtube,
+    #[serde(rename = "spotify_episode")]
+    SpotifyEpisode,
     #[default]
     Note,
 }
@@ -44,6 +46,24 @@ pub struct Frontmatter {
     pub summary: String,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub spotify_episode_id: Option<String>,
+    #[serde(default)]
+    pub spotify_show_id: Option<String>,
+    #[serde(default)]
+    pub show: Option<String>,
+    #[serde(default)]
+    pub listen_duration_s: Option<u64>,
+    #[serde(default)]
+    pub listen_progress_pct: Option<u8>,
+    #[serde(default)]
+    pub transcript_status: Option<String>,
+    #[serde(default)]
+    pub transcript_source: Option<String>,
+    #[serde(default)]
+    pub matched_youtube_id: Option<String>,
+    #[serde(default)]
+    pub linked_youtube_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +90,26 @@ pub struct CaptureInput {
     pub summary: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub spotify_episode_id: Option<String>,
+    #[serde(default)]
+    pub spotify_show_id: Option<String>,
+    #[serde(default)]
+    pub show: Option<String>,
+    #[serde(default)]
+    pub listen_duration_s: Option<u64>,
+    #[serde(default)]
+    pub listen_progress_pct: Option<u8>,
+    #[serde(default)]
+    pub transcript_status: Option<String>,
+    #[serde(default)]
+    pub transcript_source: Option<String>,
+    #[serde(default)]
+    pub matched_youtube_id: Option<String>,
+    #[serde(default)]
+    pub linked_youtube_id: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,7 +133,7 @@ pub struct BorrowedRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "lowercase")]
 pub enum GetResult {
-    Own { record: Record },
+    Own { record: Box<Record> },
     Borrowed { record: BorrowedRecord },
 }
 
@@ -164,6 +204,10 @@ pub struct Status {
     pub capture_token_path: String,
     pub youtube_metadata_configured: bool,
     pub borrowed_bundle_count: usize,
+    pub spotify_oauth_configured: bool,
+    pub spotify_account: Option<String>,
+    pub spotify_last_synced_at: Option<String>,
+    pub spotify_next_sync_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

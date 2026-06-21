@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Utc};
 use sha2::{Digest, Sha256};
 
-use crate::model::{CaptureInput, Frontmatter, Record};
+use crate::model::{CaptureInput, Frontmatter, Record, SourceType};
 
 pub struct Vault {
     root: PathBuf,
@@ -33,19 +33,32 @@ impl Vault {
 
         self.init()?;
         let now = Utc::now();
-        let mut hasher = Sha256::new();
-        hasher.update(input.url.as_deref().unwrap_or(&input.title));
-        hasher.update(now.timestamp_nanos_opt().unwrap_or_default().to_le_bytes());
-        let digest = format!("{:x}", hasher.finalize());
-        let id = format!(
-            "{}-{}-{}",
-            now.format("%Y-%m%d"),
-            &digest[..6],
-            &digest[6..12]
-        );
         let year = self.root.join(now.year().to_string());
         fs::create_dir_all(&year)?;
-        let path = year.join(format!("{}-{}.md", id, slugify(&input.title)));
+        let (id, file_name) = if matches!(input.source_type, SourceType::SpotifyEpisode) {
+            let episode_id = input
+                .spotify_episode_id
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .context("spotify episode captures require spotify_episode_id")?;
+            (
+                format!("spotify:episode:{episode_id}"),
+                format!("{}-spotify-{episode_id}.md", now.format("%Y-%m-%d")),
+            )
+        } else {
+            let mut hasher = Sha256::new();
+            hasher.update(input.url.as_deref().unwrap_or(&input.title));
+            hasher.update(now.timestamp_nanos_opt().unwrap_or_default().to_le_bytes());
+            let digest = format!("{:x}", hasher.finalize());
+            let id = format!(
+                "{}-{}-{}",
+                now.format("%Y-%m%d"),
+                &digest[..6],
+                &digest[6..12]
+            );
+            (id.clone(), format!("{}-{}.md", id, slugify(&input.title)))
+        };
+        let path = year.join(file_name);
         self.write_record(path, id, input, now)
     }
 
@@ -92,9 +105,30 @@ impl Vault {
             access: input.access,
             summary,
             tags: input.tags,
+            spotify_episode_id: input.spotify_episode_id,
+            spotify_show_id: input.spotify_show_id,
+            show: input.show,
+            listen_duration_s: input.listen_duration_s,
+            listen_progress_pct: input.listen_progress_pct,
+            transcript_status: input.transcript_status,
+            transcript_source: input.transcript_source,
+            matched_youtube_id: input.matched_youtube_id,
+            linked_youtube_id: input.linked_youtube_id,
         };
         let yaml = serde_yaml::to_string(&metadata)?;
-        let document = format!("---\n{}---\n\n{}\n", yaml, input.text.trim());
+        let description = input
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                format!(
+                    "<!-- spotify_description: {} -->\n\n",
+                    sanitize_comment(value)
+                )
+            })
+            .unwrap_or_default();
+        let document = format!("---\n{}---\n\n{}{}\n", yaml, description, input.text.trim());
         let temporary = path.with_extension("md.tmp");
         fs::write(&temporary, document)?;
         fs::rename(&temporary, &path)?;
@@ -116,7 +150,7 @@ impl Vault {
         let metadata = serde_yaml::from_str(yaml)?;
         Ok(Record {
             metadata,
-            body: body.trim().to_owned(),
+            body: strip_nonqueryable_description(body).trim().to_owned(),
             file_path: path.display().to_string(),
         })
     }
@@ -176,6 +210,20 @@ fn extractive_summary(text: &str) -> String {
     }
 }
 
+fn sanitize_comment(value: &str) -> String {
+    value.replace("-->", "--&gt;").replace('\n', " ")
+}
+
+fn strip_nonqueryable_description(body: &str) -> &str {
+    let trimmed = body.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("<!-- spotify_description:")
+        && let Some((_, body)) = rest.split_once("-->")
+    {
+        return body;
+    }
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +231,42 @@ mod tests {
     #[test]
     fn slugs_are_portable() {
         assert_eq!(slugify("Meta & AI: What Now?"), "meta-ai-what-now");
+    }
+
+    #[test]
+    fn spotify_episode_uses_stable_identity_and_hides_description_from_body() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let vault = Vault::new(temp.path().join("vault"));
+        let record = vault.write(CaptureInput {
+            title: "A podcast episode".into(),
+            text: "[Transcript unavailable]".into(),
+            source_type: SourceType::SpotifyEpisode,
+            access: crate::model::Access::Restricted,
+            author: None,
+            site: Some("Spotify".into()),
+            url: Some("https://open.spotify.com/episode/ep123".into()),
+            published_at: None,
+            duration: Some(3600),
+            video_id: None,
+            summary: None,
+            tags: Vec::new(),
+            spotify_episode_id: Some("ep123".into()),
+            spotify_show_id: Some("show456".into()),
+            show: Some("Great Show".into()),
+            listen_duration_s: Some(2400),
+            listen_progress_pct: Some(67),
+            transcript_status: Some("missing".into()),
+            transcript_source: None,
+            matched_youtube_id: None,
+            linked_youtube_id: None,
+            description: Some("This description should not be queryable.".into()),
+        })?;
+
+        assert_eq!(record.metadata.id, "spotify:episode:ep123");
+        assert!(record.file_path.ends_with("-spotify-ep123.md"));
+        let reread = vault.read(Path::new(&record.file_path))?;
+        assert_eq!(reread.body, "[Transcript unavailable]");
+        assert_eq!(reread.metadata.show.as_deref(), Some("Great Show"));
+        Ok(())
     }
 }

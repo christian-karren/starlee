@@ -15,6 +15,8 @@ Starlee includes:
 - extract rendered articles with Mozilla Readability and rendered YouTube transcripts;
 - export audited, restricted-body-free share bundles and mount them read-only;
 - install as a Codex Plugin with bundled Starlee MCP tools and workflow guidance;
+- expose Spotify sync diagnostics and Spotify episode vault schema, while
+  clearly reporting Spotify's current podcast-history API limitation;
 - provide a macOS menu-bar/floating-button app that can request capture from a
   browser extension after the user has loaded or installed that extension.
 
@@ -133,6 +135,19 @@ Optional richer YouTube metadata uses the official Data API only:
 ```sh
 starlee configure-youtube --api-key "$YOUTUBE_DATA_API_KEY"
 ```
+
+Spotify passive podcast sync is partially scaffolded but not claimed as
+complete. Spotify's recently played endpoint currently does not support podcast
+episodes, so Starlee exposes honest diagnostics instead of pretending hourly
+history polling works:
+
+```sh
+starlee sync-status
+starlee sync-spotify
+```
+
+See [docs/spotify-passive-sync.md](docs/spotify-passive-sync.md) for the product
+tradeoff and viable paths.
 
 Share bundles exclude every restricted body and are audited before being
 written. Public bodies are also excluded unless explicitly requested:

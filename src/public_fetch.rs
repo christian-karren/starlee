@@ -81,6 +81,16 @@ pub fn fetch_explicitly_public(url: &str) -> Result<CaptureInput> {
         video_id: None,
         summary: meta(&document, "meta[name='description']", "content"),
         tags: Vec::new(),
+        spotify_episode_id: None,
+        spotify_show_id: None,
+        show: None,
+        listen_duration_s: None,
+        listen_progress_pct: None,
+        transcript_status: None,
+        transcript_source: None,
+        matched_youtube_id: None,
+        linked_youtube_id: None,
+        description: None,
     })
 }
 

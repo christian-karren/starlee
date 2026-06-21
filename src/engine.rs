@@ -20,7 +20,8 @@ use crate::{
         CaptureInput, CorpusOverview, DoctorCheck, DoctorReport, GetResult, QueryResult, Record,
         SearchHit, SearchScope, SetupReport, SourceType, Status,
     },
-    public_fetch, sensor_assets,
+    public_fetch, sensor_assets, spotify,
+    spotify::{SpotifyConfigureReport, SpotifySyncReport, SpotifySyncStatus},
     vault::Vault,
     youtube::enrich_youtube,
 };
@@ -187,6 +188,7 @@ impl Engine {
             let source_type = match record.metadata.source_type {
                 SourceType::Article => "article",
                 SourceType::Youtube => "youtube",
+                SourceType::SpotifyEpisode => "spotify_episode",
                 SourceType::Note => "note",
             };
             let source_type = source_type.to_owned();
@@ -248,7 +250,9 @@ impl Engine {
 
     pub fn get_any(&self, id: &str) -> Result<Option<GetResult>> {
         if let Some(record) = self.get(id)? {
-            return Ok(Some(GetResult::Own { record }));
+            return Ok(Some(GetResult::Own {
+                record: Box::new(record),
+            }));
         }
         let config = self.local_config()?;
         let paths = config
@@ -280,6 +284,17 @@ impl Engine {
             capture_token_path: store.path().display().to_string(),
             youtube_metadata_configured: config.youtube_api_key.is_some(),
             borrowed_bundle_count: config.borrowed_bundles.len(),
+            spotify_oauth_configured: config.spotify_oauth.is_some(),
+            spotify_account: config
+                .spotify_oauth
+                .as_ref()
+                .and_then(|oauth| oauth.display_name.clone().or_else(|| oauth.user_id.clone())),
+            spotify_last_synced_at: config.spotify_sync.last_synced_at.clone(),
+            spotify_next_sync_at: config
+                .spotify_sync
+                .next_sync_at
+                .clone()
+                .or_else(|| Some(spotify::next_sync_at(chrono::Local::now()).to_rfc3339())),
         })
     }
 
@@ -359,6 +374,20 @@ impl Engine {
         }
         let extension_seen = config.extension.last_handshake_at.is_some();
         checks.push(DoctorCheck {
+            name: "spotify_oauth".into(),
+            ok: true,
+            detail: config
+                .spotify_oauth
+                .as_ref()
+                .and_then(|oauth| oauth.display_name.clone().or_else(|| oauth.user_id.clone()))
+                .unwrap_or_else(|| "not configured".into()),
+        });
+        checks.push(DoctorCheck {
+            name: "spotify_episode_history_api".into(),
+            ok: true,
+            detail: spotify::EPISODE_HISTORY_LIMITATION.into(),
+        });
+        checks.push(DoctorCheck {
             name: "extension_handshake".into(),
             ok: extension_seen,
             detail: config
@@ -384,6 +413,12 @@ impl Engine {
                 }
                 "codex_plugin_source" => {
                     "Run `./scripts/install.sh` to install the Codex plugin source."
+                }
+                "spotify_oauth" => {
+                    "Register a Spotify app, then run `starlee configure-spotify --client-id <id>`."
+                }
+                "spotify_episode_history_api" => {
+                    "Choose a Spotify capture strategy that does not depend on recently-played podcast episodes."
                 }
                 "extension_handshake" => {
                     "Load or reload ~/Starlee/sensor-extension in your browser."
@@ -452,6 +487,43 @@ impl Engine {
         let mut config = store.load_or_create()?;
         config.youtube_api_key = Some(api_key);
         store.save(&config)
+    }
+
+    pub fn configure_spotify_placeholder(
+        &self,
+        client_id: String,
+    ) -> Result<SpotifyConfigureReport> {
+        let store = ConfigStore::new(&self.home);
+        let mut config = store.load_or_create()?;
+        config.spotify_sync.next_sync_at =
+            Some(spotify::next_sync_at(chrono::Local::now()).to_rfc3339());
+        let client_id_stored = !client_id.trim().is_empty();
+        if client_id_stored {
+            config.spotify_client_id = Some(client_id.trim().to_owned());
+            config.spotify_oauth = None;
+        }
+        store.save(&config)?;
+        Ok(spotify::configure_report(client_id_stored))
+    }
+
+    pub fn spotify_sync_status(&self) -> Result<SpotifySyncStatus> {
+        Ok(spotify::status(&self.local_config()?))
+    }
+
+    pub fn sync_spotify(&self) -> Result<SpotifySyncReport> {
+        let store = ConfigStore::new(&self.home);
+        let mut config = store.load_or_create()?;
+        let report = spotify::unsupported_sync_report();
+        config.spotify_sync.next_sync_at =
+            Some(spotify::next_sync_at(chrono::Local::now()).to_rfc3339());
+        config.spotify_sync.last_result = Some(crate::config::SpotifySyncLastResult {
+            checked_at: report.checked_at.clone(),
+            added: report.added,
+            skipped: report.skipped,
+            status: report.status.clone(),
+        });
+        store.save(&config)?;
+        Ok(report)
     }
 
     pub fn export_bundle(

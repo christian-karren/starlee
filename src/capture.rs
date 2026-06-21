@@ -94,6 +94,16 @@ impl CapturePayload {
             video_id,
             summary: self.dom_extract.summary,
             tags: self.tags,
+            spotify_episode_id: None,
+            spotify_show_id: None,
+            show: None,
+            listen_duration_s: None,
+            listen_progress_pct: None,
+            transcript_status: None,
+            transcript_source: None,
+            matched_youtube_id: None,
+            linked_youtube_id: None,
+            description: None,
         })
     }
 }

@@ -122,6 +122,7 @@ fn call_tool(engine: &Engine, name: &str, args: Value) -> Result<Value> {
             )?)?
         }
         "starlee_corpus_overview" => serde_json::to_value(engine.corpus_overview()?)?,
+        "starlee_spotify_sync_status" => serde_json::to_value(engine.spotify_sync_status()?)?,
         "recent" => {
             serde_json::to_value(engine.recent(args["k"].as_u64().unwrap_or(10) as usize)?)?
         }
@@ -172,6 +173,11 @@ fn tool_definitions() -> Vec<Value> {
         tool(
             "starlee_corpus_overview",
             "Return vault-wide Starlee corpus statistics for session orientation without a retrieval call",
+            json!({"type":"object"}),
+        ),
+        tool(
+            "starlee_spotify_sync_status",
+            "Report Spotify sync configuration, scheduler state, and current API limitations",
             json!({"type":"object"}),
         ),
         tool(
@@ -274,6 +280,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(tool_names.contains(&"starlee_query"));
         assert!(tool_names.contains(&"starlee_corpus_overview"));
+        assert!(tool_names.contains(&"starlee_spotify_sync_status"));
         Ok(())
     }
 

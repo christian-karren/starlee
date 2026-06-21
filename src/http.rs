@@ -250,6 +250,9 @@ mod tests {
             extension: Default::default(),
             pending_capture_request: None,
             youtube_api_key: None,
+            spotify_client_id: None,
+            spotify_oauth: None,
+            spotify_sync: Default::default(),
             borrowed_bundles: Vec::new(),
         };
         let server = spawn(engine.clone(), config)?;
@@ -290,6 +293,9 @@ mod tests {
             extension: Default::default(),
             pending_capture_request: None,
             youtube_api_key: None,
+            spotify_client_id: None,
+            spotify_oauth: None,
+            spotify_sync: Default::default(),
             borrowed_bundles: Vec::new(),
         };
         let server = spawn(engine.clone(), config)?;

@@ -9,6 +9,7 @@ mod mcp;
 mod model;
 mod public_fetch;
 mod sensor_assets;
+mod spotify;
 mod vault;
 mod youtube;
 
@@ -82,6 +83,12 @@ enum Command {
         #[arg(long)]
         api_key: String,
     },
+    ConfigureSpotify {
+        #[arg(long, env = "SPOTIFY_CLIENT_ID")]
+        client_id: String,
+    },
+    SyncSpotify,
+    SyncStatus,
     Export {
         path: PathBuf,
         #[arg(long)]
@@ -149,6 +156,16 @@ fn main() -> Result<()> {
                 video_id: None,
                 summary: None,
                 tags: tag,
+                spotify_episode_id: None,
+                spotify_show_id: None,
+                show: None,
+                listen_duration_s: None,
+                listen_progress_pct: None,
+                transcript_status: None,
+                transcript_source: None,
+                matched_youtube_id: None,
+                linked_youtube_id: None,
+                description: None,
             })?)?
         }
         Command::CaptureUrl { url } => serde_json::to_value(engine.capture_public_url(&url)?)?,
@@ -180,6 +197,11 @@ fn main() -> Result<()> {
             engine.configure_youtube_api_key(api_key)?;
             serde_json::json!({"configured":true})
         }
+        Command::ConfigureSpotify { client_id } => {
+            serde_json::to_value(engine.configure_spotify_placeholder(client_id)?)?
+        }
+        Command::SyncSpotify => serde_json::to_value(engine.sync_spotify()?)?,
+        Command::SyncStatus => serde_json::to_value(engine.spotify_sync_status()?)?,
         Command::Export {
             path,
             include_public_bodies,
@@ -269,6 +291,16 @@ mod integration_tests {
             video_id: None,
             summary: None,
             tags: vec!["memory".into()],
+            spotify_episode_id: None,
+            spotify_show_id: None,
+            show: None,
+            listen_duration_s: None,
+            listen_progress_pct: None,
+            transcript_status: None,
+            transcript_source: None,
+            matched_youtube_id: None,
+            linked_youtube_id: None,
+            description: None,
         })?;
         assert!(PathBuf::from(&captured.file_path).exists());
         assert_eq!(
@@ -308,6 +340,16 @@ mod integration_tests {
             video_id: None,
             summary: Some("An insight about memory systems.".into()),
             tags: Vec::new(),
+            spotify_episode_id: None,
+            spotify_show_id: None,
+            show: None,
+            listen_duration_s: None,
+            listen_progress_pct: None,
+            transcript_status: None,
+            transcript_source: None,
+            matched_youtube_id: None,
+            linked_youtube_id: None,
+            description: None,
         })?;
         let bundle_path = temp.path().join("shared.starlee");
         let audit = owner.export_bundle(&bundle_path, true)?;
@@ -353,6 +395,16 @@ mod integration_tests {
             video_id: None,
             summary: None,
             tags: Vec::new(),
+            spotify_episode_id: None,
+            spotify_show_id: None,
+            show: None,
+            listen_duration_s: None,
+            listen_progress_pct: None,
+            transcript_status: None,
+            transcript_source: None,
+            matched_youtube_id: None,
+            linked_youtube_id: None,
+            description: None,
         };
         let first = engine.capture(input("The first version of the article."))?;
         let second = engine.capture(input(
@@ -387,6 +439,16 @@ mod integration_tests {
             video_id: None,
             summary: Some("Agent memory systems connect forgotten design patterns.".into()),
             tags: vec!["agents".into()],
+            spotify_episode_id: None,
+            spotify_show_id: None,
+            show: None,
+            listen_duration_s: None,
+            listen_progress_pct: None,
+            transcript_status: None,
+            transcript_source: None,
+            matched_youtube_id: None,
+            linked_youtube_id: None,
+            description: None,
         })?;
 
         let query = engine.query("forgotten agent design", None, 8)?;
@@ -423,6 +485,16 @@ mod integration_tests {
             video_id: None,
             summary: None,
             tags: Vec::new(),
+            spotify_episode_id: None,
+            spotify_show_id: None,
+            show: None,
+            listen_duration_s: None,
+            listen_progress_pct: None,
+            transcript_status: None,
+            transcript_source: None,
+            matched_youtube_id: None,
+            linked_youtube_id: None,
+            description: None,
         })?;
         let store = ConfigStore::new(temp.path());
         let mut config = store.load()?;

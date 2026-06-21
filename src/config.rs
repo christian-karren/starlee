@@ -22,6 +22,12 @@ pub struct LocalConfig {
     #[serde(default)]
     pub youtube_api_key: Option<String>,
     #[serde(default)]
+    pub spotify_client_id: Option<String>,
+    #[serde(default)]
+    pub spotify_oauth: Option<SpotifyOAuthConfig>,
+    #[serde(default)]
+    pub spotify_sync: SpotifySyncConfig,
+    #[serde(default)]
     pub borrowed_bundles: Vec<String>,
 }
 
@@ -43,6 +49,36 @@ pub struct CaptureRequestState {
     pub requested_at: String,
     #[serde(default)]
     pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpotifyOAuthConfig {
+    pub client_id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SpotifySyncConfig {
+    #[serde(default)]
+    pub last_synced_at: Option<String>,
+    #[serde(default)]
+    pub next_sync_at: Option<String>,
+    #[serde(default)]
+    pub last_result: Option<SpotifySyncLastResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpotifySyncLastResult {
+    pub checked_at: String,
+    pub added: usize,
+    pub skipped: usize,
+    pub status: String,
 }
 
 pub struct ConfigStore {
@@ -81,6 +117,9 @@ impl ConfigStore {
             extension: ExtensionState::default(),
             pending_capture_request: None,
             youtube_api_key: None,
+            spotify_client_id: None,
+            spotify_oauth: None,
+            spotify_sync: SpotifySyncConfig::default(),
             borrowed_bundles: Vec::new(),
         };
         let temporary = self.path.with_extension("json.tmp");
@@ -165,6 +204,9 @@ mod tests {
             extension: ExtensionState::default(),
             pending_capture_request: None,
             youtube_api_key: None,
+            spotify_client_id: None,
+            spotify_oauth: None,
+            spotify_sync: SpotifySyncConfig::default(),
             borrowed_bundles: Vec::new(),
         };
         let value = bookmarklet(&config);
