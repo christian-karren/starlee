@@ -7,6 +7,7 @@ OUT_DIR="$ROOT/release/safari-extension"
 STAGE="$OUT_DIR/starlee-safari-web-extension"
 ZIP="$OUT_DIR/starlee-safari-web-extension-${VERSION}.zip"
 PROJECT_DIR="$OUT_DIR/StarleeSafari"
+PROJECT_EXTENSION_DIR="$OUT_DIR/extension"
 CONVERTER=${SAFARI_WEB_EXTENSION_CONVERTER:-}
 
 cd "$ROOT/sensor"
@@ -66,13 +67,25 @@ EOF
   exit 0
 fi
 
-rm -rf "$PROJECT_DIR"
-"$CONVERTER" "$STAGE" \
+CONVERTER_TMP="/private/tmp/starlee-safari-converter-${USER:-local}"
+rm -rf "$CONVERTER_TMP"
+mkdir -p "$CONVERTER_TMP"
+trap 'rm -rf "$CONVERTER_TMP"' EXIT INT TERM
+CONVERTER_STAGE="$CONVERTER_TMP/extension"
+CONVERTER_PROJECT="$CONVERTER_TMP/StarleeSafari"
+mkdir -p "$CONVERTER_STAGE"
+cp -R "$STAGE/." "$CONVERTER_STAGE/"
+
+rm -rf "$PROJECT_DIR" "$PROJECT_EXTENSION_DIR"
+"$CONVERTER" "$CONVERTER_STAGE" \
   --macos-only \
-  --project-location "$PROJECT_DIR" \
+  --project-location "$CONVERTER_PROJECT" \
   --app-name "Starlee Safari" \
   --bundle-identifier "com.starlee.capture.safari" \
   --no-open
+
+cp -R "$CONVERTER_PROJECT" "$PROJECT_DIR"
+cp -R "$CONVERTER_STAGE" "$PROJECT_EXTENSION_DIR"
 
 PROJECT_FILE=$(find "$PROJECT_DIR" -name project.pbxproj -print -quit)
 if [ -n "$PROJECT_FILE" ]; then

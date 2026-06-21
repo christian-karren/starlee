@@ -30,6 +30,12 @@ if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_APP:-1}" != "0" ]; then
   open "$APP_DEST/Starlee.app"
 fi
 
+if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_SAFARI:-1}" != "0" ]; then
+  if ! "$ROOT/scripts/install-safari-extension.sh"; then
+    printf 'Warning: Safari extension install did not complete. Run: ./scripts/install-safari-extension.sh\n' >&2
+  fi
+fi
+
 mkdir -p "$PLUGIN_HOME" "$(dirname "$MARKETPLACE_PATH")"
 ln -sfn "$ROOT" "$PLUGIN_HOME/starlee"
 
@@ -74,6 +80,9 @@ printf 'Installed Starlee to %s\n' "$DEST/starlee"
 printf 'Initialized local vault at %s\n' "$HOME/Starlee"
 if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_APP:-1}" != "0" ]; then
   printf 'Installed Starlee app to %s\n' "${STARLEE_APP_DIR:-$HOME/Applications}/Starlee.app"
+fi
+if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_SAFARI:-1}" != "0" ]; then
+  printf 'Installed Starlee Safari app to %s\n' "${STARLEE_APP_DIR:-$HOME/Applications}/Starlee Safari.app"
 fi
 printf 'Installed Codex plugin source at %s\n' "$PLUGIN_HOME/starlee"
 printf 'Registered personal plugin marketplace at %s\n' "$MARKETPLACE_PATH"
