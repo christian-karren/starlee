@@ -276,4 +276,33 @@ mod tests {
         assert!(tool_names.contains(&"starlee_corpus_overview"));
         Ok(())
     }
+
+    #[test]
+    fn starlee_query_rejects_unimplemented_borrowed_scope() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let error = dispatch(
+            &engine,
+            &json!({
+                "method":"tools/call",
+                "params":{
+                    "name":"starlee_query",
+                    "arguments":{"question":"agents","scope":"all"}
+                }
+            }),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("scope='vault'"));
+        Ok(())
+    }
+
+    #[test]
+    fn starlee_skill_documents_query_workflow_and_gap_handling() {
+        let skill = include_str!("../skills/starlee/SKILL.md");
+        assert!(skill.contains("starlee_corpus_overview"));
+        assert!(skill.contains("starlee_query"));
+        assert!(skill.contains("relevance_floor_hit"));
+        assert!(skill.contains("Do not synthesize from training"));
+        assert!(skill.contains("Sources:"));
+    }
 }

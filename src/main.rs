@@ -222,6 +222,7 @@ fn default_home() -> PathBuf {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+    use crate::config::ConfigStore;
     use crate::embedding::{EMBEDDING_DIMENSION, Embedder};
     use std::sync::Arc;
 
@@ -402,6 +403,50 @@ mod integration_tests {
         assert_eq!(overview.top_domains, vec!["example.com"]);
         assert_eq!(overview.top_authors, vec!["Casey Researcher"]);
         assert!(overview.top_topics.iter().any(|topic| topic == "agent"));
+        Ok(())
+    }
+
+    #[test]
+    fn query_reports_gap_when_floor_excludes_results() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        engine.capture(CaptureInput {
+            title: "Sparse note".into(),
+            text: "A durable digital brain makes forgotten ideas searchable again.".into(),
+            source_type: SourceType::Note,
+            access: Access::Restricted,
+            author: None,
+            site: None,
+            url: None,
+            published_at: None,
+            duration: None,
+            video_id: None,
+            summary: None,
+            tags: Vec::new(),
+        })?;
+        let store = ConfigStore::new(temp.path());
+        let mut config = store.load()?;
+        config.query_relevance_floor = 1.1;
+        store.save(&config)?;
+
+        let query = engine.query("forgotten searchable", None, 8)?;
+        assert!(query.relevance_floor_hit);
+        assert!(query.chunks.is_empty());
+        assert!(query.total_retrieved >= 1);
+        Ok(())
+    }
+
+    #[test]
+    fn corpus_overview_handles_empty_vault() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        engine.setup()?;
+        let overview = engine.corpus_overview()?;
+        assert_eq!(overview.total_captures, 0);
+        assert_eq!(overview.earliest_capture, None);
+        assert_eq!(overview.latest_capture, None);
+        assert!(overview.source_breakdown.is_empty());
+        assert!(overview.top_topics.is_empty());
         Ok(())
     }
 }

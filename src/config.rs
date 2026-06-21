@@ -172,4 +172,25 @@ mod tests {
         assert!(value.contains("abc123"));
         assert!(value.contains("49999"));
     }
+
+    #[test]
+    fn missing_query_floor_migrates_to_default() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let config_path = temp.path().join("config.json");
+        fs::write(
+            &config_path,
+            r#"{
+              "version": 1,
+              "capture_port": 47291,
+              "capture_token": "abc123",
+              "extension": {},
+              "pending_capture_request": null,
+              "youtube_api_key": null,
+              "borrowed_bundles": []
+            }"#,
+        )?;
+        let config = ConfigStore::new(temp.path()).load()?;
+        assert_eq!(config.query_relevance_floor, 0.35);
+        Ok(())
+    }
 }
