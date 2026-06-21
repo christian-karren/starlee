@@ -235,6 +235,16 @@ impl Engine {
                 ),
             },
         ];
+        if cfg!(target_os = "macos") {
+            let safari_app_path = user_home.join("Applications/Starlee Safari.app");
+            let safari_extension_path =
+                safari_app_path.join("Contents/PlugIns/Starlee Safari Extension.appex");
+            checks.push(DoctorCheck {
+                name: "safari_extension_installed".into(),
+                ok: safari_extension_path.exists(),
+                detail: safari_app_path.display().to_string(),
+            });
+        }
         let extension_seen = config.extension.last_handshake_at.is_some();
         checks.push(DoctorCheck {
             name: "extension_handshake".into(),
@@ -257,6 +267,9 @@ impl Engine {
                 }
                 "mac_app_installed" => "Run `./scripts/install.sh` to install Starlee.app.",
                 "mac_app_running" => "Open `~/Applications/Starlee.app`.",
+                "safari_extension_installed" => {
+                    "Run `./scripts/install-safari-extension.sh`, then enable Starlee in Safari Settings > Extensions."
+                }
                 "codex_plugin_source" => {
                     "Run `./scripts/install.sh` to install the Codex plugin source."
                 }

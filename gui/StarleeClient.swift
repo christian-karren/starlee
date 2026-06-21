@@ -47,7 +47,7 @@ final class StarleeClient {
             let port = (config["capture_port"] as? NSNumber)?.intValue,
             let url = URL(string: "http://127.0.0.1:\(port)/health")
         else { return false }
-        return (try? String(contentsOf: url).contains("ready")) == true
+        return (try? String(contentsOf: url, encoding: .utf8).contains("ready")) == true
     }
 
     func startEngine() {

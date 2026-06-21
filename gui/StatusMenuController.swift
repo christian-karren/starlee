@@ -119,7 +119,15 @@ final class StatusMenuController: NSObject {
         }
         DialogPresenter.show(
             title: "Browser setup",
-            message: "Load or reload the selected folder in your Chromium browser:\n\n\(extensionURL.path)\n\nSafari support will use a bundled Safari Web Extension in the next slice."
+            message: """
+            Safari:
+            Enable Starlee Capture in Safari Settings > Extensions, then allow it on the sites you want to save.
+
+            Chromium:
+            Load or reload the selected folder in chrome://extensions:
+
+            \(extensionURL.path)
+            """
         )
     }
 
