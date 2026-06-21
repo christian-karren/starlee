@@ -1,4 +1,11 @@
-use std::{net::TcpStream, path::PathBuf, process::Command, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    net::TcpStream,
+    path::PathBuf,
+    process::Command,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use chrono::Utc;
@@ -10,8 +17,8 @@ use crate::{
     embedding::{Embedder, FastEmbedder},
     index::Index,
     model::{
-        CaptureInput, DoctorCheck, DoctorReport, GetResult, Record, SearchHit, SearchScope,
-        SetupReport, Status,
+        CaptureInput, CorpusOverview, DoctorCheck, DoctorReport, GetResult, QueryResult, Record,
+        SearchHit, SearchScope, SetupReport, SourceType, Status,
     },
     public_fetch, sensor_assets,
     vault::Vault,
@@ -123,6 +130,111 @@ impl Engine {
         hits.truncate(limit);
         Ok(hits)
     }
+
+    pub fn query(
+        &self,
+        question: &str,
+        context: Option<&str>,
+        max_chunks: usize,
+    ) -> Result<QueryResult> {
+        let started = Instant::now();
+        let config = self.local_config()?;
+        let limit = max_chunks.clamp(1, 20);
+        let retrieval_query = match context.filter(|value| !value.trim().is_empty()) {
+            Some(context) => format!("Question: {question}\nContext: {context}"),
+            None => question.to_owned(),
+        };
+        let retrieved = self
+            .index
+            .query_chunks(&retrieval_query, limit, self.embedder.as_ref())?;
+        let total_retrieved = retrieved.len();
+        let mut chunks = retrieved
+            .into_iter()
+            .filter(|chunk| chunk.similarity >= config.query_relevance_floor)
+            .collect::<Vec<_>>();
+        let relevance_floor_hit = chunks.len() < 2;
+        if relevance_floor_hit {
+            chunks.truncate(1);
+        }
+        for (index, chunk) in chunks.iter_mut().enumerate() {
+            chunk.index = index + 1;
+        }
+        Ok(QueryResult {
+            chunks,
+            total_retrieved,
+            relevance_floor_hit,
+            query_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
+    pub fn corpus_overview(&self) -> Result<CorpusOverview> {
+        let started = Instant::now();
+        let records = self.vault.records()?;
+        let total_captures = records.len();
+        let earliest_capture = records
+            .iter()
+            .map(|record| record.metadata.captured_at.date_naive().to_string())
+            .min();
+        let latest_capture = records
+            .iter()
+            .map(|record| record.metadata.captured_at.date_naive().to_string())
+            .max();
+        let mut source_counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut domain_counts: HashMap<String, usize> = HashMap::new();
+        let mut author_counts: HashMap<String, usize> = HashMap::new();
+        let mut term_counts: HashMap<String, usize> = HashMap::new();
+        for record in &records {
+            let source_type = match record.metadata.source_type {
+                SourceType::Article => "article",
+                SourceType::Youtube => "youtube",
+                SourceType::Note => "note",
+            };
+            let source_type = source_type.to_owned();
+            *source_counts.entry(source_type).or_insert(0) += 1;
+            if let Some(domain) = record
+                .metadata
+                .url
+                .as_deref()
+                .and_then(domain_from_url)
+                .or_else(|| record.metadata.site.clone())
+            {
+                *domain_counts.entry(domain).or_insert(0) += 1;
+            }
+            if let Some(author) = record
+                .metadata
+                .author
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                *author_counts.entry(author.trim().to_owned()).or_insert(0) += 1;
+            }
+            add_terms(&mut term_counts, &record.metadata.title);
+            add_terms(&mut term_counts, &record.metadata.summary);
+            add_terms(&mut term_counts, &record.body);
+        }
+        let source_breakdown = source_counts
+            .into_iter()
+            .map(|(source, count)| {
+                let ratio = if total_captures == 0 {
+                    0.0
+                } else {
+                    count as f64 / total_captures as f64
+                };
+                (source, ratio)
+            })
+            .collect();
+        Ok(CorpusOverview {
+            total_captures,
+            earliest_capture,
+            latest_capture,
+            top_topics: top_keys(term_counts, 10),
+            source_breakdown,
+            top_domains: top_keys(domain_counts, 5),
+            top_authors: top_keys(author_counts, 5),
+            overview_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
     pub fn recent(&self, limit: usize) -> Result<Vec<SearchHit>> {
         self.index.recent(limit)
     }
@@ -393,4 +505,47 @@ fn process_running(pattern: &str) -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+fn domain_from_url(value: &str) -> Option<String> {
+    let url = url::Url::parse(value).ok()?;
+    url.host_str()
+        .map(|host| host.trim_start_matches("www.").to_owned())
+}
+
+fn add_terms(counts: &mut HashMap<String, usize>, text: &str) {
+    let stopwords = stopwords();
+    let mut document_terms = HashSet::new();
+    for term in text
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .map(str::to_lowercase)
+        .filter(|term| term.len() >= 4 && !stopwords.contains(term.as_str()))
+    {
+        document_terms.insert(term);
+    }
+    for term in document_terms {
+        *counts.entry(term).or_insert(0) += 1;
+    }
+}
+
+fn top_keys(mut counts: HashMap<String, usize>, limit: usize) -> Vec<String> {
+    let mut values = counts.drain().collect::<Vec<_>>();
+    values.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    values
+        .into_iter()
+        .take(limit)
+        .map(|(value, _)| value)
+        .collect()
+}
+
+fn stopwords() -> HashSet<&'static str> {
+    [
+        "about", "after", "again", "also", "because", "been", "being", "between", "could", "does",
+        "down", "from", "have", "into", "just", "like", "more", "most", "much", "only", "over",
+        "said", "same", "some", "such", "than", "that", "their", "them", "then", "there", "these",
+        "they", "this", "through", "what", "when", "where", "which", "while", "with", "would",
+        "your",
+    ]
+    .into_iter()
+    .collect()
 }

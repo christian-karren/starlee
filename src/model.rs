@@ -110,6 +110,39 @@ pub struct SearchHit {
     pub source: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryResult {
+    pub chunks: Vec<QueryChunk>,
+    pub total_retrieved: usize,
+    pub relevance_floor_hit: bool,
+    pub query_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryChunk {
+    pub index: usize,
+    pub title: String,
+    pub url: Option<String>,
+    pub domain: Option<String>,
+    pub captured_at: String,
+    pub vault_path: String,
+    pub chunk_index: usize,
+    pub chunk_text: String,
+    pub similarity: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorpusOverview {
+    pub total_captures: usize,
+    pub earliest_capture: Option<String>,
+    pub latest_capture: Option<String>,
+    pub top_topics: Vec<String>,
+    pub source_breakdown: std::collections::BTreeMap<String, f64>,
+    pub top_domains: Vec<String>,
+    pub top_authors: Vec<String>,
+    pub overview_ms: u64,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchScope {

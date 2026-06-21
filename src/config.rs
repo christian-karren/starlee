@@ -13,6 +13,8 @@ pub struct LocalConfig {
     pub version: u32,
     pub capture_port: u16,
     pub capture_token: String,
+    #[serde(default = "default_query_relevance_floor")]
+    pub query_relevance_floor: f32,
     #[serde(default)]
     pub extension: ExtensionState,
     #[serde(default)]
@@ -75,6 +77,7 @@ impl ConfigStore {
             version: 1,
             capture_port: DEFAULT_CAPTURE_PORT,
             capture_token: generate_token()?,
+            query_relevance_floor: default_query_relevance_floor(),
             extension: ExtensionState::default(),
             pending_capture_request: None,
             youtube_api_key: None,
@@ -96,6 +99,9 @@ impl ConfigStore {
         if config.version == 0 {
             config.version = 1;
         }
+        if config.query_relevance_floor <= 0.0 {
+            config.query_relevance_floor = default_query_relevance_floor();
+        }
         Ok(config)
     }
 
@@ -116,6 +122,10 @@ fn generate_token() -> Result<String> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).context("generate capture token")?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn default_query_relevance_floor() -> f32 {
+    0.35
 }
 
 #[cfg(unix)]
@@ -151,6 +161,7 @@ mod tests {
             version: 1,
             capture_port: 49999,
             capture_token: "abc123".into(),
+            query_relevance_floor: default_query_relevance_floor(),
             extension: ExtensionState::default(),
             pending_capture_request: None,
             youtube_api_key: None,

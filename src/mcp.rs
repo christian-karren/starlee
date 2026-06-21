@@ -108,6 +108,20 @@ fn call_tool(engine: &Engine, name: &str, args: Value) -> Result<Value> {
                 scope,
             )?)?
         }
+        "starlee_query" => {
+            let scope = args["scope"].as_str().unwrap_or("vault");
+            if scope != "vault" {
+                anyhow::bail!(
+                    "starlee_query currently supports scope='vault'; borrowed/all query synthesis is not implemented yet"
+                );
+            }
+            serde_json::to_value(engine.query(
+                args["question"].as_str().unwrap_or_default(),
+                args.get("context").and_then(Value::as_str),
+                args["max_chunks"].as_u64().unwrap_or(8) as usize,
+            )?)?
+        }
+        "starlee_corpus_overview" => serde_json::to_value(engine.corpus_overview()?)?,
         "recent" => {
             serde_json::to_value(engine.recent(args["k"].as_u64().unwrap_or(10) as usize)?)?
         }
@@ -149,6 +163,16 @@ fn tool_definitions() -> Vec<Value> {
             "search",
             "Search the local brain and return cited hits",
             json!({"type":"object","required":["query"],"properties":{"query":{"type":"string"},"k":{"type":"integer","minimum":1,"maximum":50},"scope":{"type":"string","enum":["own","borrowed","both"]}}}),
+        ),
+        tool(
+            "starlee_query",
+            "Retrieve citation-ready chunks from the user's Starlee corpus for Codex to synthesize a grounded answer",
+            json!({"type":"object","required":["question"],"properties":{"question":{"type":"string"},"context":{"type":"string"},"scope":{"type":"string","enum":["vault","borrowed","all"],"default":"vault"},"max_chunks":{"type":"integer","minimum":1,"maximum":20,"default":8}}}),
+        ),
+        tool(
+            "starlee_corpus_overview",
+            "Return vault-wide Starlee corpus statistics for session orientation without a retrieval call",
+            json!({"type":"object"}),
         ),
         tool(
             "recent",
@@ -242,6 +266,14 @@ mod tests {
                 .as_array()
                 .is_some_and(|tools| tools.len() >= 10)
         );
+        let tool_names = tools["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+        assert!(tool_names.contains(&"starlee_query"));
+        assert!(tool_names.contains(&"starlee_corpus_overview"));
         Ok(())
     }
 }

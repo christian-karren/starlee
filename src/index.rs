@@ -12,7 +12,7 @@ use sqlite_vec::sqlite3_vec_init;
 use crate::{
     bundle::{BundleAudit, audit},
     embedding::{EMBEDDING_DIMENSION, Embedder},
-    model::{Access, Record, SearchHit},
+    model::{Access, QueryChunk, Record, SearchHit},
 };
 
 static REGISTER_VEC: Once = Once::new();
@@ -173,6 +173,53 @@ impl Index {
         });
         hits.truncate(limit);
         Ok(hits)
+    }
+
+    pub fn query_chunks(
+        &self,
+        query: &str,
+        limit: usize,
+        embedder: &dyn Embedder,
+    ) -> Result<Vec<QueryChunk>> {
+        self.init()?;
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection()?;
+        let query_embedding = embedder.embed_query(query)?;
+        let mut statement = connection.prepare(
+            "SELECT s.title,s.url,s.site,s.captured_at,c.text,s.file_path,c.ord,v.distance
+             FROM chunk_vectors v JOIN chunks c ON c.rowid=v.rowid
+             JOIN sources s ON s.id=c.source_id
+             WHERE v.embedding MATCH ?1 AND k = ?2 ORDER BY v.distance",
+        )?;
+        let rows = statement.query_map(
+            params![cast_slice::<f32, u8>(&query_embedding), limit],
+            |row| {
+                let url: Option<String> = row.get(1)?;
+                let site: Option<String> = row.get(2)?;
+                let distance: f32 = row.get(7)?;
+                Ok(QueryChunk {
+                    index: 0,
+                    title: row.get(0)?,
+                    domain: domain_from(url.as_deref()).or(site),
+                    url,
+                    captured_at: row.get(3)?,
+                    vault_path: row.get(5)?,
+                    chunk_index: row.get::<_, i64>(6)? as usize,
+                    chunk_text: row.get(4)?,
+                    similarity: distance_to_similarity(distance),
+                })
+            },
+        )?;
+        rows.enumerate()
+            .map(|(index, row)| {
+                let mut chunk = row?;
+                chunk.index = index + 1;
+                Ok::<QueryChunk, rusqlite::Error>(chunk)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     fn collect_fts(
@@ -365,6 +412,16 @@ fn map_search_hit(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
         score: 0.0,
         source: "own".into(),
     })
+}
+
+fn distance_to_similarity(distance: f32) -> f32 {
+    1.0 / (1.0 + distance.max(0.0))
+}
+
+fn domain_from(value: Option<&str>) -> Option<String> {
+    let url = url::Url::parse(value?).ok()?;
+    url.host_str()
+        .map(|host| host.trim_start_matches("www.").to_owned())
 }
 
 fn chunk_text(text: &str, max_chars: usize, overlap: usize) -> Vec<(usize, usize, String)> {

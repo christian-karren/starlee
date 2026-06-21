@@ -59,6 +59,14 @@ enum Command {
         #[arg(long, value_enum, default_value = "both")]
         scope: ScopeArg,
     },
+    Query {
+        question: String,
+        #[arg(long)]
+        context: Option<String>,
+        #[arg(long, default_value_t = 8)]
+        max_chunks: usize,
+    },
+    CorpusOverview,
     Recent {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
@@ -156,6 +164,12 @@ fn main() -> Result<()> {
             };
             serde_json::to_value(engine.search_scoped(&query, limit, scope)?)?
         }
+        Command::Query {
+            question,
+            context,
+            max_chunks,
+        } => serde_json::to_value(engine.query(&question, context.as_deref(), max_chunks)?)?,
+        Command::CorpusOverview => serde_json::to_value(engine.corpus_overview()?)?,
         Command::Recent { limit } => serde_json::to_value(engine.recent(limit)?)?,
         Command::Get { id } => serde_json::to_value(engine.get_any(&id)?)?,
         Command::Status => serde_json::to_value(engine.status()?)?,
@@ -352,6 +366,42 @@ mod integration_tests {
                 .body
                 .contains("updated version")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn query_returns_citation_ready_chunks_and_overview() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        engine.capture(CaptureInput {
+            title: "Agentic memory systems".into(),
+            text: "A durable digital brain helps people recall forgotten agent design patterns and connect them to new work.".into(),
+            source_type: SourceType::Article,
+            access: Access::Restricted,
+            author: Some("Casey Researcher".into()),
+            site: Some("example.com".into()),
+            url: Some("https://example.com/agents".into()),
+            published_at: None,
+            duration: None,
+            video_id: None,
+            summary: Some("Agent memory systems connect forgotten design patterns.".into()),
+            tags: vec!["agents".into()],
+        })?;
+
+        let query = engine.query("forgotten agent design", None, 8)?;
+        assert!(!query.chunks.is_empty());
+        assert_eq!(query.chunks[0].index, 1);
+        assert_eq!(query.chunks[0].title, "Agentic memory systems");
+        assert_eq!(query.chunks[0].domain.as_deref(), Some("example.com"));
+        assert_eq!(query.chunks[0].chunk_index, 0);
+        assert!(query.chunks[0].similarity >= 0.35);
+
+        let overview = engine.corpus_overview()?;
+        assert_eq!(overview.total_captures, 1);
+        assert_eq!(overview.source_breakdown.get("article"), Some(&1.0));
+        assert_eq!(overview.top_domains, vec!["example.com"]);
+        assert_eq!(overview.top_authors, vec!["Casey Researcher"]);
+        assert!(overview.top_topics.iter().any(|topic| topic == "agent"));
         Ok(())
     }
 }
