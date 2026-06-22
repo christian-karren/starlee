@@ -124,6 +124,109 @@ When the user asks "set yourself up", "install Starlee", or similar:
 - Do not call `starlee_query` or `starlee_corpus_overview` until setup is
   complete and `starlee doctor` is healthy.
 
+## Connect integrations
+
+When the user asks "set yourself up", "connect my Spotify", "connect YouTube",
+"connect my integrations", or similar, extend the setup workflow with these
+steps after the install/setup check and before the final doctor confirmation:
+
+1. Run `starlee doctor` first.
+2. Read the doctor output to determine which integrations are already
+   configured.
+3. Skip any integration that is already green. Handle Spotify and YouTube
+   independently:
+   - If Spotify is configured, do not run Spotify setup again.
+   - If YouTube is configured, do not run YouTube setup again.
+   - If Spotify is configured but YouTube is missing, only configure YouTube.
+   - If YouTube is configured but Spotify is missing, only configure Spotify.
+4. Before opening any browser-based authorization page, explain the next step in
+   plain English. Do not say "OAuth" unless the user asks for technical detail.
+5. Run the appropriate Starlee CLI command yourself in the terminal. Do not ask
+   the user to type terminal commands.
+6. Guide the user through the browser approval screen in plain English.
+7. If an integration command fails, stop that integration's setup, explain what
+   went wrong in non-technical language, and continue checking any other
+   requested integration that can still be configured safely.
+8. End by running `starlee doctor` again.
+9. Report which integrations are green and which are still missing or blocked.
+
+Spotify configuration:
+
+1. Detect Spotify status from `starlee doctor`. Treat `spotify_oauth:
+   configured` as green.
+2. If Spotify is missing, say:
+
+   ```text
+   I'm going to connect your Spotify account now. A browser window will open
+   and ask you to approve Starlee's access to your listening history. It only
+   requests read access — it cannot change anything in your Spotify account.
+   ```
+
+3. Run `starlee configure-spotify`.
+4. If the command asks for a Spotify client id or reports that a Spotify app is
+   required, explain:
+
+   ```text
+   Starlee needs a Spotify app client id before it can open the approval page.
+   This is a Spotify requirement for connecting your account. I can't finish
+   Spotify until that client id is available.
+   ```
+
+5. If a browser approval page opens, tell the user to approve the request and
+   return to Codex when the browser says the connection is complete.
+6. After the command finishes, verify with `starlee doctor`.
+
+YouTube configuration:
+
+1. Detect YouTube status from `starlee doctor`. Treat `youtube_oauth:
+   configured` as green. If the installed Starlee version reports YouTube under
+   another green doctor/status field such as configured YouTube metadata, treat
+   that as already configured and do not rerun setup.
+2. If YouTube is missing, say:
+
+   ```text
+   I'm going to connect your YouTube account now. A browser window will open
+   and ask you to approve Starlee's read access. Starlee uses this to save and
+   understand videos or transcripts you choose to add; it cannot post videos,
+   change your account, or edit anything on YouTube.
+   ```
+
+3. Run `starlee configure-youtube`.
+4. If the installed Starlee version expects an API key instead of browser
+   approval, explain:
+
+   ```text
+   This Starlee version supports YouTube through a local API key instead of a
+   browser approval screen. I can't complete YouTube automatically until that
+   key is available, but I can still finish the rest of setup.
+   ```
+
+5. If a browser approval page opens, tell the user to approve the request and
+   return to Codex when the browser says the connection is complete.
+6. After the command finishes, verify with `starlee doctor`.
+
+OAuth failure handling:
+
+- If the browser is closed, say the connection was cancelled and the user can
+  retry later.
+- If Starlee reports an expired, denied, or invalid authorization, say the
+  approval did not complete and rerun the relevant `starlee configure-*`
+  command once if retrying is safe.
+- If a provider account, client id, redirect URI, or quota approval is missing,
+  explain the missing requirement plainly and mark only that integration as
+  blocked.
+- Never paste access tokens, refresh tokens, client secrets, capture tokens, or
+  local config contents into the chat.
+
+Final integration report:
+
+```text
+Starlee setup check:
+- Spotify: connected | missing | blocked — {plain-English reason}
+- YouTube: connected | missing | blocked — {plain-English reason}
+- Doctor: healthy | needs attention — {one-sentence summary}
+```
+
 ## Capture workflows
 
 To save pasted text, use the `capture` MCP tool with `source_type: "note"` or
