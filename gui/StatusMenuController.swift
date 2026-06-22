@@ -4,18 +4,15 @@ final class StatusMenuController: NSObject {
     private let statusItem: NSStatusItem
     private let client: StarleeClient
     private let notifier: NotificationController
-    private let floatingButton: FloatingButtonController
 
     init(
         statusItem: NSStatusItem,
         client: StarleeClient,
-        notifier: NotificationController,
-        floatingButton: FloatingButtonController
+        notifier: NotificationController
     ) {
         self.statusItem = statusItem
         self.client = client
         self.notifier = notifier
-        self.floatingButton = floatingButton
     }
 
     func rebuildMenu() {
@@ -30,8 +27,6 @@ final class StatusMenuController: NSObject {
         menu.addItem(.separator())
         menu.addItem(item("Browser Setup…", #selector(browserSetup)))
         menu.addItem(item("Run Setup Diagnostics…", #selector(showDoctor)))
-        menu.addItem(item("Show Floating Button", #selector(showFloatingButton)))
-        menu.addItem(item("Hide Floating Button", #selector(hideFloatingButton)))
         menu.addItem(item("Open Vault", #selector(openVault)))
         menu.addItem(item("Start Capture Endpoint", #selector(startEngine)))
         menu.addItem(item("Stop Capture Endpoint", #selector(stopEngine)))
@@ -133,14 +128,6 @@ final class StatusMenuController: NSObject {
 
     @objc private func showDoctor() {
         DialogPresenter.show(title: "Starlee Diagnostics", message: client.run(["doctor"]))
-    }
-
-    @objc private func showFloatingButton() {
-        floatingButton.show(target: self, action: #selector(saveCurrentArticle))
-    }
-
-    @objc private func hideFloatingButton() {
-        floatingButton.hide()
     }
 
     @objc private func openVault() {

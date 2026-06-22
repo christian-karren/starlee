@@ -5,7 +5,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let client = StarleeClient()
     private let notifier = NotificationController()
-    private let floatingButton = FloatingButtonController()
     private var menuController: StatusMenuController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -32,10 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuController = StatusMenuController(
             statusItem: statusItem,
             client: client,
-            notifier: notifier,
-            floatingButton: floatingButton
+            notifier: notifier
         )
-        floatingButton.show(target: menuController, action: #selector(StatusMenuController.saveCurrentArticle))
         menuController.rebuildMenu()
     }
 }
