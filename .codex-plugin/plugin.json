@@ -20,6 +20,7 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Starlee",
+    "composerIcon": "./assets/starlee-icon.png",
     "shortDescription": "Save and search your local digital brain",
     "longDescription": "Starlee captures rendered articles, YouTube transcripts, and pasted notes into a private local Markdown vault, indexes them with local hybrid search, and exposes retrieval and sharing tools to Codex.",
     "developerName": "Christian Karren",
