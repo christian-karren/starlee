@@ -9,10 +9,12 @@ use bytemuck::cast_slice;
 use rusqlite::{Connection, ffi::sqlite3_auto_extension, params};
 use sqlite_vec::sqlite3_vec_init;
 
+use chrono::{DateTime, Utc};
+
 use crate::{
     bundle::{BundleAudit, audit},
     embedding::{EMBEDDING_DIMENSION, Embedder},
-    model::{Access, QueryChunk, Record, SearchHit},
+    model::{Access, QueryChunk, Record, SearchHit, SpotifyReasonCount, SpotifySyncEvent},
 };
 
 static REGISTER_VEC: Once = Once::new();
@@ -63,6 +65,26 @@ impl Index {
             CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors USING vec0(
                 embedding FLOAT[384]
             );
+            CREATE TABLE IF NOT EXISTS spotify_sync_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                episode_id TEXT,
+                episode_title TEXT,
+                show_name TEXT,
+                stage_reached TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                reason_code TEXT NOT NULL,
+                explanation TEXT NOT NULL,
+                underlying_error TEXT,
+                listen_duration_s INTEGER,
+                threshold_s INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS spotify_sync_events_timestamp_idx
+                ON spotify_sync_events(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS spotify_sync_events_reason_idx
+                ON spotify_sync_events(reason_code, timestamp DESC);
+            CREATE INDEX IF NOT EXISTS spotify_sync_events_episode_idx
+                ON spotify_sync_events(episode_id, timestamp DESC);
             DROP TRIGGER IF EXISTS chunks_ai;
             DROP TRIGGER IF EXISTS chunks_ad;
             CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
@@ -332,6 +354,102 @@ impl Index {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn insert_spotify_sync_event(&self, event: &SpotifySyncEvent) -> Result<()> {
+        self.init()?;
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO spotify_sync_events(
+                timestamp,episode_id,episode_title,show_name,stage_reached,outcome,reason_code,
+                explanation,underlying_error,listen_duration_s,threshold_s
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            params![
+                event.timestamp,
+                event.episode_id,
+                event.episode_title,
+                event.show_name,
+                event.stage_reached,
+                event.outcome,
+                event.reason_code,
+                event.explanation,
+                event.underlying_error,
+                event.listen_duration_s,
+                event.threshold_s
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn spotify_sync_events(
+        &self,
+        limit: usize,
+        show_skips: bool,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<SpotifySyncEvent>> {
+        self.init()?;
+        let connection = self.connection()?;
+        let since = since
+            .map(|value| value.to_rfc3339())
+            .unwrap_or_else(|| "0000-01-01T00:00:00Z".into());
+        let outcome_filter = if show_skips {
+            "1=1"
+        } else {
+            "outcome != 'skipped'"
+        };
+        let sql = format!(
+            "SELECT id,timestamp,episode_id,episode_title,show_name,stage_reached,outcome,
+                    reason_code,explanation,underlying_error,listen_duration_s,threshold_s
+             FROM spotify_sync_events
+             WHERE timestamp >= ?1 AND {outcome_filter}
+             ORDER BY timestamp DESC, id DESC LIMIT ?2"
+        );
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(params![since, limit], map_spotify_sync_event)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn spotify_last_successful_poll_at(&self) -> Result<Option<String>> {
+        self.init()?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT timestamp FROM spotify_sync_events
+             WHERE reason_code IN ('nothing_playing','detected_ok','captured_ok','no_feed_transcript','duplicate_already_captured','insufficient_listen_time')
+             ORDER BY timestamp DESC LIMIT 1",
+        )?;
+        let mut rows = statement.query([])?;
+        Ok(rows.next()?.map(|row| row.get(0)).transpose()?)
+    }
+
+    pub fn spotify_last_capture_at(&self) -> Result<Option<String>> {
+        self.init()?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT timestamp FROM spotify_sync_events
+             WHERE reason_code IN ('captured_ok','no_feed_transcript') ORDER BY timestamp DESC LIMIT 1",
+        )?;
+        let mut rows = statement.query([])?;
+        Ok(rows.next()?.map(|row| row.get(0)).transpose()?)
+    }
+
+    pub fn spotify_recent_reason_counts(
+        &self,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<SpotifyReasonCount>> {
+        self.init()?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT reason_code,count(*) FROM spotify_sync_events
+             WHERE timestamp >= ?1 AND outcome IN ('skipped','failed')
+             GROUP BY reason_code ORDER BY count(*) DESC, reason_code",
+        )?;
+        let rows = statement.query_map([since.to_rfc3339()], |row| {
+            Ok(SpotifyReasonCount {
+                reason_code: row.get(0)?,
+                count: row.get::<_, i64>(1)? as usize,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn counts(&self) -> Result<(u64, u64)> {
         self.init()?;
         let connection = self.connection()?;
@@ -389,6 +507,23 @@ impl Index {
         std::fs::rename(&temporary, path)?;
         audit(path)
     }
+}
+
+fn map_spotify_sync_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<SpotifySyncEvent> {
+    Ok(SpotifySyncEvent {
+        id: row.get(0)?,
+        timestamp: row.get(1)?,
+        episode_id: row.get(2)?,
+        episode_title: row.get(3)?,
+        show_name: row.get(4)?,
+        stage_reached: row.get(5)?,
+        outcome: row.get(6)?,
+        reason_code: row.get(7)?,
+        explanation: row.get(8)?,
+        underlying_error: row.get(9)?,
+        listen_duration_s: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
+        threshold_s: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
+    })
 }
 
 fn escape_fts(word: &str) -> String {
@@ -468,5 +603,70 @@ mod tests {
         let chunks = chunk_text(&text, 1000, 150);
         assert!(chunks.len() > 4);
         assert_eq!(chunks[0].0, 0);
+    }
+
+    #[test]
+    fn stores_and_queries_spotify_sync_events() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let index = Index::new(temp.path().join("index.db"));
+        index.insert_spotify_sync_event(&SpotifySyncEvent {
+            id: 0,
+            timestamp: "2026-06-22T08:00:00Z".into(),
+            episode_id: Some("ep1".into()),
+            episode_title: Some("Episode One".into()),
+            show_name: Some("Show".into()),
+            stage_reached: "detected".into(),
+            outcome: "skipped".into(),
+            reason_code: "insufficient_listen_time".into(),
+            explanation: "Not captured: only 12s of listen time.".into(),
+            underlying_error: None,
+            listen_duration_s: Some(12),
+            threshold_s: Some(600),
+        })?;
+        index.insert_spotify_sync_event(&SpotifySyncEvent {
+            id: 0,
+            timestamp: "2026-06-22T08:10:00Z".into(),
+            episode_id: Some("ep2".into()),
+            episode_title: Some("Episode Two".into()),
+            show_name: Some("Show".into()),
+            stage_reached: "captured".into(),
+            outcome: "ok".into(),
+            reason_code: "captured_ok".into(),
+            explanation: "Captured Spotify episode.".into(),
+            underlying_error: None,
+            listen_duration_s: Some(1200),
+            threshold_s: Some(600),
+        })?;
+
+        let without_skips = index.spotify_sync_events(10, false, None)?;
+        assert_eq!(without_skips.len(), 1);
+        assert_eq!(without_skips[0].reason_code, "captured_ok");
+
+        let with_skips = index.spotify_sync_events(10, true, None)?;
+        assert_eq!(with_skips.len(), 2);
+        assert_eq!(with_skips[1].reason_code, "insufficient_listen_time");
+
+        let since = chrono::DateTime::parse_from_rfc3339("2026-06-22T08:05:00Z")?
+            .with_timezone(&chrono::Utc);
+        assert_eq!(index.spotify_sync_events(10, true, Some(since))?.len(), 1);
+        assert_eq!(
+            index
+                .spotify_recent_reason_counts(
+                    chrono::DateTime::parse_from_rfc3339("2026-06-22T00:00:00Z")?
+                        .with_timezone(&chrono::Utc)
+                )?
+                .first()
+                .map(|count| (count.reason_code.as_str(), count.count)),
+            Some(("insufficient_listen_time", 1))
+        );
+        assert_eq!(
+            index.spotify_last_successful_poll_at()?.as_deref(),
+            Some("2026-06-22T08:10:00Z")
+        );
+        assert_eq!(
+            index.spotify_last_capture_at()?.as_deref(),
+            Some("2026-06-22T08:10:00Z")
+        );
+        Ok(())
     }
 }

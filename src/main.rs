@@ -16,6 +16,7 @@ mod youtube;
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
+use chrono::{DateTime, NaiveDate, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use engine::Engine;
 use model::{Access, CaptureInput, SearchScope, SourceType};
@@ -72,6 +73,10 @@ enum Command {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
+    List {
+        #[arg(short, long, default_value_t = 10)]
+        limit: usize,
+    },
     Get {
         id: String,
     },
@@ -85,10 +90,18 @@ enum Command {
     },
     ConfigureSpotify {
         #[arg(long, env = "SPOTIFY_CLIENT_ID")]
-        client_id: String,
+        client_id: Option<String>,
     },
     SyncSpotify,
     SyncStatus,
+    SyncLog {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        show_skips: bool,
+        #[arg(long)]
+        since: Option<String>,
+    },
     Export {
         path: PathBuf,
         #[arg(long)]
@@ -170,6 +183,7 @@ fn main() -> Result<()> {
         } => serde_json::to_value(engine.query(&question, context.as_deref(), max_chunks)?)?,
         Command::CorpusOverview => serde_json::to_value(engine.corpus_overview()?)?,
         Command::Recent { limit } => serde_json::to_value(engine.recent(limit)?)?,
+        Command::List { limit } => serde_json::to_value(engine.recent(limit)?)?,
         Command::Get { id } => serde_json::to_value(engine.get_any(&id)?)?,
         Command::Status => serde_json::to_value(engine.status()?)?,
         Command::Doctor => serde_json::to_value(engine.doctor()?)?,
@@ -180,10 +194,39 @@ fn main() -> Result<()> {
             serde_json::json!({"configured":true})
         }
         Command::ConfigureSpotify { client_id } => {
-            serde_json::to_value(engine.configure_spotify_placeholder(client_id)?)?
+            let report = engine.configure_spotify(client_id)?;
+            println!("Spotify connected successfully");
+            serde_json::to_value(report)?
         }
         Command::SyncSpotify => serde_json::to_value(engine.sync_spotify()?)?,
         Command::SyncStatus => serde_json::to_value(engine.spotify_sync_status()?)?,
+        Command::SyncLog {
+            limit,
+            show_skips,
+            since,
+        } => {
+            let since = since.as_deref().map(parse_since).transpose()?;
+            let log = engine.spotify_sync_log(limit, show_skips, since)?;
+            if let Some(gap) = log.coverage_gap.as_deref() {
+                println!("coverage_gap: {gap}");
+            }
+            for event in log.events {
+                println!(
+                    "{} [{}] {} {} episode={} show={} - {}",
+                    event.timestamp,
+                    event.outcome,
+                    event.stage_reached,
+                    event.reason_code,
+                    event.episode_title.as_deref().unwrap_or("-"),
+                    event.show_name.as_deref().unwrap_or("-"),
+                    event.explanation
+                );
+                if let Some(error) = event.underlying_error.as_deref() {
+                    println!("  underlying_error: {error}");
+                }
+            }
+            return Ok(());
+        }
         Command::Export {
             path,
             include_public_bodies,
@@ -223,11 +266,21 @@ fn default_home() -> PathBuf {
         .join("Starlee")
 }
 
+fn parse_since(value: &str) -> Result<DateTime<Utc>> {
+    if let Ok(value) = DateTime::parse_from_rfc3339(value) {
+        return Ok(value.with_timezone(&Utc));
+    }
+    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d")?;
+    Ok(date.and_hms_opt(0, 0, 0).expect("valid midnight").and_utc())
+}
+
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::config::ConfigStore;
+    use crate::config::{ConfigStore, SpotifyOAuthConfig};
     use crate::embedding::{EMBEDDING_DIMENSION, Embedder};
+    use anyhow::Context;
+    use chrono::{TimeDelta, Utc};
     use std::sync::Arc;
 
     struct TestEmbedder;
@@ -446,5 +499,115 @@ mod integration_tests {
         assert!(overview.source_breakdown.is_empty());
         assert!(overview.top_topics.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn doctor_rejects_missing_empty_expired_and_malformed_spotify_tokens() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        engine.setup()?;
+        let store = ConfigStore::new(temp.path());
+
+        let spotify_check = || -> Result<crate::model::DoctorCheck> {
+            engine
+                .doctor()?
+                .checks
+                .into_iter()
+                .find(|check| check.name == "spotify_oauth")
+                .context("doctor should include spotify_oauth check")
+        };
+
+        assert!(!spotify_check()?.ok);
+
+        let mut config = store.load()?;
+        config.spotify_oauth = Some(test_oauth("", Utc::now() + TimeDelta::minutes(30)));
+        store.save(&config)?;
+        assert!(!spotify_check()?.ok);
+
+        config.spotify_oauth = Some(test_oauth("token", Utc::now() - TimeDelta::minutes(1)));
+        store.save(&config)?;
+        assert!(!spotify_check()?.ok);
+
+        config.spotify_oauth = Some(test_oauth("token", Utc::now() + TimeDelta::minutes(30)));
+        config.spotify_oauth.as_mut().unwrap().expires_at = "not-a-date".into();
+        store.save(&config)?;
+        assert!(!spotify_check()?.ok);
+
+        config.spotify_oauth = Some(test_oauth("token", Utc::now() + TimeDelta::minutes(30)));
+        store.save(&config)?;
+        let check = spotify_check()?;
+        assert!(check.ok);
+        assert_eq!(check.detail, "Spotify Test User");
+        assert!(engine.status()?.spotify_oauth_configured);
+        Ok(())
+    }
+
+    #[test]
+    fn spotify_episode_capture_writes_required_frontmatter() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let mut input = CaptureInput::new(
+            "A synced episode",
+            "[Transcript unavailable]",
+            SourceType::SpotifyEpisode,
+            Access::Restricted,
+        );
+        input.source = Some("spotify_sync".into());
+        input.site = Some("Spotify".into());
+        input.url = Some("https://open.spotify.com/episode/ep-required".into());
+        input.spotify_episode_id = Some("ep-required".into());
+        input.show = Some("Required Show".into());
+        input.transcript_status = Some("missing".into());
+
+        let record = engine.capture(input)?;
+        let file = std::fs::read_to_string(&record.file_path)?;
+        assert!(file.contains("title: A synced episode"));
+        assert!(file.contains("type: spotify_episode"));
+        assert!(file.contains("source: spotify_sync"));
+        assert!(file.contains("spotify_episode_id: ep-required"));
+        assert!(file.contains("show: Required Show"));
+        assert!(file.contains("transcript_status: missing"));
+
+        let reread = engine.get("spotify:episode:ep-required")?.unwrap();
+        assert_eq!(reread.metadata.source.as_deref(), Some("spotify_sync"));
+        assert_eq!(reread.metadata.show.as_deref(), Some("Required Show"));
+        assert_eq!(
+            reread.metadata.transcript_status.as_deref(),
+            Some("missing")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sync_log_records_serve_not_running_coverage_gap() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        engine.setup()?;
+        let store = ConfigStore::new(temp.path());
+        let mut config = store.load()?;
+        config.capture_port = 9;
+        store.save(&config)?;
+
+        let log = engine.spotify_sync_log(10, true, None)?;
+        assert!(
+            log.coverage_gap
+                .as_deref()
+                .is_some_and(|gap| { gap.contains("sync service is not running") })
+        );
+        assert!(log.events.iter().any(|event| {
+            event.reason_code == "serve_not_running" && event.explanation.contains("not running")
+        }));
+        Ok(())
+    }
+
+    fn test_oauth(access_token: &str, expires_at: chrono::DateTime<Utc>) -> SpotifyOAuthConfig {
+        SpotifyOAuthConfig {
+            client_id: "client123".into(),
+            display_name: Some("Spotify Test User".into()),
+            user_id: Some("spotify-user".into()),
+            access_token: access_token.into(),
+            refresh_token: "refresh".into(),
+            expires_at: expires_at.to_rfc3339(),
+        }
     }
 }

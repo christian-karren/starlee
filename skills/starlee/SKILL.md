@@ -152,8 +152,8 @@ steps after the install/setup check and before the final doctor confirmation:
 
 Spotify configuration:
 
-1. Detect Spotify status from `starlee doctor`. Treat `spotify_oauth:
-   configured` as green.
+1. Detect Spotify status from `starlee doctor`. Treat a `spotify_oauth`
+   check with `"ok": true` as green.
 2. If Spotify is missing, say:
 
    ```text
@@ -174,7 +174,8 @@ Spotify configuration:
 
 5. If a browser approval page opens, tell the user to approve the request and
    return to Codex when the browser says the connection is complete.
-6. After the command finishes, verify with `starlee doctor`.
+6. After the command finishes, run `starlee sync-spotify`.
+7. Verify with `starlee list` and `starlee doctor`.
 
 YouTube configuration:
 

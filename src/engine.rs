@@ -18,7 +18,7 @@ use crate::{
     index::Index,
     model::{
         CaptureInput, CorpusOverview, DoctorCheck, DoctorReport, GetResult, QueryResult, Record,
-        SearchHit, SearchScope, SetupReport, SourceType, Status,
+        SearchHit, SearchScope, SetupReport, SourceType, SpotifySyncEvent, SpotifySyncLog, Status,
     },
     public_fetch, sensor_assets, spotify,
     spotify::{SpotifyConfigureReport, SpotifySyncReport, SpotifySyncStatus},
@@ -285,7 +285,7 @@ impl Engine {
             capture_token_path: store.path().display().to_string(),
             youtube_metadata_configured: config.youtube_api_key.is_some(),
             borrowed_bundle_count: config.borrowed_bundles.len(),
-            spotify_oauth_configured: config.spotify_oauth.is_some(),
+            spotify_oauth_configured: spotify::oauth_is_valid(&config),
             spotify_account: config
                 .spotify_oauth
                 .as_ref()
@@ -306,6 +306,15 @@ impl Engine {
     pub fn doctor(&self) -> Result<DoctorReport> {
         let status = self.status()?;
         let config = self.local_config()?;
+        let coverage_gap = self.spotify_coverage_gap()?;
+        if let Some(gap) = coverage_gap.as_deref() {
+            self.record_spotify_sync_event(spotify_event(
+                "detected",
+                "failed",
+                "serve_not_running",
+                gap,
+            ))?;
+        }
         let extension_path = self.home.join("sensor-extension");
         let user_home = home_dir();
         let launch_agent_path = user_home.join("Library/LaunchAgents/com.starlee.capture.plist");
@@ -376,17 +385,65 @@ impl Engine {
         let extension_seen = config.extension.last_handshake_at.is_some();
         checks.push(DoctorCheck {
             name: "spotify_oauth".into(),
-            ok: true,
+            ok: spotify::oauth_is_valid(&config),
             detail: config
                 .spotify_oauth
                 .as_ref()
                 .and_then(|oauth| oauth.display_name.clone().or_else(|| oauth.user_id.clone()))
-                .unwrap_or_else(|| "not configured".into()),
+                .unwrap_or_else(|| "not configured or expired".into()),
         });
         checks.push(DoctorCheck {
             name: "spotify_episode_history_api".into(),
             ok: true,
-            detail: spotify::EPISODE_HISTORY_LIMITATION.into(),
+            detail: spotify::SPOTIFY_SYNC_DETAIL.into(),
+        });
+        let spotify_poller_running = capture_service_reachable(config.capture_port);
+        checks.push(DoctorCheck {
+            name: "spotify_poller_running".into(),
+            ok: spotify_poller_running,
+            detail: if spotify_poller_running {
+                "capture service is reachable; in-process Spotify poller can run when wired into serve".into()
+            } else {
+                "capture service is not reachable; Spotify playback during this window is invisible to Starlee".into()
+            },
+        });
+        checks.push(DoctorCheck {
+            name: "spotify_last_successful_poll".into(),
+            ok: self.index.spotify_last_successful_poll_at()?.is_some(),
+            detail: self
+                .index
+                .spotify_last_successful_poll_at()?
+                .unwrap_or_else(|| "no successful Spotify poll recorded".into()),
+        });
+        checks.push(DoctorCheck {
+            name: "spotify_last_capture".into(),
+            ok: true,
+            detail: self
+                .index
+                .spotify_last_capture_at()?
+                .unwrap_or_else(|| "no Spotify capture recorded".into()),
+        });
+        let recent_counts = self
+            .index
+            .spotify_recent_reason_counts(Utc::now() - chrono::TimeDelta::days(7))?;
+        let has_recent_hard_failure = recent_counts.iter().any(|count| {
+            matches!(
+                count.reason_code.as_str(),
+                "spotify_not_connected" | "serve_not_running" | "network_error" | "capture_error"
+            )
+        });
+        checks.push(DoctorCheck {
+            name: "spotify_recent_skips_failures".into(),
+            ok: !has_recent_hard_failure,
+            detail: if recent_counts.is_empty() {
+                "no Spotify skips or failures recorded in the last 7 days".into()
+            } else {
+                recent_counts
+                    .iter()
+                    .map(|count| format!("{}={}", count.reason_code, count.count))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
         });
         checks.push(DoctorCheck {
             name: "extension_handshake".into(),
@@ -415,11 +472,18 @@ impl Engine {
                 "codex_plugin_source" => {
                     "Run `./scripts/install.sh` to install the Codex plugin source."
                 }
-                "spotify_oauth" => {
-                    "Register a Spotify app, then run `starlee configure-spotify --client-id <id>`."
-                }
+                "spotify_oauth" => "Run `starlee configure-spotify` to connect Spotify.",
                 "spotify_episode_history_api" => {
                     "Choose a Spotify capture strategy that does not depend on recently-played podcast episodes."
+                }
+                "spotify_poller_running" => {
+                    "Run `starlee serve` or reinstall Starlee to restart the capture service and Spotify poller."
+                }
+                "spotify_last_successful_poll" => {
+                    "Run `starlee sync-spotify` or start `starlee serve` to record Spotify poller liveness."
+                }
+                "spotify_recent_skips_failures" => {
+                    "Run `starlee sync-log --show-skips` to inspect recent Spotify skip and failure reasons."
                 }
                 "extension_handshake" => {
                     "Load or reload ~/Starlee/sensor-extension in your browser."
@@ -490,19 +554,28 @@ impl Engine {
         store.save(&config)
     }
 
-    pub fn configure_spotify_placeholder(
-        &self,
-        client_id: String,
-    ) -> Result<SpotifyConfigureReport> {
+    pub fn configure_spotify(&self, client_id: Option<String>) -> Result<SpotifyConfigureReport> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
         config.spotify_sync.next_sync_at =
             Some(spotify::next_sync_at(chrono::Local::now()).to_rfc3339());
-        let client_id_stored = !client_id.trim().is_empty();
-        if client_id_stored {
-            config.spotify_client_id = Some(client_id.trim().to_owned());
+        let client_id_stored = if let Some(client_id) = client_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            config.spotify_client_id = Some(client_id.to_owned());
             config.spotify_oauth = None;
-        }
+            true
+        } else {
+            config
+                .spotify_client_id
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+        };
+        let oauth = spotify::configure_oauth(&config)?;
+        config.spotify_oauth = Some(oauth);
         store.save(&config)?;
         Ok(spotify::configure_report(client_id_stored))
     }
@@ -511,12 +584,166 @@ impl Engine {
         Ok(spotify::status(&self.local_config()?))
     }
 
+    pub fn spotify_sync_log(
+        &self,
+        limit: usize,
+        show_skips: bool,
+        since: Option<chrono::DateTime<Utc>>,
+    ) -> Result<SpotifySyncLog> {
+        let coverage_gap = self.spotify_coverage_gap()?;
+        if let Some(gap) = coverage_gap.as_deref() {
+            self.record_spotify_sync_event(spotify_event(
+                "detected",
+                "failed",
+                "serve_not_running",
+                gap,
+            ))?;
+        }
+        Ok(SpotifySyncLog {
+            events: self.index.spotify_sync_events(limit, show_skips, since)?,
+            coverage_gap,
+        })
+    }
+
     pub fn sync_spotify(&self) -> Result<SpotifySyncReport> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
-        let report = spotify::unsupported_sync_report();
+        let Some(oauth) = config.spotify_oauth.clone() else {
+            let event = spotify_event(
+                "detected",
+                "failed",
+                "spotify_not_connected",
+                "Spotify is not connected; run `starlee configure-spotify` before syncing.",
+            );
+            self.record_spotify_sync_event(event)?;
+            anyhow::bail!("Spotify is not connected; run `starlee configure-spotify` first");
+        };
+        let oauth = if spotify::oauth_is_valid(&config) {
+            oauth
+        } else {
+            let refreshed = match spotify::refresh_oauth(&oauth) {
+                Ok(refreshed) => refreshed,
+                Err(error) => {
+                    let mut event = spotify_event(
+                        "detected",
+                        "failed",
+                        "spotify_not_connected",
+                        "Spotify token refresh failed; reconnect Spotify before syncing.",
+                    );
+                    event.underlying_error = Some(error.to_string());
+                    self.record_spotify_sync_event(event)?;
+                    return Err(error);
+                }
+            };
+            config.spotify_oauth = Some(refreshed.clone());
+            store.save(&config)?;
+            refreshed
+        };
+        let plan = match spotify::recently_played_sync_plan(&oauth.access_token) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let mut event = spotify_event(
+                    "detected",
+                    "failed",
+                    "network_error",
+                    "Spotify poll failed before Starlee could inspect playback history.",
+                );
+                event.underlying_error = Some(error.to_string());
+                self.record_spotify_sync_event(event)?;
+                return Err(error);
+            }
+        };
+        let skipped = plan
+            .events
+            .iter()
+            .filter(|event| event.outcome == "skipped")
+            .count();
+        for event in plan.events {
+            self.record_spotify_sync_event(event)?;
+        }
+        let mut added = 0;
+        let mut failed = 0;
+        for episode in plan.episodes {
+            let input = episode.input;
+            let episode_id = input.spotify_episode_id.clone();
+            let stable_id = episode_id
+                .as_deref()
+                .map(|episode_id| format!("spotify:episode:{episode_id}"));
+            if let Some(stable_id) = stable_id.as_deref()
+                && self.get(stable_id)?.is_some()
+            {
+                self.record_spotify_sync_event(event_for_input(
+                    &input,
+                    "deduped",
+                    "skipped",
+                    "duplicate_already_captured",
+                    "Not captured: this Spotify episode is already in the Starlee vault.",
+                    None,
+                ))?;
+                continue;
+            }
+            match self.capture(input.clone()) {
+                Ok(_) => {
+                    added += 1;
+                    let (reason_code, explanation) = if input
+                        .transcript_status
+                        .as_deref()
+                        .is_some_and(|status| {
+                            status == "missing" || status.starts_with("unavailable")
+                        }) {
+                        (
+                            "no_feed_transcript",
+                            "Captured without transcript because no feed transcript was available.",
+                        )
+                    } else {
+                        (
+                            "captured_ok",
+                            "Captured Spotify episode into the Starlee vault.",
+                        )
+                    };
+                    self.record_spotify_sync_event(event_for_input(
+                        &input,
+                        "captured",
+                        "ok",
+                        reason_code,
+                        explanation,
+                        None,
+                    ))?;
+                }
+                Err(error) => {
+                    failed += 1;
+                    self.record_spotify_sync_event(event_for_input(
+                        &input,
+                        "captured",
+                        "failed",
+                        "capture_error",
+                        "Starlee saw the episode but failed while writing it to the vault.",
+                        Some(error.to_string()),
+                    ))?;
+                }
+            }
+        }
+        let checked_at = Utc::now().to_rfc3339();
+        let status = if failed > 0 {
+            "failed"
+        } else if added == 0 {
+            "no_qualifying_episodes"
+        } else {
+            "captured"
+        };
+        let report = SpotifySyncReport {
+            ok: true,
+            checked_at: checked_at.clone(),
+            added,
+            skipped: skipped + failed,
+            status: status.into(),
+            api_limitation: spotify::SPOTIFY_SYNC_DETAIL.into(),
+            next_action:
+                "Run `starlee list` or `starlee recent` to review synced Spotify episodes.".into(),
+        };
         config.spotify_sync.next_sync_at =
             Some(spotify::next_sync_at(chrono::Local::now()).to_rfc3339());
+        config.spotify_sync.last_synced_at = Some(checked_at);
         config.spotify_sync.last_result = Some(crate::config::SpotifySyncLastResult {
             checked_at: report.checked_at.clone(),
             added: report.added,
@@ -525,6 +752,55 @@ impl Engine {
         });
         store.save(&config)?;
         Ok(report)
+    }
+
+    pub fn record_spotify_sync_event(&self, event: SpotifySyncEvent) -> Result<()> {
+        self.index.insert_spotify_sync_event(&event)?;
+        self.append_spotify_log_line(&event)
+    }
+
+    fn append_spotify_log_line(&self, event: &SpotifySyncEvent) -> Result<()> {
+        let logs = self.home.join("logs");
+        std::fs::create_dir_all(&logs)?;
+        let line = format!(
+            "{} spotify_sync reason={} outcome={} stage={} episode_id={} title={}\n",
+            event.timestamp,
+            event.reason_code,
+            event.outcome,
+            event.stage_reached,
+            event.episode_id.as_deref().unwrap_or("-"),
+            event
+                .episode_title
+                .as_deref()
+                .unwrap_or("-")
+                .replace('\n', " ")
+        );
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(logs.join("serve.log"))?;
+        file.write_all(line.as_bytes())?;
+        Ok(())
+    }
+
+    fn spotify_coverage_gap(&self) -> Result<Option<String>> {
+        let last_poll = self.index.spotify_last_successful_poll_at()?;
+        let service_running = self
+            .local_config()
+            .map(|config| capture_service_reachable(config.capture_port))
+            .unwrap_or(false);
+        if service_running {
+            return Ok(None);
+        }
+        let Some(last_poll) = last_poll else {
+            return Ok(Some(
+                "the sync service is not running and Starlee has never recorded a successful Spotify poll; anything played in this window was not seen".into(),
+            ));
+        };
+        Ok(Some(format!(
+            "the sync service is not running; last successful Spotify poll was {last_poll}, so anything played after that may not have been seen"
+        )))
     }
 
     pub fn export_bundle(
@@ -556,6 +832,52 @@ fn token_fingerprint(value: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn spotify_event(
+    stage_reached: &str,
+    outcome: &str,
+    reason_code: &str,
+    explanation: &str,
+) -> SpotifySyncEvent {
+    SpotifySyncEvent {
+        id: 0,
+        timestamp: Utc::now().to_rfc3339(),
+        episode_id: None,
+        episode_title: None,
+        show_name: None,
+        stage_reached: stage_reached.into(),
+        outcome: outcome.into(),
+        reason_code: reason_code.into(),
+        explanation: explanation.into(),
+        underlying_error: None,
+        listen_duration_s: None,
+        threshold_s: None,
+    }
+}
+
+fn event_for_input(
+    input: &CaptureInput,
+    stage_reached: &str,
+    outcome: &str,
+    reason_code: &str,
+    explanation: &str,
+    underlying_error: Option<String>,
+) -> SpotifySyncEvent {
+    SpotifySyncEvent {
+        id: 0,
+        timestamp: Utc::now().to_rfc3339(),
+        episode_id: input.spotify_episode_id.clone(),
+        episode_title: Some(input.title.clone()),
+        show_name: input.show.clone(),
+        stage_reached: stage_reached.into(),
+        outcome: outcome.into(),
+        reason_code: reason_code.into(),
+        explanation: explanation.into(),
+        underlying_error,
+        listen_duration_s: input.listen_duration_s,
+        threshold_s: Some(10 * 60),
+    }
 }
 
 fn home_dir() -> PathBuf {

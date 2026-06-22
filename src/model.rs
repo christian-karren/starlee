@@ -31,6 +31,8 @@ pub struct Frontmatter {
     #[serde(default)]
     pub site: Option<String>,
     #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
     pub url: Option<String>,
     pub captured_at: DateTime<Utc>,
     #[serde(default)]
@@ -79,6 +81,8 @@ pub struct CaptureInput {
     #[serde(default)]
     pub site: Option<String>,
     #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
     pub url: Option<String>,
     #[serde(default)]
     pub published_at: Option<String>,
@@ -126,6 +130,7 @@ impl CaptureInput {
             access,
             author: None,
             site: None,
+            source: None,
             url: None,
             published_at: None,
             duration: None,
@@ -257,6 +262,41 @@ pub struct DoctorCheck {
     pub name: String,
     pub ok: bool,
     pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpotifySyncEvent {
+    pub id: i64,
+    pub timestamp: String,
+    #[serde(default)]
+    pub episode_id: Option<String>,
+    #[serde(default)]
+    pub episode_title: Option<String>,
+    #[serde(default)]
+    pub show_name: Option<String>,
+    pub stage_reached: String,
+    pub outcome: String,
+    pub reason_code: String,
+    pub explanation: String,
+    #[serde(default)]
+    pub underlying_error: Option<String>,
+    #[serde(default)]
+    pub listen_duration_s: Option<u64>,
+    #[serde(default)]
+    pub threshold_s: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpotifyReasonCount {
+    pub reason_code: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpotifySyncLog {
+    pub events: Vec<SpotifySyncEvent>,
+    #[serde(default)]
+    pub coverage_gap: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

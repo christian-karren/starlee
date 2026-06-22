@@ -123,6 +123,16 @@ fn call_tool(engine: &Engine, name: &str, args: Value) -> Result<Value> {
         }
         "starlee_corpus_overview" => serde_json::to_value(engine.corpus_overview()?)?,
         "starlee_spotify_sync_status" => serde_json::to_value(engine.spotify_sync_status()?)?,
+        "starlee_spotify_sync_log" => serde_json::to_value(
+            engine.spotify_sync_log(
+                args["limit"].as_u64().unwrap_or(20) as usize,
+                args["show_skips"].as_bool().unwrap_or(false),
+                args.get("since")
+                    .and_then(Value::as_str)
+                    .map(parse_since)
+                    .transpose()?,
+            )?,
+        )?,
         "recent" => {
             serde_json::to_value(engine.recent(args["k"].as_u64().unwrap_or(10) as usize)?)?
         }
@@ -181,6 +191,11 @@ fn tool_definitions() -> Vec<Value> {
             json!({"type":"object"}),
         ),
         tool(
+            "starlee_spotify_sync_log",
+            "Return structured Spotify sync traces, including skips and failures with reason codes",
+            json!({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200,"default":20},"show_skips":{"type":"boolean","default":false},"since":{"type":"string","description":"RFC3339 timestamp or YYYY-MM-DD"}}}),
+        ),
+        tool(
             "recent",
             "List recent captures",
             json!({"type":"object","properties":{"k":{"type":"integer","minimum":1,"maximum":50}}}),
@@ -226,6 +241,14 @@ fn tool_definitions() -> Vec<Value> {
             json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
         ),
     ]
+}
+
+fn parse_since(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+    if let Ok(value) = chrono::DateTime::parse_from_rfc3339(value) {
+        return Ok(value.with_timezone(&chrono::Utc));
+    }
+    let date = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")?;
+    Ok(date.and_hms_opt(0, 0, 0).expect("valid midnight").and_utc())
 }
 
 fn tool(name: &str, description: &str, input_schema: Value) -> Value {
@@ -281,6 +304,7 @@ mod tests {
         assert!(tool_names.contains(&"starlee_query"));
         assert!(tool_names.contains(&"starlee_corpus_overview"));
         assert!(tool_names.contains(&"starlee_spotify_sync_status"));
+        assert!(tool_names.contains(&"starlee_spotify_sync_log"));
         Ok(())
     }
 

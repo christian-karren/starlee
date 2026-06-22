@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CAPTURE_PORT: u16 = 47291;
+pub const DEFAULT_SPOTIFY_REDIRECT_URI: &str = "http://127.0.0.1:8888/callback";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalConfig {
@@ -23,6 +24,8 @@ pub struct LocalConfig {
     pub youtube_api_key: Option<String>,
     #[serde(default)]
     pub spotify_client_id: Option<String>,
+    #[serde(default)]
+    pub spotify_redirect_uri: Option<String>,
     #[serde(default)]
     pub spotify_oauth: Option<SpotifyOAuthConfig>,
     #[serde(default)]
@@ -118,6 +121,7 @@ impl ConfigStore {
             pending_capture_request: None,
             youtube_api_key: None,
             spotify_client_id: None,
+            spotify_redirect_uri: Some(DEFAULT_SPOTIFY_REDIRECT_URI.into()),
             spotify_oauth: None,
             spotify_sync: SpotifySyncConfig::default(),
             borrowed_bundles: Vec::new(),
@@ -140,6 +144,14 @@ impl ConfigStore {
         }
         if config.query_relevance_floor <= 0.0 {
             config.query_relevance_floor = default_query_relevance_floor();
+        }
+        if config
+            .spotify_redirect_uri
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(str::is_empty)
+        {
+            config.spotify_redirect_uri = Some(DEFAULT_SPOTIFY_REDIRECT_URI.into());
         }
         Ok(config)
     }
@@ -205,6 +217,7 @@ mod tests {
             pending_capture_request: None,
             youtube_api_key: None,
             spotify_client_id: None,
+            spotify_redirect_uri: Some(DEFAULT_SPOTIFY_REDIRECT_URI.into()),
             spotify_oauth: None,
             spotify_sync: SpotifySyncConfig::default(),
             borrowed_bundles: Vec::new(),
@@ -233,6 +246,10 @@ mod tests {
         )?;
         let config = ConfigStore::new(temp.path()).load()?;
         assert_eq!(config.query_relevance_floor, 0.35);
+        assert_eq!(
+            config.spotify_redirect_uri.as_deref(),
+            Some(DEFAULT_SPOTIFY_REDIRECT_URI)
+        );
         Ok(())
     }
 }

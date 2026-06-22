@@ -96,6 +96,7 @@ impl Vault {
             title: input.title.clone(),
             author: input.author,
             site: input.site,
+            source: input.source,
             url: input.url,
             captured_at,
             published_at: input.published_at,
@@ -244,6 +245,7 @@ mod tests {
             crate::model::Access::Restricted,
         );
         input.site = Some("Spotify".into());
+        input.source = Some("spotify_sync".into());
         input.url = Some("https://open.spotify.com/episode/ep123".into());
         input.duration = Some(3600);
         input.spotify_episode_id = Some("ep123".into());
