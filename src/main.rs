@@ -301,6 +301,11 @@ mod integration_tests {
         assert_eq!(report.extension_token, "redacted");
         assert_eq!(report.extension_token_fingerprint.len(), 12);
         assert!(report.bookmarklet.starts_with("redacted:"));
+        assert!(
+            PathBuf::from(&report.extension_path)
+                .join("assets/icon-128.png")
+                .exists()
+        );
         Ok(())
     }
 

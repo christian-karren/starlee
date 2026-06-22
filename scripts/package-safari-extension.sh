@@ -8,6 +8,7 @@ STAGE="$OUT_DIR/starlee-safari-web-extension"
 ZIP="$OUT_DIR/starlee-safari-web-extension-${VERSION}.zip"
 PROJECT_DIR="$OUT_DIR/StarleeSafari"
 PROJECT_EXTENSION_DIR="$OUT_DIR/extension"
+APP_ICON_SOURCE="$ROOT/assets/brand/starlee_desktop_application_icon.png"
 CONVERTER=${SAFARI_WEB_EXTENSION_CONVERTER:-}
 
 cd "$ROOT/sensor"
@@ -86,6 +87,26 @@ rm -rf "$PROJECT_DIR" "$PROJECT_EXTENSION_DIR"
 
 cp -R "$CONVERTER_PROJECT" "$PROJECT_DIR"
 cp -R "$CONVERTER_STAGE" "$PROJECT_EXTENSION_DIR"
+
+if [ -f "$APP_ICON_SOURCE" ]; then
+  APP_ICONSET=$(find "$PROJECT_DIR" -path '*/Assets.xcassets/AppIcon.appiconset' -type d -print -quit)
+  if [ -n "$APP_ICONSET" ]; then
+    sips --resampleHeightWidth 16 16 "$APP_ICON_SOURCE" --out "$APP_ICONSET/mac-icon-16@1x.png" >/dev/null
+    sips --resampleHeightWidth 32 32 "$APP_ICON_SOURCE" --out "$APP_ICONSET/mac-icon-16@2x.png" >/dev/null
+    sips --resampleHeightWidth 32 32 "$APP_ICON_SOURCE" --out "$APP_ICONSET/mac-icon-32@1x.png" >/dev/null
+    sips --resampleHeightWidth 64 64 "$APP_ICON_SOURCE" --out "$APP_ICONSET/mac-icon-32@2x.png" >/dev/null
+    sips --resampleHeightWidth 128 128 "$APP_ICON_SOURCE" --out "$APP_ICONSET/mac-icon-128@1x.png" >/dev/null
+    sips --resampleHeightWidth 256 256 "$APP_ICON_SOURCE" --out "$APP_ICONSET/mac-icon-128@2x.png" >/dev/null
+    sips --resampleHeightWidth 256 256 "$APP_ICON_SOURCE" --out "$APP_ICONSET/mac-icon-256@1x.png" >/dev/null
+    sips --resampleHeightWidth 512 512 "$APP_ICON_SOURCE" --out "$APP_ICONSET/mac-icon-256@2x.png" >/dev/null
+    sips --resampleHeightWidth 512 512 "$APP_ICON_SOURCE" --out "$APP_ICONSET/mac-icon-512@1x.png" >/dev/null
+    sips --resampleHeightWidth 1024 1024 "$APP_ICON_SOURCE" --out "$APP_ICONSET/mac-icon-512@2x.png" >/dev/null
+  fi
+  RESOURCE_ICON=$(find "$PROJECT_DIR" -path '*/Resources/Icon.png' -type f -print -quit)
+  if [ -n "$RESOURCE_ICON" ]; then
+    sips --resampleHeightWidth 128 128 "$APP_ICON_SOURCE" --out "$RESOURCE_ICON" >/dev/null
+  fi
+fi
 
 PROJECT_FILE=$(find "$PROJECT_DIR" -name project.pbxproj -print -quit)
 if [ -n "$PROJECT_FILE" ]; then

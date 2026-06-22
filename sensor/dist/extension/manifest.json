@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Starlee Capture",
+  "name": "Starlee",
   "version": "0.1.0",
   "description": "Save rendered articles and YouTube transcripts to your local Starlee brain.",
   "permissions": ["storage", "activeTab", "tabs", "alarms"],
@@ -13,7 +13,7 @@
   },
   "background": { "service_worker": "background.js", "type": "module" },
   "action": {
-    "default_title": "Save to Starlee",
+    "default_title": "Starlee",
     "default_icon": {
       "16": "assets/icon-16.png",
       "32": "assets/icon-32.png",
