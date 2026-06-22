@@ -81,30 +81,16 @@ impl CapturePayload {
             bail!("captured article text cannot be empty");
         }
         let video_id = youtube_video_id(&self.url);
-        Ok(CaptureInput {
-            title: self.dom_extract.title,
-            text,
-            source_type: self.source_type,
-            access: self.access,
-            author: self.dom_extract.byline,
-            site: self.dom_extract.site,
-            url: Some(self.url),
-            published_at: self.dom_extract.published_at,
-            duration: None,
-            video_id,
-            summary: self.dom_extract.summary,
-            tags: self.tags,
-            spotify_episode_id: None,
-            spotify_show_id: None,
-            show: None,
-            listen_duration_s: None,
-            listen_progress_pct: None,
-            transcript_status: None,
-            transcript_source: None,
-            matched_youtube_id: None,
-            linked_youtube_id: None,
-            description: None,
-        })
+        let mut input =
+            CaptureInput::new(self.dom_extract.title, text, self.source_type, self.access);
+        input.author = self.dom_extract.byline;
+        input.site = self.dom_extract.site;
+        input.url = Some(self.url);
+        input.published_at = self.dom_extract.published_at;
+        input.video_id = video_id;
+        input.summary = self.dom_extract.summary;
+        input.tags = self.tags;
+        Ok(input)
     }
 }
 

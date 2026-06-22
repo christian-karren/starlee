@@ -63,35 +63,18 @@ pub fn fetch_explicitly_public(url: &str) -> Result<CaptureInput> {
     if body.split_whitespace().count() < 20 {
         bail!("public page did not contain enough readable text");
     }
-    Ok(CaptureInput {
-        title,
-        text: body,
-        source_type: SourceType::Article,
-        access: Access::Public,
-        author: meta(&document, "meta[name='author']", "content"),
-        site: meta(&document, "meta[property='og:site_name']", "content")
-            .or_else(|| Some(hostname.to_owned())),
-        url: Some(url.to_owned()),
-        published_at: meta(
-            &document,
-            "meta[property='article:published_time']",
-            "content",
-        ),
-        duration: None,
-        video_id: None,
-        summary: meta(&document, "meta[name='description']", "content"),
-        tags: Vec::new(),
-        spotify_episode_id: None,
-        spotify_show_id: None,
-        show: None,
-        listen_duration_s: None,
-        listen_progress_pct: None,
-        transcript_status: None,
-        transcript_source: None,
-        matched_youtube_id: None,
-        linked_youtube_id: None,
-        description: None,
-    })
+    let mut input = CaptureInput::new(title, body, SourceType::Article, Access::Public);
+    input.author = meta(&document, "meta[name='author']", "content");
+    input.site = meta(&document, "meta[property='og:site_name']", "content")
+        .or_else(|| Some(hostname.to_owned()));
+    input.url = Some(url.to_owned());
+    input.published_at = meta(
+        &document,
+        "meta[property='article:published_time']",
+        "content",
+    );
+    input.summary = meta(&document, "meta[name='description']", "content");
+    Ok(input)
 }
 
 fn accessibility(document: &Html) -> Option<bool> {

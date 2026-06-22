@@ -112,6 +112,40 @@ pub struct CaptureInput {
     pub description: Option<String>,
 }
 
+impl CaptureInput {
+    pub fn new(
+        title: impl Into<String>,
+        text: impl Into<String>,
+        source_type: SourceType,
+        access: Access,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            text: text.into(),
+            source_type,
+            access,
+            author: None,
+            site: None,
+            url: None,
+            published_at: None,
+            duration: None,
+            video_id: None,
+            summary: None,
+            tags: Vec::new(),
+            spotify_episode_id: None,
+            spotify_show_id: None,
+            show: None,
+            listen_duration_s: None,
+            listen_progress_pct: None,
+            transcript_status: None,
+            transcript_source: None,
+            matched_youtube_id: None,
+            linked_youtube_id: None,
+            description: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
     pub metadata: Frontmatter,
@@ -231,5 +265,6 @@ pub struct SetupReport {
     pub bookmarklet: String,
     pub extension_path: String,
     pub extension_token: String,
+    pub extension_token_fingerprint: String,
     pub example_queries: Vec<String>,
 }

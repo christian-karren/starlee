@@ -143,30 +143,12 @@ fn main() -> Result<()> {
                 AccessArg::Public => Access::Public,
                 AccessArg::Restricted => Access::Restricted,
             };
-            serde_json::to_value(engine.capture(CaptureInput {
-                title,
-                text,
-                source_type,
-                access,
-                author,
-                site,
-                url,
-                published_at: None,
-                duration: None,
-                video_id: None,
-                summary: None,
-                tags: tag,
-                spotify_episode_id: None,
-                spotify_show_id: None,
-                show: None,
-                listen_duration_s: None,
-                listen_progress_pct: None,
-                transcript_status: None,
-                transcript_source: None,
-                matched_youtube_id: None,
-                linked_youtube_id: None,
-                description: None,
-            })?)?
+            let mut input = CaptureInput::new(title, text, source_type, access);
+            input.author = author;
+            input.site = site;
+            input.url = url;
+            input.tags = tag;
+            serde_json::to_value(engine.capture(input)?)?
         }
         Command::CaptureUrl { url } => serde_json::to_value(engine.capture_public_url(&url)?)?,
         Command::Search {
@@ -278,30 +260,14 @@ mod integration_tests {
     fn capture_search_and_reindex_round_trip() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
-        let captured = engine.capture(CaptureInput {
-            title: "Knowledge compounds".into(),
-            text: "A durable digital brain makes forgotten ideas searchable again.".into(),
-            source_type: SourceType::Note,
-            access: Access::Restricted,
-            author: None,
-            site: None,
-            url: None,
-            published_at: None,
-            duration: None,
-            video_id: None,
-            summary: None,
-            tags: vec!["memory".into()],
-            spotify_episode_id: None,
-            spotify_show_id: None,
-            show: None,
-            listen_duration_s: None,
-            listen_progress_pct: None,
-            transcript_status: None,
-            transcript_source: None,
-            matched_youtube_id: None,
-            linked_youtube_id: None,
-            description: None,
-        })?;
+        let mut input = CaptureInput::new(
+            "Knowledge compounds",
+            "A durable digital brain makes forgotten ideas searchable again.",
+            SourceType::Note,
+            Access::Restricted,
+        );
+        input.tags = vec!["memory".into()];
+        let captured = engine.capture(input)?;
         assert!(PathBuf::from(&captured.file_path).exists());
         assert_eq!(
             engine
@@ -324,33 +290,34 @@ mod integration_tests {
     }
 
     #[test]
+    fn onboarding_report_does_not_expose_capture_token() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let report = engine.onboarding()?;
+        let config = ConfigStore::new(temp.path()).load()?;
+        let serialized = serde_json::to_string(&report)?;
+
+        assert!(!serialized.contains(&config.capture_token));
+        assert_eq!(report.extension_token, "redacted");
+        assert_eq!(report.extension_token_fingerprint.len(), 12);
+        assert!(report.bookmarklet.starts_with("redacted:"));
+        Ok(())
+    }
+
+    #[test]
     fn share_bundle_strips_restricted_bodies_and_searches_read_only() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let owner = Engine::with_embedder(temp.path().join("owner"), Arc::new(TestEmbedder));
-        owner.capture(CaptureInput {
-            title: "Private memory".into(),
-            text: "A restricted searchable insight about memory systems.".into(),
-            source_type: SourceType::Article,
-            access: Access::Restricted,
-            author: None,
-            site: Some("paid.example".into()),
-            url: Some("https://paid.example/story".into()),
-            published_at: None,
-            duration: None,
-            video_id: None,
-            summary: Some("An insight about memory systems.".into()),
-            tags: Vec::new(),
-            spotify_episode_id: None,
-            spotify_show_id: None,
-            show: None,
-            listen_duration_s: None,
-            listen_progress_pct: None,
-            transcript_status: None,
-            transcript_source: None,
-            matched_youtube_id: None,
-            linked_youtube_id: None,
-            description: None,
-        })?;
+        let mut private_memory = CaptureInput::new(
+            "Private memory",
+            "A restricted searchable insight about memory systems.",
+            SourceType::Article,
+            Access::Restricted,
+        );
+        private_memory.site = Some("paid.example".into());
+        private_memory.url = Some("https://paid.example/story".into());
+        private_memory.summary = Some("An insight about memory systems.".into());
+        owner.capture(private_memory)?;
         let bundle_path = temp.path().join("shared.starlee");
         let audit = owner.export_bundle(&bundle_path, true)?;
         assert!(audit.valid);
@@ -382,29 +349,12 @@ mod integration_tests {
     fn recapturing_a_url_updates_the_existing_markdown_record() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
-        let input = |text: &str| CaptureInput {
-            title: "Same story".into(),
-            text: text.into(),
-            source_type: SourceType::Article,
-            access: Access::Public,
-            author: None,
-            site: Some("example.com".into()),
-            url: Some("https://example.com/same-story".into()),
-            published_at: None,
-            duration: None,
-            video_id: None,
-            summary: None,
-            tags: Vec::new(),
-            spotify_episode_id: None,
-            spotify_show_id: None,
-            show: None,
-            listen_duration_s: None,
-            listen_progress_pct: None,
-            transcript_status: None,
-            transcript_source: None,
-            matched_youtube_id: None,
-            linked_youtube_id: None,
-            description: None,
+        let input = |text: &str| {
+            let mut input =
+                CaptureInput::new("Same story", text, SourceType::Article, Access::Public);
+            input.site = Some("example.com".into());
+            input.url = Some("https://example.com/same-story".into());
+            input
         };
         let first = engine.capture(input("The first version of the article."))?;
         let second = engine.capture(input(
@@ -426,30 +376,19 @@ mod integration_tests {
     fn query_returns_citation_ready_chunks_and_overview() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
-        engine.capture(CaptureInput {
-            title: "Agentic memory systems".into(),
-            text: "A durable digital brain helps people recall forgotten agent design patterns and connect them to new work.".into(),
-            source_type: SourceType::Article,
-            access: Access::Restricted,
-            author: Some("Casey Researcher".into()),
-            site: Some("example.com".into()),
-            url: Some("https://example.com/agents".into()),
-            published_at: None,
-            duration: None,
-            video_id: None,
-            summary: Some("Agent memory systems connect forgotten design patterns.".into()),
-            tags: vec!["agents".into()],
-            spotify_episode_id: None,
-            spotify_show_id: None,
-            show: None,
-            listen_duration_s: None,
-            listen_progress_pct: None,
-            transcript_status: None,
-            transcript_source: None,
-            matched_youtube_id: None,
-            linked_youtube_id: None,
-            description: None,
-        })?;
+        let mut memory_systems = CaptureInput::new(
+            "Agentic memory systems",
+            "A durable digital brain helps people recall forgotten agent design patterns and connect them to new work.",
+            SourceType::Article,
+            Access::Restricted,
+        );
+        memory_systems.author = Some("Casey Researcher".into());
+        memory_systems.site = Some("example.com".into());
+        memory_systems.url = Some("https://example.com/agents".into());
+        memory_systems.summary =
+            Some("Agent memory systems connect forgotten design patterns.".into());
+        memory_systems.tags = vec!["agents".into()];
+        engine.capture(memory_systems)?;
 
         let query = engine.query("forgotten agent design", None, 8)?;
         assert!(!query.chunks.is_empty());
@@ -472,30 +411,12 @@ mod integration_tests {
     fn query_reports_gap_when_floor_excludes_results() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
-        engine.capture(CaptureInput {
-            title: "Sparse note".into(),
-            text: "A durable digital brain makes forgotten ideas searchable again.".into(),
-            source_type: SourceType::Note,
-            access: Access::Restricted,
-            author: None,
-            site: None,
-            url: None,
-            published_at: None,
-            duration: None,
-            video_id: None,
-            summary: None,
-            tags: Vec::new(),
-            spotify_episode_id: None,
-            spotify_show_id: None,
-            show: None,
-            listen_duration_s: None,
-            listen_progress_pct: None,
-            transcript_status: None,
-            transcript_source: None,
-            matched_youtube_id: None,
-            linked_youtube_id: None,
-            description: None,
-        })?;
+        engine.capture(CaptureInput::new(
+            "Sparse note",
+            "A durable digital brain makes forgotten ideas searchable again.",
+            SourceType::Note,
+            Access::Restricted,
+        ))?;
         let store = ConfigStore::new(temp.path());
         let mut config = store.load()?;
         config.query_relevance_floor = 1.1;

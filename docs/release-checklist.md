@@ -15,7 +15,7 @@
 - Recaptured canonical URLs update in place.
 - Share export strips all restricted bodies and blocks output on audit failure.
 - Borrowed bundles open read-only and return summary/citation for `get`.
-- Setup installs the model, extension assets, bookmarklet, token, and example prompts.
+- Setup installs the model, extension assets, local token, and example prompts without printing the token.
 - Optional macOS menu-bar app supports status, recent items, search, pasted capture, vault access, and endpoint control.
 
 ## Validation commands

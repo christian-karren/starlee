@@ -237,30 +237,23 @@ mod tests {
     fn spotify_episode_uses_stable_identity_and_hides_description_from_body() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let vault = Vault::new(temp.path().join("vault"));
-        let record = vault.write(CaptureInput {
-            title: "A podcast episode".into(),
-            text: "[Transcript unavailable]".into(),
-            source_type: SourceType::SpotifyEpisode,
-            access: crate::model::Access::Restricted,
-            author: None,
-            site: Some("Spotify".into()),
-            url: Some("https://open.spotify.com/episode/ep123".into()),
-            published_at: None,
-            duration: Some(3600),
-            video_id: None,
-            summary: None,
-            tags: Vec::new(),
-            spotify_episode_id: Some("ep123".into()),
-            spotify_show_id: Some("show456".into()),
-            show: Some("Great Show".into()),
-            listen_duration_s: Some(2400),
-            listen_progress_pct: Some(67),
-            transcript_status: Some("missing".into()),
-            transcript_source: None,
-            matched_youtube_id: None,
-            linked_youtube_id: None,
-            description: Some("This description should not be queryable.".into()),
-        })?;
+        let mut input = CaptureInput::new(
+            "A podcast episode",
+            "[Transcript unavailable]",
+            SourceType::SpotifyEpisode,
+            crate::model::Access::Restricted,
+        );
+        input.site = Some("Spotify".into());
+        input.url = Some("https://open.spotify.com/episode/ep123".into());
+        input.duration = Some(3600);
+        input.spotify_episode_id = Some("ep123".into());
+        input.spotify_show_id = Some("show456".into());
+        input.show = Some("Great Show".into());
+        input.listen_duration_s = Some(2400);
+        input.listen_progress_pct = Some(67);
+        input.transcript_status = Some("missing".into());
+        input.description = Some("This description should not be queryable.".into());
+        let record = vault.write(input)?;
 
         assert_eq!(record.metadata.id, "spotify:episode:ep123");
         assert!(record.file_path.ends_with("-spotify-ep123.md"));

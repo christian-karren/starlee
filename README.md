@@ -69,7 +69,7 @@ starlee setup
 
 `setup` initializes `~/Starlee`, downloads the quantized local embedding model,
 generates unpacked Chromium extension assets in `~/Starlee/sensor-extension`,
-and returns extension settings plus a personalized bookmarklet.
+and returns redacted extension settings. It does not print the capture token.
 
 For a packaged CLI and optional `Starlee.app`:
 
@@ -120,8 +120,9 @@ capture, hybrid search, recent/get, reindex, bookmarklet generation, optional
 YouTube configuration, export, and ingest.
 The MCP process also serves browser capture on `http://127.0.0.1:47291` by
 default. Run `starlee serve` when only the capture endpoint is needed.
-Run `starlee bookmarklet` (or call the MCP `bookmarklet` tool) to generate
-a personalized zero-install capture link containing the local token.
+Run `starlee bookmarklet` (or call the MCP `bookmarklet` tool) only when you
+explicitly want to generate a personalized zero-install capture link containing
+the local token.
 Run `starlee doctor` for redacted setup diagnostics; it reports token
 fingerprints instead of token values.
 

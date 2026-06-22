@@ -65,9 +65,10 @@ impl Engine {
         let extension_path = sensor_assets::install(&self.home, &config)?;
         Ok(SetupReport {
             status,
-            bookmarklet: crate::config::bookmarklet(&config),
+            bookmarklet: "redacted: run `starlee bookmarklet` locally to generate the token-bearing bookmarklet".into(),
             extension_path: extension_path.display().to_string(),
-            extension_token: config.capture_token,
+            extension_token: "redacted".into(),
+            extension_token_fingerprint: token_fingerprint(&config.capture_token),
             example_queries: vec![
                 "What do I know about this topic?".into(),
                 "What have I captured recently?".into(),
