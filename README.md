@@ -55,11 +55,11 @@ Open the menu-bar app:
 open ~/Applications/Starlee.app
 ```
 
-The app includes a menu-bar item plus a floating `★` button, Save Current
-Article, Recent Captures, Browser Setup, diagnostics, vault access, and
-capture-service controls. The Save Current Article action writes a local capture
-request; the browser extension polls the loopback service and extracts the
-active tab when browser permissions allow it.
+The app includes a menu-bar item with Save Current Article, Recent Captures,
+Browser Setup, diagnostics, vault access, and capture-service controls. The Save
+Current Article action writes a local capture request; the browser extension
+polls the loopback service and extracts the active tab when browser permissions
+allow it.
 
 You can still run setup manually:
 

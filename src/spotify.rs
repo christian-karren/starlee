@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local, NaiveTime, TimeDelta, Utc};
+use chrono::{DateTime, Local, NaiveTime, TimeDelta, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::config::LocalConfig;
@@ -89,17 +89,6 @@ pub fn next_sync_at(now: DateTime<Local>) -> DateTime<Local> {
         .and_local_timezone(now.timezone())
         .single()
         .unwrap_or(now + TimeDelta::hours(1))
-}
-
-trait Hour {
-    fn hour(&self) -> u32;
-}
-
-impl Hour for DateTime<Local> {
-    fn hour(&self) -> u32 {
-        use chrono::Timelike;
-        Timelike::hour(self)
-    }
 }
 
 pub fn unsupported_sync_report() -> SpotifySyncReport {

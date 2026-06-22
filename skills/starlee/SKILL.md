@@ -234,7 +234,7 @@ To save pasted text, use the `capture` MCP tool with `source_type: "note"` or
 
 To save the current webpage, prefer the user's installed browser sensor:
 
-- The macOS menu-bar item `★ Starlee` should create a local capture request.
+- The macOS Starlee menu-bar icon should create a local capture request.
 - The Safari or Chromium extension should extract the visible page and send it
   only to `http://127.0.0.1:47291`.
 - If capture fails, run `doctor` and check local service, extension assets,
