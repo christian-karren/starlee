@@ -7,5 +7,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -parse-as-library -O -framework AppKit -framework UserNotifications "$ROOT"/gui/*.swift -o "$APP/Contents/MacOS/StarleeMenuBar"
 cp "$ROOT/gui/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/target/release/starlee" "$APP/Contents/Resources/starlee"
+if [ -d "$ROOT/gui/Resources" ]; then
+  cp -R "$ROOT/gui/Resources/." "$APP/Contents/Resources/"
+fi
 chmod 755 "$APP/Contents/MacOS/StarleeMenuBar" "$APP/Contents/Resources/starlee"
 printf '%s\n' "$APP"

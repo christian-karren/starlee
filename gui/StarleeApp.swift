@@ -12,12 +12,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.setActivationPolicy(.accessory)
         notifier.requestAuthorization()
 
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.isVisible = true
         if let button = statusItem.button {
-            button.title = "★ Starlee"
-            button.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-            button.contentTintColor = .labelColor
+            if let image = MenuBarIcon.makeImage() {
+                button.title = ""
+                button.image = image
+                button.imagePosition = .imageOnly
+            } else {
+                button.title = "★ Starlee"
+                button.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+                button.contentTintColor = .labelColor
+            }
             button.toolTip = "Starlee — save the current article"
             button.setAccessibilityLabel("Starlee menu bar")
         }
