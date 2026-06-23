@@ -177,7 +177,9 @@ impl Index {
         if stale_ids.is_empty() {
             return Ok(0);
         }
-        let stale = stale_ids.into_iter().collect::<std::collections::HashSet<_>>();
+        let stale = stale_ids
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
         let mut updated = 0;
         for record in records {
             if stale.contains(&record.metadata.id) {

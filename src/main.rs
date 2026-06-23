@@ -342,7 +342,10 @@ mod integration_tests {
         input.tags = vec!["memory".into()];
         input.consumed_at = Some("2026-06-22T08:30:00Z".into());
         let captured = engine.capture(input)?;
-        assert_eq!(captured.metadata.consumed_at.as_deref(), Some("2026-06-22T08:30:00Z"));
+        assert_eq!(
+            captured.metadata.consumed_at.as_deref(),
+            Some("2026-06-22T08:30:00Z")
+        );
         assert!(PathBuf::from(&captured.file_path).exists());
         assert_eq!(
             engine
@@ -584,7 +587,10 @@ mod integration_tests {
         assert!(engine.status()?.chunks_stale > 0);
         let status = engine.reindex(true)?;
         assert_eq!(status.chunks_stale, 0);
-        assert_eq!(status.embedding_model_current, "deterministic-test-embedder");
+        assert_eq!(
+            status.embedding_model_current,
+            "deterministic-test-embedder"
+        );
         Ok(())
     }
 

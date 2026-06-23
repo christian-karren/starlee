@@ -267,8 +267,7 @@ impl Engine {
     pub fn reindex(&self, stale_embeddings_only: bool) -> Result<Status> {
         let records = self.vault.records()?;
         if stale_embeddings_only {
-            self.index
-                .reembed_stale(&records, self.embedder.as_ref())?;
+            self.index.reembed_stale(&records, self.embedder.as_ref())?;
         } else {
             self.index.rebuild(&records, self.embedder.as_ref())?;
         }
