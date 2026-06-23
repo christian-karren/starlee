@@ -287,8 +287,10 @@ fn header(name: &str, value: &str) -> Header {
 #[cfg(test)]
 mod tests {
     use std::{
+        fs,
         io::{Read, Write},
         net::TcpStream,
+        process::Command,
         sync::Arc,
     };
 
@@ -545,6 +547,68 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn bridge_smoke_saves_menu_bar_capture_and_records_sanitized_terminal_status() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = test_engine(temp.path());
+        let mut config = test_config();
+        config.capture_token = "bridge-smoke-token".into();
+        let server = spawn(engine.clone(), config)?;
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let output = Command::new("node")
+            .arg(manifest_dir.join("sensor/scripts/bridge-smoke.mjs"))
+            .arg(&server.address)
+            .arg("bridge-smoke-token")
+            .arg(manifest_dir.join("sensor/test/fixture.html"))
+            .current_dir(&manifest_dir)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "bridge harness failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let trace: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(
+            trace["saved"]["terminal"]["request"]["status"].as_str(),
+            Some("capture_saved")
+        );
+        assert_eq!(trace["duplicate"]["skipped"].as_str(), Some("duplicate"));
+        assert!(trace["secondPickup"]["request"].is_null());
+        assert_eq!(
+            trace["storage"]["lastMenuRequestStatus"].as_str(),
+            Some("capture_saved")
+        );
+
+        let markdown_files = markdown_files(&temp.path().join("vault"))?;
+        assert_eq!(markdown_files.len(), 1, "expected exactly one vault entry");
+        let document = fs::read_to_string(&markdown_files[0])?;
+        assert!(document.contains("title: A durable browser memory"));
+        assert!(document.contains("url: http://127.0.0.1:4173/test/fixture.html"));
+        assert!(document.contains("Starlee keeps a local Markdown record"));
+
+        let config = engine.local_config()?;
+        let terminal = config
+            .capture_request_status
+            .expect("terminal capture request status recorded");
+        assert_eq!(terminal.status, "capture_saved");
+        assert_eq!(terminal.source, "menu-bar");
+        let page = terminal.page.as_ref().expect("safe page metadata recorded");
+        assert_eq!(page.title.as_deref(), Some("A durable browser memory"));
+        assert_eq!(
+            page.url.as_deref(),
+            Some("http://127.0.0.1:4173/test/fixture.html")
+        );
+        assert_eq!(page.domain.as_deref(), Some("127.0.0.1"));
+        let status_json = serde_json::to_string(&terminal)?;
+        assert!(!status_json.contains("bridge-smoke-token"));
+        assert!(!status_json.contains("Starlee keeps a local Markdown record"));
+        assert!(!status_json.contains("selected_text"));
+        assert!(!status_json.contains("transcript"));
+        drop(server);
+        Ok(())
+    }
+
     fn post(address: &str, body: &str, token: Option<&str>) -> Result<String> {
         post_path(address, "/capture", body, token)
     }
@@ -576,5 +640,22 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response)?;
         Ok(response)
+    }
+
+    fn markdown_files(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
+        let mut files = Vec::new();
+        if !root.exists() {
+            return Ok(files);
+        }
+        for entry in fs::read_dir(root)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                files.extend(markdown_files(&path)?);
+            } else if path.extension().and_then(|value| value.to_str()) == Some("md") {
+                files.push(path);
+            }
+        }
+        files.sort();
+        Ok(files)
     }
 }

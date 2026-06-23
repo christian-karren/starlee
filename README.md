@@ -185,3 +185,28 @@ key or inference service.
 
 See [docs/architecture.md](docs/architecture.md) and
 [docs/release-checklist.md](docs/release-checklist.md).
+
+## Tests
+
+Run the full local test suite:
+
+```sh
+make test
+```
+
+Run only the menu-bar/browser bridge smoke test:
+
+```sh
+./scripts/bridge-smoke-test.sh
+```
+
+The smoke test starts the real loopback capture service on a temporary Starlee
+home, drives a menu-bar-style `/capture-request`, uses the browser sensor's
+article extraction modules against a deterministic local fixture, posts the
+result to `/capture`, records `/capture-request/result`, and asserts that one
+Markdown vault entry was created. It also checks duplicate pickup handling and
+that terminal request metadata contains only sanitized status and record
+identity fields, not article bodies, selected text, transcripts, or tokens.
+
+This is a bridge harness, not full browser UI automation. It does not launch
+Chrome, exercise extension permissions, or validate Safari behavior.
