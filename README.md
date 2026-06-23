@@ -42,7 +42,10 @@ The installer:
 Important: the installer generates extension assets, but Chrome does not treat
 that as an installed extension. Load `~/Starlee/sensor-extension` once in
 `chrome://extensions` with Developer Mode enabled. After Chrome loads or reloads
-the extension, `starlee doctor` should show `extension_handshake: true`.
+the extension, `starlee doctor` should show a healthy `browser_bridge` check.
+The diagnostics include whether extension setup/config exists, which browser
+checked in, whether the heartbeat is fresh, the last capture request status, the
+last safe failure reason, and the next recovery action.
 
 The generated extension folder includes the local-only capture configuration,
 so the “Save article to Starlee” page button and the Starlee menu-bar capture
@@ -126,7 +129,11 @@ Run `starlee bookmarklet` (or call the MCP `bookmarklet` tool) only when you
 explicitly want to generate a personalized zero-install capture link containing
 the local token.
 Run `starlee doctor` for redacted setup diagnostics; it reports token
-fingerprints instead of token values.
+fingerprints instead of token values. Browser bridge health is also redacted:
+it does not include request IDs, capture tokens, article bodies, transcripts,
+selected text, or restricted content. Common recovery actions are to load or
+reload the extension, grant site access and reload the page, open an article or
+YouTube watch page, or retry after the browser picks up timed-out requests.
 
 `setup` creates a random 256-bit capture token in `<home>/config.json`; on Unix,
 that file is mode `0600`. Browser sensors must send it as `Authorization: Bearer

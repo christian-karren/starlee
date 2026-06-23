@@ -36,17 +36,23 @@ testButton.addEventListener("click", async () => {
 async function renderStatus({ forceHello = false } = {}) {
   if (forceHello) await chrome.runtime.sendMessage({ type: "STARLEE_HELLO" });
   const state = await chrome.runtime.sendMessage({ type: "STARLEE_STATUS" });
+  const bridge = await chrome.runtime.sendMessage({ type: "STARLEE_BRIDGE_HEALTH" }).catch(() => null);
   const label = state.ok ? "Connected to local Starlee" : statusLabel(state);
   connection.textContent = [
     label,
+    bridge?.recommended_next_action ? `Next action: ${bridge.recommended_next_action}` : "",
     `Browser: ${state.browser || "Chrome"}`,
     `Extension: ${state.extensionVersion || "unknown"}`,
     `Port: ${state.port || 47291}`,
     state.lastHandshakeAt ? `Last handshake: ${state.lastHandshakeAt}` : "Last handshake: not yet connected",
+    bridge?.checked_in_recently === false ? "Bridge heartbeat: stale or missing" : "",
+    bridge?.can_capture_active_tab === false ? "Active tab capture: not available" : "",
     state.lastCaptureStatus ? `Last capture: ${state.lastCaptureStatus}` : "",
-    state.lastMenuRequestStatus ? `Last menu-bar request: ${state.lastMenuRequestStatus}` : ""
+    state.lastMenuRequestStatus ? `Last menu-bar request: ${state.lastMenuRequestStatus}` : "",
+    bridge?.last_failure_reason ? `Last bridge failure: ${bridge.last_failure_reason}` : "",
+    bridge?.last_failure_message ? bridge.last_failure_message : ""
   ].filter(Boolean).join("\n");
-  connection.dataset.state = state.ok ? "ok" : "warn";
+  connection.dataset.state = state.ok && bridge?.ok !== false ? "ok" : "warn";
 }
 
 function statusLabel(state) {
