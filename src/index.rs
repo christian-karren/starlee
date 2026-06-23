@@ -24,6 +24,7 @@ pub struct Index {
 }
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION_KEY: &str = "version";
 
 #[derive(Clone, Copy)]
 struct Migration {
@@ -640,6 +641,7 @@ fn run_migrations_with(
     connection: &mut Connection,
     migrations: &[Migration],
 ) -> Result<MigrationReport> {
+    validate_migrations(migrations)?;
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
     )?;
@@ -655,15 +657,13 @@ fn run_migrations_with(
         );
         let tx = connection.unchecked_transaction()?;
         if let Err(error) = tx.execute_batch(migration.sql) {
+            tx.rollback()?;
             return Err(anyhow::anyhow!(
                 "Migration {} failed: {error}. Database unchanged.",
                 migration.version
             ));
         }
-        tx.execute(
-            "INSERT OR REPLACE INTO schema_meta(key,value) VALUES('version',?1)",
-            [migration.version.to_string()],
-        )?;
+        set_schema_version(&tx, migration.version)?;
         tx.commit()?;
         current_version = migration.version;
         applied.push(AppliedMigration {
@@ -677,15 +677,36 @@ fn run_migrations_with(
     })
 }
 
+fn validate_migrations(migrations: &[Migration]) -> Result<()> {
+    for (index, migration) in migrations.iter().enumerate() {
+        let expected = index as i64 + 1;
+        if migration.version != expected {
+            bail!(
+                "invalid migration sequence: expected version {expected}, got {}",
+                migration.version
+            );
+        }
+    }
+    Ok(())
+}
+
 fn schema_version(connection: &Connection) -> Result<i64> {
     Ok(connection
         .query_row(
-            "SELECT CAST(value AS INTEGER) FROM schema_meta WHERE key='version'",
-            [],
+            "SELECT CAST(value AS INTEGER) FROM schema_meta WHERE key=?1",
+            [SCHEMA_VERSION_KEY],
             |row| row.get(0),
         )
         .optional()?
         .unwrap_or(0))
+}
+
+fn set_schema_version(connection: &Connection, version: i64) -> Result<()> {
+    connection.execute(
+        "INSERT OR REPLACE INTO schema_meta(key,value) VALUES(?1,?2)",
+        params![SCHEMA_VERSION_KEY, version.to_string()],
+    )?;
+    Ok(())
 }
 
 fn escape_fts(word: &str) -> String {
@@ -751,14 +772,39 @@ fn chunk_text(text: &str, max_chars: usize, overlap: usize) -> Vec<(usize, usize
     chunks
 }
 
-#[allow(dead_code)]
-fn _path_exists(path: &Path) -> bool {
-    path.exists()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        embedding::{EMBEDDING_DIMENSION, Embedder},
+        model::{Access, Frontmatter, SourceType},
+    };
+    use chrono::Utc;
+
+    struct StaticEmbedder {
+        name: &'static str,
+    }
+
+    impl Embedder for StaticEmbedder {
+        fn embed_documents(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|text| test_vector(text)).collect())
+        }
+
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+            Ok(test_vector(text))
+        }
+
+        fn name(&self) -> &'static str {
+            self.name
+        }
+    }
+
+    fn test_vector(text: &str) -> Vec<f32> {
+        let mut vector = vec![0.0; EMBEDDING_DIMENSION];
+        vector[0] = 1.0;
+        vector[1] = text.len() as f32;
+        vector
+    }
 
     #[test]
     fn chunks_long_text_with_overlap() {
@@ -855,6 +901,78 @@ mod tests {
     }
 
     #[test]
+    fn migrations_upgrade_legacy_rows_without_guessing_new_values() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut connection = Connection::open(temp.path().join("legacy.db"))?;
+        create_base_schema(&connection)?;
+        connection.execute(
+            "INSERT INTO sources(id,type,title,captured_at,access,summary,file_path)
+             VALUES('source-1','article','Legacy','2026-06-22T08:00:00Z','restricted','Summary','/tmp/source-1.md')",
+            [],
+        )?;
+        connection.execute(
+            "INSERT INTO chunks(id,source_id,ord,access,text)
+             VALUES('source-1:0','source-1',0,'restricted','Legacy body')",
+            [],
+        )?;
+
+        let report = run_migrations(&mut connection)?;
+
+        assert_eq!(report.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            connection.query_row(
+                "SELECT consumed_at,device_id FROM sources WHERE id='source-1'",
+                [],
+                |row| Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?
+                ))
+            )?,
+            (None, None)
+        );
+        assert_eq!(
+            connection.query_row(
+                "SELECT embedding_model FROM chunks WHERE id='source-1:0'",
+                [],
+                |row| row.get::<_, String>(0)
+            )?,
+            ""
+        );
+        assert!(table_exists(&connection, "sync_state")?);
+        Ok(())
+    }
+
+    #[test]
+    fn migrations_apply_only_versions_newer_than_schema_meta() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut connection = Connection::open(temp.path().join("pending.db"))?;
+        connection.execute_batch(
+            "CREATE TABLE schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO schema_meta(key,value) VALUES('version','1');",
+        )?;
+        let migrations = [
+            Migration {
+                version: 1,
+                description: "already applied",
+                sql: "THIS WOULD FAIL IF RE-RUN;",
+            },
+            Migration {
+                version: 2,
+                description: "pending",
+                sql: "CREATE TABLE pending_only(id TEXT PRIMARY KEY);",
+            },
+        ];
+
+        let report = run_migrations_with(&mut connection, &migrations)?;
+
+        assert_eq!(report.schema_version, 2);
+        assert_eq!(report.applied.len(), 1);
+        assert_eq!(report.applied[0].version, 2);
+        assert!(table_exists(&connection, "pending_only")?);
+        Ok(())
+    }
+
+    #[test]
     fn migration_failure_rolls_back_and_keeps_prior_version() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let mut connection = Connection::open(temp.path().join("rollback.db"))?;
@@ -881,6 +999,120 @@ mod tests {
         assert!(table_exists(&connection, "ok_table")?);
         assert!(!table_exists(&connection, "half_applied")?);
         Ok(())
+    }
+
+    #[test]
+    fn migration_sequence_must_be_contiguous_from_one() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut connection = Connection::open(temp.path().join("invalid-sequence.db"))?;
+        let migrations = [Migration {
+            version: 2,
+            description: "skips one",
+            sql: "CREATE TABLE skipped(id TEXT PRIMARY KEY);",
+        }];
+
+        let error = run_migrations_with(&mut connection, &migrations).unwrap_err();
+
+        assert!(error.to_string().contains("expected version 1, got 2"));
+        assert!(!table_exists(&connection, "schema_meta")?);
+        assert!(!table_exists(&connection, "skipped")?);
+        Ok(())
+    }
+
+    #[test]
+    fn upsert_persists_consumed_at_and_embedding_model() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let index = Index::new(temp.path().join("index.db"));
+        let record = test_record(
+            "record-1",
+            "Captured with engagement metadata",
+            Some("2026-06-22T12:30:00Z".into()),
+        );
+        index.upsert(&record, &StaticEmbedder { name: "model-a" })?;
+
+        let connection = index.connection()?;
+        assert_eq!(
+            connection.query_row(
+                "SELECT consumed_at FROM sources WHERE id='record-1'",
+                [],
+                |row| row.get::<_, Option<String>>(0)
+            )?,
+            Some("2026-06-22T12:30:00Z".into())
+        );
+        assert_eq!(
+            connection.query_row(
+                "SELECT DISTINCT embedding_model FROM chunks WHERE source_id='record-1'",
+                [],
+                |row| row.get::<_, String>(0)
+            )?,
+            "model-a"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reembed_stale_updates_only_sources_with_stale_chunks() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let index = Index::new(temp.path().join("index.db"));
+        let stale = test_record("stale", "This stale source should be refreshed", None);
+        let fresh = test_record("fresh", "This fresh source should not be touched", None);
+        index.upsert(&stale, &StaticEmbedder { name: "model-a" })?;
+        index.upsert(&fresh, &StaticEmbedder { name: "model-a" })?;
+        let connection = index.connection()?;
+        connection.execute(
+            "UPDATE chunks SET embedding_model='model-old' WHERE source_id='stale'",
+            [],
+        )?;
+        drop(connection);
+
+        let updated = index.reembed_stale(&[stale, fresh], &StaticEmbedder { name: "model-a" })?;
+
+        assert_eq!(updated, 1);
+        assert_eq!(index.stale_chunk_count("model-a")?, 0);
+        let connection = index.connection()?;
+        assert_eq!(
+            connection.query_row(
+                "SELECT embedding_model FROM chunks WHERE source_id='fresh'",
+                [],
+                |row| row.get::<_, String>(0)
+            )?,
+            "model-a"
+        );
+        Ok(())
+    }
+
+    fn test_record(id: &str, body: &str, consumed_at: Option<String>) -> Record {
+        Record {
+            metadata: Frontmatter {
+                id: id.into(),
+                source_type: SourceType::Article,
+                title: format!("{id} title"),
+                author: None,
+                site: Some("example.com".into()),
+                source: None,
+                url: Some(format!("https://example.com/{id}")),
+                captured_at: Utc::now(),
+                consumed_at,
+                published_at: None,
+                duration: None,
+                video_id: None,
+                word_count: None,
+                access: Access::Restricted,
+                summary: String::new(),
+                tags: Vec::new(),
+                spotify_episode_id: None,
+                spotify_show_id: None,
+                show: None,
+                listen_duration_s: None,
+                listen_progress_pct: None,
+                transcript_status: None,
+                transcript_source: None,
+                matched_youtube_id: None,
+                linked_youtube_id: None,
+            },
+            body: body.into(),
+            file_path: format!("/tmp/{id}.md"),
+        }
     }
 
     fn column_exists(connection: &Connection, table: &str, column: &str) -> Result<bool> {
