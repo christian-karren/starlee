@@ -326,6 +326,7 @@ mod tests {
             extension: Default::default(),
             pending_capture_request: None,
             capture_request_status: None,
+            capture_diagnostics: Vec::new(),
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: None,

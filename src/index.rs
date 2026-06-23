@@ -1299,6 +1299,7 @@ mod tests {
                 listen_progress_pct: None,
                 transcript_status: None,
                 transcript_source: None,
+                transcript_reason: None,
                 matched_youtube_id: None,
                 linked_youtube_id: None,
             },

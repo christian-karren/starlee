@@ -1,6 +1,8 @@
 import AppKit
 
 final class StatusMenuController: NSObject {
+    private static let captureTimeout: TimeInterval = 12
+
     private let statusItem: NSStatusItem
     private let client: StarleeClient
     private let notifier: NotificationController
@@ -125,7 +127,7 @@ final class StatusMenuController: NSObject {
             self?.finishCapture(PostResult(ok: false, message: "No response from Starlee."))
         }
         timeoutWorkItem = timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: timeout)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureTimeout, execute: timeout)
 
         client.requestCurrentArticleCapture { [weak self] result in
             guard let self else { return }

@@ -1,3 +1,5 @@
+import { browserNameFromUserAgent } from "./browser.js";
+
 const DEFAULT_PORT = 47291;
 const DEFAULT_POLL_MINUTES = 1;
 const FALLBACK_POLL_SECONDS = 3;
@@ -105,7 +107,7 @@ async function captureTab(tab) {
   try {
     return await chrome.tabs.sendMessage(tab.id, { type: MESSAGE.captureNow });
   } catch {
-    return errorResult("permission_denied", "Chrome has not granted Starlee access to this page, or this page cannot run extensions.");
+    return errorResult("permission_denied", `${browserName()} has not granted Starlee access to this page, or this page cannot run extensions.`);
   }
 }
 
@@ -183,7 +185,7 @@ async function captureTabForRequest(tab, request) {
       requestId: request.id
     });
   } catch {
-    const result = errorResult(CAPTURE_STATUS.permissionDenied, "Chrome has not granted Starlee access to this page, or this page cannot run extensions.");
+    const result = errorResult(CAPTURE_STATUS.permissionDenied, `${browserName()} has not granted Starlee access to this page, or this page cannot run extensions.`);
     await recordCaptureRequestResult(request.id, result);
     return result;
   }
@@ -370,9 +372,5 @@ function domainFromUrl(value) {
 }
 
 function browserName() {
-  const agent = navigator.userAgent;
-  if (agent.includes("Edg/")) return "Edge";
-  if (agent.includes("OPR/")) return "Opera";
-  if (agent.includes("Brave/")) return "Brave";
-  return "Chrome";
+  return browserNameFromUserAgent(navigator.userAgent);
 }

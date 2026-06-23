@@ -37,7 +37,7 @@ function mountButton(type) {
 
 async function capture(_message, sendResponse) {
   try {
-    const payload = capturePayload(document);
+    const payload = await capturePayload(document, { discoverYouTubeTranscript: true });
     const selectedText = String(window.getSelection?.()?.toString() || "").trim();
     if (selectedText && payload?.dom_extract && payload.type === "article") {
       payload.dom_extract.selected_text = selectedText;

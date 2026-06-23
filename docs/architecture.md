@@ -63,6 +63,14 @@ returning chunks to agents.
   the current embedder.
 - Browser sensors emit a versioned payload into the engine; they never
   write vault files directly.
+- YouTube capture is a browser-owned extraction path inside the same versioned
+  sensor contract. The extension detects supported `youtube.com/watch` pages,
+  normalizes the video URL, extracts rendered DOM transcript segments when they
+  are present, makes a bounded attempt to open the rendered transcript UI,
+  records `transcript_status`/`transcript_source`/`transcript_reason`, and
+  saves an explicit transcript-unavailable fallback when no rendered transcript
+  is available. It does not use OAuth, external transcript services, downloaded
+  audio/video, or the optional YouTube Data API for transcript text.
 - The MCP process co-hosts a bearer-authenticated capture endpoint bound to
   `127.0.0.1`; the token lives only in the local mode-`0600` config file.
 - The macOS menu-bar app does not read browser DOM directly. A normal click
@@ -84,14 +92,21 @@ returning chunks to agents.
   freshness, the last hello payload, and the last request lifecycle status. It
   answers whether extension setup/config exists, whether a browser checked in
   recently, which browser checked in, whether active-tab capture is available,
-  the last safe failure reason/message, and the recommended next action.
+  the last safe failure reason/message, the recommended next action, and a
+  bounded recent diagnostic trace.
 - Bridge health is observable in `starlee status`, `starlee doctor`, the
   menu-bar diagnostics summary, the extension options page, and the authenticated
-  loopback `/bridge-health` endpoint.
+  loopback `/bridge-health` endpoint. A deeper local trace is available with
+  `starlee diagnostics --limit N`.
 - Capture request status may include request id, source, timestamps, status,
   message, browser name, and safe page metadata such as title, URL, and domain.
   It must not include article bodies, transcripts, selected text, capture
   tokens, or restricted content.
+- Capture diagnostics are a capped local ring buffer in Starlee setup state.
+  The full local `starlee diagnostics` view records timestamp, component, event
+  name, request id, lifecycle status, source, browser, sanitized message, and
+  sanitized page metadata when available. The shorter `doctor`/bridge-health
+  summary redacts request ids and page metadata.
 - Bridge health is stricter than request status: it does not expose request IDs
   or page metadata, and it replaces failure messages for known browser failure
   states with concise user-facing recovery text.

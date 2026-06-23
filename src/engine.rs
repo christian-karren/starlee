@@ -14,8 +14,8 @@ use sha2::{Digest, Sha256};
 use crate::{
     bundle::{self, BundleAudit},
     config::{
-        CaptureRequestPageMetadata, CaptureRequestState, CaptureRequestStatus, ConfigStore,
-        ExtensionState, LocalConfig,
+        CaptureDiagnosticEvent, CaptureRequestPageMetadata, CaptureRequestState,
+        CaptureRequestStatus, ConfigStore, ExtensionState, LocalConfig,
     },
     embedding::{Embedder, FastEmbedder},
     index::Index,
@@ -31,7 +31,8 @@ use crate::{
 };
 
 pub const CAPTURE_REQUEST_TTL: Duration = Duration::from_secs(10);
-pub const EXTENSION_HEARTBEAT_FRESHNESS: Duration = Duration::from_secs(15);
+pub const EXTENSION_HEARTBEAT_FRESHNESS: Duration = Duration::from_secs(5 * 60);
+const CAPTURE_DIAGNOSTIC_LIMIT: usize = 120;
 
 pub const CAPTURE_STATUS_QUEUED: &str = "queued";
 pub const CAPTURE_STATUS_PICKED_UP: &str = "picked_up";
@@ -104,7 +105,7 @@ impl Engine {
         {
             let _ = enrich_youtube(&mut input, key);
         }
-        let existing = input
+        let mut existing = input
             .url
             .as_deref()
             .map(|url| self.index.get_by_url(url))
@@ -112,6 +113,12 @@ impl Engine {
             .flatten()
             .map(|path| self.vault.read(&path))
             .transpose()?;
+        if existing.is_none()
+            && matches!(input.source_type, SourceType::Youtube)
+            && let Some(video_id) = input.video_id.as_deref()
+        {
+            existing = self.youtube_record_by_video_id(video_id)?;
+        }
         let record = if let Some(existing) = existing {
             self.vault.replace(&existing, input)?
         } else {
@@ -123,6 +130,17 @@ impl Engine {
 
     pub fn capture_public_url(&self, url: &str) -> Result<Record> {
         self.capture(public_fetch::fetch_explicitly_public(url)?)
+    }
+
+    fn youtube_record_by_video_id(&self, video_id: &str) -> Result<Option<Record>> {
+        let video_id = video_id.trim();
+        if video_id.is_empty() {
+            return Ok(None);
+        }
+        Ok(self.vault.records()?.into_iter().find(|record| {
+            matches!(record.metadata.source_type, SourceType::Youtube)
+                && record.metadata.video_id.as_deref() == Some(video_id)
+        }))
     }
 
     pub fn search_scoped(
@@ -340,6 +358,13 @@ impl Engine {
 
     pub fn local_config(&self) -> Result<LocalConfig> {
         ConfigStore::new(&self.home).load_or_create()
+    }
+
+    pub fn capture_diagnostics(&self, limit: usize) -> Result<Vec<CaptureDiagnosticEvent>> {
+        let mut events = self.local_config()?.capture_diagnostics;
+        events.reverse();
+        events.truncate(limit);
+        Ok(events)
     }
 
     pub fn doctor(&self) -> Result<DoctorReport> {
@@ -617,6 +642,7 @@ impl Engine {
                     .as_ref()
                     .map(|status| status.status.as_str()),
             ),
+            recent_diagnostics: recent_diagnostics(config, 8),
         }
     }
 
@@ -673,11 +699,37 @@ impl Engine {
         };
         if extension_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS) {
             config.pending_capture_request = Some(request);
+            append_capture_diagnostic(
+                &mut config,
+                diagnostic_event(DiagnosticEventInput {
+                    component: "engine",
+                    event: "capture_request_queued",
+                    request_id: Some(&status.id),
+                    status: Some(&status.status),
+                    source: Some(&status.source),
+                    browser: status.browser.as_deref(),
+                    message: status.message.as_deref(),
+                    page: None,
+                }),
+            );
         } else {
             status.status = CAPTURE_STATUS_EXTENSION_UNAVAILABLE.into();
             status.completed_at = Some(Utc::now().to_rfc3339());
             status.message = default_capture_status_message(CAPTURE_STATUS_EXTENSION_UNAVAILABLE);
             config.pending_capture_request = None;
+            append_capture_diagnostic(
+                &mut config,
+                diagnostic_event(DiagnosticEventInput {
+                    component: "engine",
+                    event: "capture_request_rejected",
+                    request_id: Some(&status.id),
+                    status: Some(&status.status),
+                    source: Some(&status.source),
+                    browser: status.browser.as_deref(),
+                    message: status.message.as_deref(),
+                    page: None,
+                }),
+            );
         }
         config.capture_request_status = Some(status.clone());
         store.save(&config)?;
@@ -689,7 +741,7 @@ impl Engine {
         let mut config = store.load_or_create()?;
         expire_stale_capture_request(&mut config);
         let request = config.pending_capture_request.take();
-        if let Some(request) = request.as_ref()
+        let picked_up_event = if let Some(request) = request.as_ref()
             && let Some(status) = config.capture_request_status.as_mut()
             && status.id == request.id
             && !capture_status_is_terminal(&status.status)
@@ -697,6 +749,21 @@ impl Engine {
             status.status = CAPTURE_STATUS_PICKED_UP.into();
             status.picked_up_at = Some(Utc::now().to_rfc3339());
             status.message = Some("Browser extension picked up the capture request.".into());
+            Some(diagnostic_event(DiagnosticEventInput {
+                component: "engine",
+                event: "capture_request_picked_up",
+                request_id: Some(&status.id),
+                status: Some(&status.status),
+                source: Some(&status.source),
+                browser: status.browser.as_deref(),
+                message: status.message.as_deref(),
+                page: status.page.clone(),
+            }))
+        } else {
+            None
+        };
+        if let Some(event) = picked_up_event {
+            append_capture_diagnostic(&mut config, event);
         }
         store.save(&config)?;
         Ok(request)
@@ -753,6 +820,21 @@ impl Engine {
             request_status.page = Some(sanitize_page_metadata(page));
         }
         request_status.message = message.or_else(|| default_capture_status_message(&status));
+        let diagnostic_message =
+            safe_bridge_failure_message(&request_status.status, request_status.message.as_deref());
+        append_capture_diagnostic(
+            &mut config,
+            diagnostic_event(DiagnosticEventInput {
+                component: "browser_bridge",
+                event: "capture_request_status",
+                request_id: Some(&request_status.id),
+                status: Some(&request_status.status),
+                source: Some(&request_status.source),
+                browser: request_status.browser.as_deref(),
+                message: diagnostic_message.as_deref(),
+                page: request_status.page.clone(),
+            }),
+        );
         config.capture_request_status = Some(request_status.clone());
         store.save(&config)?;
         Ok(Some(request_status))
@@ -1152,9 +1234,22 @@ fn expire_stale_capture_request(config: &mut LocalConfig) -> bool {
     if Utc::now().signed_duration_since(requested_at) <= ttl {
         return false;
     }
-    status.status = CAPTURE_STATUS_TIMED_OUT.into();
-    status.completed_at = Some(Utc::now().to_rfc3339());
-    status.message = Some("The browser did not pick up the request in time.".into());
+    let event = {
+        status.status = CAPTURE_STATUS_TIMED_OUT.into();
+        status.completed_at = Some(Utc::now().to_rfc3339());
+        status.message = Some("The browser did not pick up the request in time.".into());
+        diagnostic_event(DiagnosticEventInput {
+            component: "engine",
+            event: "capture_request_timed_out",
+            request_id: Some(&status.id),
+            status: Some(&status.status),
+            source: Some(&status.source),
+            browser: status.browser.as_deref(),
+            message: status.message.as_deref(),
+            page: status.page.clone(),
+        })
+    };
+    append_capture_diagnostic(config, event);
     config.pending_capture_request = None;
     true
 }
@@ -1290,6 +1385,67 @@ fn sanitize_page_metadata(page: CaptureRequestPageMetadata) -> CaptureRequestPag
     }
 }
 
+fn recent_diagnostics(config: &LocalConfig, limit: usize) -> Vec<CaptureDiagnosticEvent> {
+    config
+        .capture_diagnostics
+        .iter()
+        .rev()
+        .take(limit)
+        .map(|event| {
+            let mut event = event.clone();
+            event.request_id = None;
+            event.page = None;
+            event
+        })
+        .collect()
+}
+
+fn append_capture_diagnostic(config: &mut LocalConfig, event: CaptureDiagnosticEvent) {
+    config.capture_diagnostics.push(event);
+    let excess = config
+        .capture_diagnostics
+        .len()
+        .saturating_sub(CAPTURE_DIAGNOSTIC_LIMIT);
+    if excess > 0 {
+        config.capture_diagnostics.drain(0..excess);
+    }
+}
+
+struct DiagnosticEventInput<'a> {
+    component: &'a str,
+    event: &'a str,
+    request_id: Option<&'a str>,
+    status: Option<&'a str>,
+    source: Option<&'a str>,
+    browser: Option<&'a str>,
+    message: Option<&'a str>,
+    page: Option<CaptureRequestPageMetadata>,
+}
+
+fn diagnostic_event(input: DiagnosticEventInput<'_>) -> CaptureDiagnosticEvent {
+    CaptureDiagnosticEvent {
+        timestamp: Utc::now().to_rfc3339(),
+        component: input.component.into(),
+        event: input.event.into(),
+        request_id: input
+            .request_id
+            .and_then(|value| sanitize_metadata_string(value, 64)),
+        status: input
+            .status
+            .and_then(|value| sanitize_metadata_string(value, 64)),
+        source: input
+            .source
+            .and_then(|value| sanitize_metadata_string(value, 64)),
+        browser: input
+            .browser
+            .and_then(|value| sanitize_metadata_string(value, 80)),
+        message: input
+            .message
+            .and_then(|value| sanitize_metadata_string(value, 240)),
+        page: input.page.map(sanitize_page_metadata),
+    }
+}
+
 fn sanitize_metadata_string(value: &str, max_chars: usize) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -1338,11 +1494,31 @@ fn stopwords() -> HashSet<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embedding::EMBEDDING_DIMENSION;
+
+    struct StaticTestEmbedder;
+
+    impl Embedder for StaticTestEmbedder {
+        fn embed_documents(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            Ok(texts
+                .iter()
+                .map(|_| vec![1.0; EMBEDDING_DIMENSION])
+                .collect())
+        }
+
+        fn embed_query(&self, _text: &str) -> Result<Vec<f32>> {
+            Ok(vec![1.0; EMBEDDING_DIMENSION])
+        }
+
+        fn name(&self) -> &'static str {
+            "engine-test"
+        }
+    }
 
     #[test]
     fn capture_request_lifecycle_reaches_saved_with_safe_metadata() -> Result<()> {
         let temp = tempfile::tempdir()?;
-        let engine = Engine::new(temp.path().to_owned());
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
 
         let request = engine.create_capture_request("test")?;
@@ -1390,6 +1566,70 @@ mod tests {
             .expect("saved status");
         assert_eq!(saved.status, CAPTURE_STATUS_SAVED);
         assert!(saved.completed_at.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn capture_request_diagnostics_record_safe_lifecycle_trace() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
+        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), true)?;
+        let request = engine.create_capture_request("menu-bar")?;
+
+        assert!(engine.take_capture_request()?.is_some());
+        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_EXTRACTING, None, None)?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_POSTED,
+            Some("Browser extension posted the capture to Starlee.".into()),
+            Some(CaptureRequestPageMetadata {
+                title: Some("A very useful page".into()),
+                url: Some("https://example.com/story?private=query".into()),
+                domain: Some("example.com".into()),
+            }),
+        )?;
+        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?;
+
+        let diagnostics = engine.capture_diagnostics(10)?;
+        let statuses = diagnostics
+            .iter()
+            .rev()
+            .filter_map(|event| event.status.as_deref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            statuses,
+            vec![
+                CAPTURE_STATUS_QUEUED,
+                CAPTURE_STATUS_PICKED_UP,
+                CAPTURE_STATUS_EXTRACTING,
+                CAPTURE_STATUS_POSTED,
+                CAPTURE_STATUS_SAVED
+            ]
+        );
+        assert!(diagnostics.iter().all(|event| event.request_id.is_some()));
+        assert!(diagnostics.iter().any(|event| {
+            event.page.as_ref().and_then(|page| page.domain.as_deref()) == Some("example.com")
+        }));
+        let serialized = serde_json::to_string(&diagnostics)?;
+        assert!(!serialized.contains("capture_token"));
+        assert!(!serialized.contains("Transcript unavailable"));
+        Ok(())
+    }
+
+    #[test]
+    fn capture_request_diagnostics_are_bounded() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), true)?;
+
+        for _ in 0..150 {
+            let request = engine.create_capture_request("menu-bar")?;
+            engine.record_capture_request_result(&request.id, CAPTURE_STATUS_FAILED, None, None)?;
+        }
+
+        assert_eq!(engine.local_config()?.capture_diagnostics.len(), 120);
+        assert_eq!(engine.capture_diagnostics(5)?.len(), 5);
         Ok(())
     }
 
@@ -1586,7 +1826,7 @@ mod tests {
         );
 
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
-        age_extension_hello(temp.path(), 60)?;
+        age_extension_hello(temp.path(), 10 * 60)?;
         let stale = engine.bridge_health()?;
         assert!(!stale.ok);
         assert!(!stale.checked_in_recently);
@@ -1664,6 +1904,79 @@ mod tests {
         assert!(!serialized.contains("restricted body"));
         assert!(!serialized.contains("selected text"));
         assert!(!serialized.contains("capture token"));
+        Ok(())
+    }
+
+    #[test]
+    fn youtube_capture_recaptures_existing_video_id() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
+        let mut first = CaptureInput::new(
+            "Original lecture",
+            "[00:01] First captured transcript",
+            SourceType::Youtube,
+            crate::model::Access::Restricted,
+        );
+        first.site = Some("youtube.com".into());
+        first.source = Some("manual_capture".into());
+        first.url = Some("https://www.youtube.com/watch?v=abc123".into());
+        first.video_id = Some("abc123".into());
+        first.transcript_status = Some("full".into());
+        first.transcript_source = Some("rendered_dom".into());
+        let original = engine.capture(first)?;
+
+        let mut recapture = CaptureInput::new(
+            "Updated lecture",
+            "[00:01] Updated captured transcript",
+            SourceType::Youtube,
+            crate::model::Access::Restricted,
+        );
+        recapture.site = Some("youtube.com".into());
+        recapture.source = Some("manual_capture".into());
+        recapture.url = Some("https://youtu.be/abc123".into());
+        recapture.video_id = Some("abc123".into());
+        recapture.transcript_status = Some("full".into());
+        recapture.transcript_source = Some("rendered_dom".into());
+        let updated = engine.capture(recapture)?;
+
+        assert_eq!(updated.metadata.id, original.metadata.id);
+        assert_eq!(engine.vault.records()?.len(), 1);
+        assert_eq!(updated.body, "[00:01] Updated captured transcript");
+        Ok(())
+    }
+
+    #[test]
+    fn youtube_request_lifecycle_reaches_saved_without_transcript_status_leak() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        let request = engine.create_capture_request("menu-bar")?;
+        assert_eq!(request.status, CAPTURE_STATUS_QUEUED);
+
+        assert!(engine.take_capture_request()?.is_some());
+        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_EXTRACTING, None, None)?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_POSTED,
+            Some("Posted YouTube capture.".into()),
+            Some(CaptureRequestPageMetadata {
+                title: Some("A lecture".into()),
+                url: Some("https://www.youtube.com/watch?v=abc123".into()),
+                domain: Some("youtube.com".into()),
+            }),
+        )?;
+        let saved = engine
+            .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?
+            .expect("saved status");
+
+        let serialized = serde_json::to_string(&saved)?;
+        assert_eq!(saved.status, CAPTURE_STATUS_SAVED);
+        assert!(saved.completed_at.is_some());
+        assert!(serialized.contains("A lecture"));
+        assert!(!serialized.contains("timestamped transcript text"));
+        assert!(!serialized.contains("rendered_dom"));
+        assert!(!serialized.contains("transcript_status"));
         Ok(())
     }
 

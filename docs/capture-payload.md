@@ -47,7 +47,11 @@ Content-Type: application/json
   },
   "transcript": [
     { "t": 12.4, "text": "Timestamped transcript text" }
-  ]
+  ],
+  "transcript_status": "full",
+  "transcript_source": "rendered_dom",
+  "transcript_reason": "rendered_transcript_segments_found",
+  "extractor_version": "youtube-dom-v1"
 }
 ```
 
@@ -55,7 +59,20 @@ Starlee renders transcript segments as `[00:12] Timestamped transcript text` in
 Markdown so agents can preserve moment-level provenance. Timestamp-aware
 indexing reads those canonical lines and stores chunk `t_start`/`t_end` ranges
 when timing exists. If no transcript is available, the item is still captured
-with `[Transcript unavailable]`.
+with `[Transcript unavailable]`, `transcript_status: unavailable`, and
+`transcript_source: unavailable`. The optional `transcript_reason` records
+whether the extension found rendered segments, did not see a transcript panel,
+or attempted transcript discovery but no rendered segments appeared before the
+bounded timeout.
+
+YouTube payloads should use the canonical URL
+`https://www.youtube.com/watch?v={video_id}` when the video id is known.
+The backend also normalizes YouTube URLs before writing, requires a title and
+video id, filters malformed or duplicate transcript segments, stores captures as
+`restricted` by default, and recaptures the same canonical video in place.
+Transcript text belongs only in the capture payload, Markdown vault, and local
+index; bridge request status and bridge health may include safe page metadata
+only.
 
 ## Responses
 
@@ -84,13 +101,27 @@ bridge diagnostics:
     "last_request_status": "capture_saved",
     "last_failure_reason": null,
     "last_failure_message": null,
-    "recommended_next_action": "Bridge is ready. Open an article or YouTube watch page and capture again."
+    "recommended_next_action": "Bridge is ready. Open an article or YouTube watch page and capture again.",
+    "recent_diagnostics": [
+      {
+        "timestamp": "2026-06-23T05:00:01Z",
+        "component": "browser_bridge",
+        "event": "capture_request_status",
+        "status": "capture_saved",
+        "source": "menu-bar",
+        "browser": "Safari",
+        "message": "Saved to Starlee."
+      }
+    ]
   }
 }
 ```
 
 Bridge health never includes capture tokens, request IDs, article bodies,
-transcripts, selected text, restricted content, or page metadata.
+transcripts, selected text, page metadata, or restricted content. Use
+`starlee diagnostics --limit N` for the longer local rolling history, including
+request IDs and sanitized page metadata for correlating one menu-bar click
+across lifecycle events.
 
 ## Extension handshake
 
@@ -216,7 +247,8 @@ Lifecycle states are:
 Success feedback in the macOS menu bar is reserved for `capture_saved`.
 `queued`, `picked_up`, `extracting`, and `posted` stay in loading state.
 All other terminal states return a distinct error state with an actionable
-message.
+message. Each transition is also appended to the bounded local capture
+diagnostic log.
 
 Default recovery messages are intentionally concise:
 

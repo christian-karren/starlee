@@ -9,10 +9,16 @@
 - Capture endpoint binds to `127.0.0.1` and requires a random 256-bit bearer token.
 - Article extraction runs in the rendered browser DOM through Mozilla Readability.
 - Access classification uses `isAccessibleForFree`, domain/marker heuristics, and fails closed.
-- YouTube transcripts come only from rendered DOM segments and retain timestamps.
+- YouTube transcripts come only from rendered DOM segments, including a bounded
+  rendered-page transcript discovery attempt, and retain timestamps.
+- YouTube transcript-unavailable captures are saved as restricted records with
+  explicit `transcript_status`, `transcript_source`, and `transcript_reason`
+  metadata.
 - Optional YouTube metadata uses official Data API `videos.list` only.
 - URL-only server capture requires an explicit public schema signal.
 - Recaptured canonical URLs update in place.
+- Menu-bar capture diagnostics retain a bounded local lifecycle trace with no
+  tokens, bodies, selected text, transcripts, or restricted content.
 - Share export strips all restricted bodies and blocks output on audit failure.
 - Borrowed bundles open read-only and return summary/citation for `get`.
 - Setup installs the model, extension assets, local token, and example prompts without printing the token.
@@ -44,6 +50,10 @@ not hidden runtime dependencies.
 - Submit as an unlisted beta before public listing.
 - Verify a clean Chrome profile can install, handshake, toolbar-capture,
   menu-bar-capture, and YouTube-capture before public launch.
+- Validate one Chrome YouTube watch page with rendered transcript segments and
+  one without an available transcript. Confirm the menu-bar success pulse occurs
+  only after `capture_saved`, the vault has one restricted canonical video
+  record, and bridge health/status do not expose transcript text.
 
 ## Safari local extension gate
 
@@ -55,3 +65,6 @@ not hidden runtime dependencies.
   enable Starlee in Safari Settings > Extensions.
 - Verify `starlee doctor`, a Safari article capture, and a Safari YouTube
   transcript capture before treating the local Safari path as working.
+- Validate Safari YouTube separately from Chrome because extension permission
+  prompts, transcript DOM timing, and local wrapper setup differ. Permission
+  failures should resolve to `permission_denied` with actionable recovery text.

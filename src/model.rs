@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::config::CaptureDiagnosticEvent;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceType {
@@ -65,6 +67,8 @@ pub struct Frontmatter {
     #[serde(default)]
     pub transcript_source: Option<String>,
     #[serde(default)]
+    pub transcript_reason: Option<String>,
+    #[serde(default)]
     pub matched_youtube_id: Option<String>,
     #[serde(default)]
     pub linked_youtube_id: Option<String>,
@@ -113,6 +117,8 @@ pub struct CaptureInput {
     #[serde(default)]
     pub transcript_source: Option<String>,
     #[serde(default)]
+    pub transcript_reason: Option<String>,
+    #[serde(default)]
     pub matched_youtube_id: Option<String>,
     #[serde(default)]
     pub linked_youtube_id: Option<String>,
@@ -149,6 +155,7 @@ impl CaptureInput {
             listen_progress_pct: None,
             transcript_status: None,
             transcript_source: None,
+            transcript_reason: None,
             matched_youtube_id: None,
             linked_youtube_id: None,
             description: None,
@@ -278,6 +285,8 @@ pub struct BridgeHealth {
     pub last_failure_reason: Option<String>,
     pub last_failure_message: Option<String>,
     pub recommended_next_action: String,
+    #[serde(default)]
+    pub recent_diagnostics: Vec<CaptureDiagnosticEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -23,6 +23,8 @@ pub struct LocalConfig {
     #[serde(default)]
     pub capture_request_status: Option<CaptureRequestStatus>,
     #[serde(default)]
+    pub capture_diagnostics: Vec<CaptureDiagnosticEvent>,
+    #[serde(default)]
     pub youtube_api_key: Option<String>,
     #[serde(default)]
     pub spotify_client_id: Option<String>,
@@ -83,6 +85,25 @@ pub struct CaptureRequestPageMetadata {
     pub url: Option<String>,
     #[serde(default)]
     pub domain: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureDiagnosticEvent {
+    pub timestamp: String,
+    pub component: String,
+    pub event: String,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub browser: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub page: Option<CaptureRequestPageMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +172,7 @@ impl ConfigStore {
             extension: ExtensionState::default(),
             pending_capture_request: None,
             capture_request_status: None,
+            capture_diagnostics: Vec::new(),
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: Some(DEFAULT_SPOTIFY_REDIRECT_URI.into()),
@@ -248,6 +270,7 @@ mod tests {
             extension: ExtensionState::default(),
             pending_capture_request: None,
             capture_request_status: None,
+            capture_diagnostics: Vec::new(),
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: Some(DEFAULT_SPOTIFY_REDIRECT_URI.into()),

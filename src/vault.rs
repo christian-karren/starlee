@@ -114,6 +114,7 @@ impl Vault {
             listen_progress_pct: input.listen_progress_pct,
             transcript_status: input.transcript_status,
             transcript_source: input.transcript_source,
+            transcript_reason: input.transcript_reason,
             matched_youtube_id: input.matched_youtube_id,
             linked_youtube_id: input.linked_youtube_id,
         };

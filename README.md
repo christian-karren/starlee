@@ -46,7 +46,9 @@ that as an installed extension. Load `~/Starlee/sensor-extension` once in
 the extension, `starlee doctor` should show a healthy `browser_bridge` check.
 The diagnostics include whether extension setup/config exists, which browser
 checked in, whether the heartbeat is fresh, the last capture request status, the
-last safe failure reason, and the next recovery action.
+last safe failure reason, the next recovery action, and a bounded redacted trace
+of recent menu-bar capture events. For deeper local debugging, run
+`starlee diagnostics --limit 50`.
 
 The generated extension folder includes the local-only capture configuration,
 so the “Save article to Starlee” page button and the Starlee menu-bar capture
@@ -66,6 +68,13 @@ and extraction remain in the loading state, stale requests time out quickly,
 and failures distinguish extension availability, page permission, unsupported
 pages, and capture errors. Option-click the icon to open management tools for Recent Captures,
 Browser Setup, diagnostics, vault access, capture-service controls, and Quit.
+For YouTube watch pages, Starlee stores a restricted canonical video record with
+title, channel when available, video id, consumed time, transcript
+status/source/reason, and either timestamped transcript lines from the rendered
+page or an explicit `[Transcript unavailable]` fallback. The extension makes a
+bounded attempt to open the rendered transcript UI before falling back.
+Transcript capture does not require OAuth, the YouTube Data API, audio/video
+download, or any external transcript service.
 
 You can still run setup manually:
 

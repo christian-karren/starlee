@@ -7,9 +7,11 @@ export function detectedType(document) {
   return null;
 }
 
-export function capturePayload(document) {
+export async function capturePayload(document, options = {}) {
   const type = detectedType(document);
-  if (type === "youtube") return withConsumedAt(extractYouTube(document));
+  if (type === "youtube") return withConsumedAt(await extractYouTube(document, {
+    discoverTranscript: options.discoverYouTubeTranscript ?? false
+  }));
   if (type === "article") return withConsumedAt(extractArticle(document));
   throw new Error("This page does not look like an article or YouTube video");
 }
