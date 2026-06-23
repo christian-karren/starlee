@@ -37,24 +37,24 @@ test("extracts normalized article metadata and public access signal", () => {
   assert.equal(payload.dom_extract.html_meta["starlee:access_reason"], "schema:isAccessibleForFree=true");
 });
 
-test("routes YouTube before article detection", () => {
+test("routes YouTube before article detection", async () => {
   const dom = new JSDOM(`<title>Video</title>${BODY}`, { url: "https://www.youtube.com/watch?v=test" });
-  const payload = capturePayload(dom.window.document);
+  const payload = await capturePayload(dom.window.document);
   assert.equal(payload.type, "youtube");
   assert.equal(payload.dom_extract.site, "youtube.com");
   assert.match(payload.consumed_at, /^\d{4}-\d{2}-\d{2}T/);
 });
 
-test("capture payload includes consumed_at engagement timestamp", () => {
+test("capture payload includes consumed_at engagement timestamp", async () => {
   const dom = new JSDOM(`<!doctype html><title>Fallback title</title>${BODY}`, { url: "https://example.com/story" });
-  const payload = capturePayload(dom.window.document);
+  const payload = await capturePayload(dom.window.document);
   assert.equal(payload.type, "article");
   assert.match(payload.consumed_at, /^\d{4}-\d{2}-\d{2}T/);
 });
 
-test("capture payload rejects unsupported pages before posting", () => {
+test("capture payload rejects unsupported pages before posting", async () => {
   const dom = new JSDOM(`<!doctype html><title>Settings</title><main><button>Save</button></main>`, { url: "https://example.com/settings" });
-  assert.throws(
+  await assert.rejects(
     () => capturePayload(dom.window.document),
     /does not look like an article or YouTube video/
   );

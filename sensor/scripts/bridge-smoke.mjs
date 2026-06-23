@@ -48,7 +48,7 @@ async function processRequest(request) {
   storage.lastMenuRequestId = request.id;
   storage.lastMenuRequestStatus = "picked_up";
 
-  const payload = capturePayload(dom.window.document);
+  const payload = await capturePayload(dom.window.document);
   const page = {
     title: payload.dom_extract.title,
     url: payload.url,

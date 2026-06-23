@@ -83,6 +83,10 @@ enum Command {
     },
     Status,
     Doctor,
+    Diagnostics {
+        #[arg(short, long, default_value_t = 30)]
+        limit: usize,
+    },
     Reindex {
         #[arg(long)]
         stale_embeddings_only: bool,
@@ -192,6 +196,7 @@ fn main() -> Result<()> {
         Command::Get { id } => serde_json::to_value(engine.get_any(&id)?)?,
         Command::Status => serde_json::to_value(engine.status()?)?,
         Command::Doctor => serde_json::to_value(engine.doctor()?)?,
+        Command::Diagnostics { limit } => serde_json::to_value(engine.capture_diagnostics(limit)?)?,
         Command::Reindex {
             stale_embeddings_only,
         } => serde_json::to_value(engine.reindex(stale_embeddings_only)?)?,
