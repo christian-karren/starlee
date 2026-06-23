@@ -79,6 +79,20 @@ final class StarleeClient {
         return postJSON(url: url, token: token, body: ["source": "menu-bar"])
     }
 
+    func requestCurrentArticleCapture(completion: @escaping (PostResult) -> Void) {
+        startEngine()
+        guard let config = localConfig(), let token = config["capture_token"] as? String else {
+            completion(PostResult(ok: false, message: "Run Starlee setup, then reload the browser extension."))
+            return
+        }
+        let port = (config["capture_port"] as? NSNumber)?.intValue ?? 47291
+        guard let url = URL(string: "http://127.0.0.1:\(port)/capture-request") else {
+            completion(PostResult(ok: false, message: "Invalid local Starlee capture endpoint."))
+            return
+        }
+        postJSON(url: url, token: token, body: ["source": "menu-bar"], completion: completion)
+    }
+
     private func postJSON(url: URL, token: String, body: [String: Any]) -> PostResult {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -104,6 +118,38 @@ final class StarleeClient {
         }.resume()
         _ = semaphore.wait(timeout: .now() + 3)
         return result
+    }
+
+    private func postJSON(
+        url: URL,
+        token: String,
+        body: [String: Any],
+        completion: @escaping (PostResult) -> Void
+    ) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 5
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            let result: PostResult
+            if let error {
+                result = PostResult(ok: false, message: error.localizedDescription)
+            } else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                if (200..<300).contains(status) {
+                    result = PostResult(ok: true, message: "Capture request sent.")
+                } else {
+                    let text = data.flatMap { String(data: $0, encoding: .utf8) } ?? "HTTP \(status)"
+                    result = PostResult(ok: false, message: text)
+                }
+            }
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }.resume()
     }
 
     private func cliURL() -> URL {

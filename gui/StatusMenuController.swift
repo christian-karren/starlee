@@ -4,6 +4,12 @@ final class StatusMenuController: NSObject {
     private let statusItem: NSStatusItem
     private let client: StarleeClient
     private let notifier: NotificationController
+    private var managementMenu = NSMenu()
+    private var isCapturing = false
+    private var loadingWorkItem: DispatchWorkItem?
+    private var timeoutWorkItem: DispatchWorkItem?
+    private var animationTimer: Timer?
+    private var defaultImage: NSImage?
 
     init(
         statusItem: NSStatusItem,
@@ -16,6 +22,11 @@ final class StatusMenuController: NSObject {
     }
 
     func rebuildMenu() {
+        managementMenu = makeManagementMenu()
+        installDirectCaptureAction()
+    }
+
+    private func makeManagementMenu() -> NSMenu {
         let menu = NSMenu()
         addSummary(to: menu)
         menu.addItem(.separator())
@@ -33,7 +44,16 @@ final class StatusMenuController: NSObject {
         menu.addItem(item("Refresh", #selector(refresh)))
         menu.addItem(.separator())
         menu.addItem(item("Quit Starlee", #selector(quit)))
-        statusItem.menu = menu
+        return menu
+    }
+
+    private func installDirectCaptureAction() {
+        statusItem.menu = nil
+        guard let button = statusItem.button else { return }
+        defaultImage = defaultImage ?? button.image
+        button.target = self
+        button.action = #selector(handleStatusItemClick(_:))
+        button.sendAction(on: [.leftMouseUp])
     }
 
     private func addSummary(to menu: NSMenu) {
@@ -76,6 +96,60 @@ final class StatusMenuController: NSObject {
         return item
     }
 
+    @objc private func handleStatusItemClick(_ sender: NSStatusBarButton) {
+        if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+            showManagementMenu(from: sender)
+            return
+        }
+        captureFromStatusItem()
+    }
+
+    private func captureFromStatusItem() {
+        guard !isCapturing else { return }
+        isCapturing = true
+
+        let loading = DispatchWorkItem { [weak self] in
+            self?.startLoadingAnimation()
+        }
+        loadingWorkItem = loading
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: loading)
+
+        let timeout = DispatchWorkItem { [weak self] in
+            self?.finishCapture(PostResult(ok: false, message: "No response from Starlee."))
+        }
+        timeoutWorkItem = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: timeout)
+
+        client.requestCurrentArticleCapture { [weak self] result in
+            self?.finishCapture(result)
+        }
+    }
+
+    private func finishCapture(_ result: PostResult) {
+        guard isCapturing else { return }
+        loadingWorkItem?.cancel()
+        timeoutWorkItem?.cancel()
+        loadingWorkItem = nil
+        timeoutWorkItem = nil
+        stopAnimationTimer()
+
+        if result.ok {
+            playSuccessAnimation()
+        } else {
+            playErrorAnimation(message: result.message)
+        }
+    }
+
+    private func showManagementMenu(from button: NSStatusBarButton) {
+        rebuildMenu()
+        managementMenu.popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: button.bounds.height + 3),
+            in: button
+        )
+        installDirectCaptureAction()
+    }
+
     @objc func saveCurrentArticle() {
         let result = client.requestCurrentArticleCapture()
         if result.ok {
@@ -85,6 +159,73 @@ final class StatusMenuController: NSObject {
             DialogPresenter.show(title: "Starlee capture needs attention", message: result.message)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.rebuildMenu() }
+    }
+
+    private func startLoadingAnimation() {
+        let frames = MenuBarIcon.loadingFrames()
+        guard !frames.isEmpty else { return }
+        playRepeating(frames: frames, interval: 0.28)
+    }
+
+    private func playSuccessAnimation() {
+        let frames = MenuBarIcon.successFrames()
+        guard !frames.isEmpty else {
+            resetAfterFeedback(delay: 1.2)
+            return
+        }
+        playOnce(frames: frames, interval: 0.13) { [weak self] in
+            self?.resetAfterFeedback(delay: 0)
+        }
+    }
+
+    private func playErrorAnimation(message: String) {
+        if let errorImage = MenuBarIcon.errorImage() {
+            statusItem.button?.image = errorImage
+        }
+        NSLog("Starlee capture failed: \(message)")
+        resetAfterFeedback(delay: 1.5)
+    }
+
+    private func playRepeating(frames: [NSImage], interval: TimeInterval) {
+        stopAnimationTimer()
+        var index = 0
+        statusItem.button?.image = frames[index]
+        animationTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            index = (index + 1) % frames.count
+            self?.statusItem.button?.image = frames[index]
+        }
+    }
+
+    private func playOnce(frames: [NSImage], interval: TimeInterval, completion: @escaping () -> Void) {
+        stopAnimationTimer()
+        var index = 0
+        statusItem.button?.image = frames[index]
+        animationTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
+            index += 1
+            guard index < frames.count else {
+                timer.invalidate()
+                self?.animationTimer = nil
+                completion()
+                return
+            }
+            self?.statusItem.button?.image = frames[index]
+        }
+    }
+
+    private func resetAfterFeedback(delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.isCapturing = false
+            self?.resetIcon()
+        }
+    }
+
+    private func resetIcon() {
+        statusItem.button?.image = defaultImage ?? MenuBarIcon.makeImage()
+    }
+
+    private func stopAnimationTimer() {
+        animationTimer?.invalidate()
+        animationTimer = nil
     }
 
     @objc private func search() {
