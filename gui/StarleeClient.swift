@@ -137,8 +137,7 @@ final class StarleeClient {
             if (200..<300).contains(status) {
                 result = PostResult(ok: true, message: "Capture request sent.")
             } else {
-                let text = data.flatMap { String(data: $0, encoding: .utf8) } ?? "HTTP \(status)"
-                result = PostResult(ok: false, message: text)
+                result = PostResult(ok: false, message: Self.responseMessage(data: data, status: status))
             }
         }.resume()
         _ = semaphore.wait(timeout: .now() + 3)
@@ -163,17 +162,19 @@ final class StarleeClient {
                 result = CaptureRequestPostResult(ok: false, message: error.localizedDescription, requestId: nil)
             } else {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                let requestId = data.flatMap { data -> String? in
+                let requestValue = data.flatMap { data -> [String: Any]? in
                     guard
                         let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                         let request = value["request"] as? [String: Any]
                     else { return nil }
-                    return request["id"] as? String
+                    return request
                 }
+                let requestId = requestValue?["id"] as? String
                 if (200..<300).contains(status), let requestId {
                     result = CaptureRequestPostResult(ok: true, message: "Capture request queued.", requestId: requestId)
                 } else {
-                    let text = data.flatMap { String(data: $0, encoding: .utf8) } ?? "HTTP \(status)"
+                    let text = requestValue?["message"] as? String
+                        ?? Self.responseMessage(data: data, status: status)
                     result = CaptureRequestPostResult(ok: false, message: text, requestId: nil)
                 }
             }
@@ -211,7 +212,7 @@ final class StarleeClient {
                         message: requestStatus["message"] as? String ?? ""
                     )
                 } else {
-                    let text = data.flatMap { String(data: $0, encoding: .utf8) } ?? "HTTP \(statusCode)"
+                    let text = Self.responseMessage(data: data, status: statusCode)
                     result = CaptureRequestStatusResult(ok: false, status: nil, message: text)
                 }
             }
@@ -228,5 +229,27 @@ final class StarleeClient {
         }
         return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("target/release/starlee")
+    }
+
+    private static func responseMessage(data: Data?, status: Int) -> String {
+        guard
+            let data,
+            let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return data.flatMap { String(data: $0, encoding: .utf8) } ?? "HTTP \(status)"
+        }
+        if let message = value["message"] as? String {
+            return message
+        }
+        if let error = value["error"] as? String {
+            return error
+        }
+        if
+            let request = value["request"] as? [String: Any],
+            let message = request["message"] as? String
+        {
+            return message
+        }
+        return String(data: data, encoding: .utf8) ?? "HTTP \(status)"
     }
 }

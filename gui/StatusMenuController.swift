@@ -159,7 +159,7 @@ final class StatusMenuController: NSObject {
             switch result.status {
             case "capture_saved":
                 self.finishCapture(PostResult(ok: true, message: result.message))
-            case "capture_failed", "service_down", "token_missing", "token_invalid", "permission_denied", "no_active_tab", "empty_extract", "payload_too_large":
+            case "capture_failed", "permission_denied", "unsupported_page", "extension_unavailable", "timed_out":
                 self.finishCapture(PostResult(ok: false, message: result.message.isEmpty ? "Starlee capture failed." : result.message))
             default:
                 let next = DispatchWorkItem { [weak self] in

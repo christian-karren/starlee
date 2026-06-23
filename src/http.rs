@@ -13,7 +13,11 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
-use crate::{capture::CapturePayload, config::LocalConfig, engine::Engine};
+use crate::{
+    capture::CapturePayload,
+    config::{CaptureRequestPageMetadata, LocalConfig},
+    engine::Engine,
+};
 
 const MAX_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
 
@@ -128,11 +132,13 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("menu-bar");
             let capture_request = engine.create_capture_request(source)?;
-            respond(
-                request,
-                StatusCode(202),
-                serde_json::to_value(capture_request)?,
-            )
+            let status =
+                if capture_request.status == crate::engine::CAPTURE_STATUS_EXTENSION_UNAVAILABLE {
+                    StatusCode(409)
+                } else {
+                    StatusCode(202)
+                };
+            respond(request, status, json!({"request": capture_request}))
         }
         (&Method::Get, "/capture-request") => {
             if !authorized(&request, &config.capture_token) {
@@ -185,10 +191,15 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned);
+            let page = value
+                .get("page")
+                .cloned()
+                .map(serde_json::from_value::<CaptureRequestPageMetadata>)
+                .transpose()?;
             respond(
                 request,
                 StatusCode(200),
-                json!({"request": engine.record_capture_request_result(id, status, message)?}),
+                json!({"request": engine.record_capture_request_result(id, status, message, page)?}),
             )
         }
         (&Method::Post, "/capture") => {
@@ -378,6 +389,7 @@ mod tests {
             Some("secret-token"),
         )?;
         assert!(created.starts_with("HTTP/1.1 202"));
+        assert!(created.contains("\"request\""));
         let request_id = created
             .split("\"id\":\"")
             .nth(1)
@@ -401,6 +413,28 @@ mod tests {
             Some("secret-token"),
         )?;
         assert!(picked_up.contains("\"status\":\"picked_up\""));
+        assert!(picked_up.contains("\"picked_up_at\""));
+
+        let extracting = post_path(
+            &server.address,
+            "/capture-request/result",
+            &format!(r#"{{"id":"{request_id}","status":"extracting"}}"#),
+            Some("secret-token"),
+        )?;
+        assert!(extracting.starts_with("HTTP/1.1 200"));
+        assert!(extracting.contains("\"status\":\"extracting\""));
+
+        let posted = post_path(
+            &server.address,
+            "/capture-request/result",
+            &format!(
+                r#"{{"id":"{request_id}","status":"posted","page":{{"title":"Safe title","url":"https://example.com/path","domain":"example.com"}}}}"#
+            ),
+            Some("secret-token"),
+        )?;
+        assert!(posted.starts_with("HTTP/1.1 200"));
+        assert!(posted.contains("\"status\":\"posted\""));
+        assert!(posted.contains("\"domain\":\"example.com\""));
 
         let saved = post_path(
             &server.address,
@@ -415,6 +449,108 @@ mod tests {
 
         let second = get_path(&server.address, "/capture-request", Some("secret-token"))?;
         assert!(second.contains("\"request\":null"));
+        drop(server);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_capture_request_when_extension_heartbeat_is_stale() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Arc::new(Engine::with_embedder(
+            temp.path().to_owned(),
+            Arc::new(TestEmbedder),
+        ));
+        let config = LocalConfig {
+            version: 1,
+            capture_port: 0,
+            capture_token: "secret-token".into(),
+            query_relevance_floor: 0.35,
+            extension: Default::default(),
+            pending_capture_request: None,
+            capture_request_status: None,
+            youtube_api_key: None,
+            spotify_client_id: None,
+            spotify_redirect_uri: None,
+            spotify_oauth: None,
+            spotify_sync: Default::default(),
+            borrowed_bundles: Vec::new(),
+        };
+        let server = spawn(engine.clone(), config)?;
+        let created = post_path(
+            &server.address,
+            "/capture-request",
+            r#"{"source":"test"}"#,
+            Some("secret-token"),
+        )?;
+        assert!(created.starts_with("HTTP/1.1 409"));
+        assert!(created.contains("\"status\":\"extension_unavailable\""));
+
+        let first = get_path(&server.address, "/capture-request", Some("secret-token"))?;
+        assert!(first.contains("\"request\":null"));
+        drop(server);
+        Ok(())
+    }
+
+    #[test]
+    fn capture_request_result_rejects_wrong_id_and_records_failure_state() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Arc::new(Engine::with_embedder(
+            temp.path().to_owned(),
+            Arc::new(TestEmbedder),
+        ));
+        let config = LocalConfig {
+            version: 1,
+            capture_port: 0,
+            capture_token: "secret-token".into(),
+            query_relevance_floor: 0.35,
+            extension: Default::default(),
+            pending_capture_request: None,
+            capture_request_status: None,
+            youtube_api_key: None,
+            spotify_client_id: None,
+            spotify_redirect_uri: None,
+            spotify_oauth: None,
+            spotify_sync: Default::default(),
+            borrowed_bundles: Vec::new(),
+        };
+        let server = spawn(engine.clone(), config)?;
+        post_path(
+            &server.address,
+            "/extension/hello",
+            r#"{"browser":"Chrome","extension_version":"0.1.0","can_capture_active_tab":true}"#,
+            Some("secret-token"),
+        )?;
+        let created = post_path(
+            &server.address,
+            "/capture-request",
+            r#"{"source":"test"}"#,
+            Some("secret-token"),
+        )?;
+        let request_id = created
+            .split("\"id\":\"")
+            .nth(1)
+            .and_then(|value| value.split('"').next())
+            .expect("created capture request includes an id")
+            .to_owned();
+
+        let wrong = post_path(
+            &server.address,
+            "/capture-request/result",
+            r#"{"id":"wrong","status":"capture_saved"}"#,
+            Some("secret-token"),
+        )?;
+        assert!(wrong.starts_with("HTTP/1.1 200"));
+        assert!(wrong.contains("\"request\":null"));
+
+        let denied = post_path(
+            &server.address,
+            "/capture-request/result",
+            &format!(r#"{{"id":"{request_id}","status":"permission_denied"}}"#),
+            Some("secret-token"),
+        )?;
+        assert!(denied.starts_with("HTTP/1.1 200"));
+        assert!(denied.contains("\"status\":\"permission_denied\""));
+        assert!(denied.contains("\"completed_at\""));
         drop(server);
         Ok(())
     }

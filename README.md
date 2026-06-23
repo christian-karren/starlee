@@ -58,8 +58,9 @@ open ~/Applications/Starlee.app
 The app appears as a menu-bar icon. Click it once to capture the current
 browser article or YouTube watch page. The icon only shows the success pulse
 after the browser extension reports that the capture was saved; request pickup
-and extraction remain in the loading state, and failures resolve to the error
-state. Option-click the icon to open management tools for Recent Captures,
+and extraction remain in the loading state, stale requests time out quickly,
+and failures distinguish extension availability, page permission, unsupported
+pages, and capture errors. Option-click the icon to open management tools for Recent Captures,
 Browser Setup, diagnostics, vault access, capture-service controls, and Quit.
 
 You can still run setup manually:

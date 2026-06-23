@@ -50,7 +50,11 @@ async function capture(_message, sendResponse) {
     });
     sendResponse(response);
   } catch (error) {
-    sendResponse({ ok: false, code: "empty_extract", error: error.message });
+    const message = error.message || "This page cannot be captured by Starlee.";
+    const code = message.includes("does not look like")
+      ? "unsupported_page"
+      : "capture_failed";
+    sendResponse({ ok: false, code, error: message });
   }
 }
 
