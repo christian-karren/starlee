@@ -45,10 +45,21 @@ query -> local BGE embedding -> reciprocal-rank fusion -> cited result
   extension has checked in recently, menu-bar capture returns
   `extension_unavailable` without queueing work. The extension owns active-tab
   extraction and refreshes its heartbeat while polling.
+- Browser bridge health is derived from local setup files, extension heartbeat
+  freshness, the last hello payload, and the last request lifecycle status. It
+  answers whether extension setup/config exists, whether a browser checked in
+  recently, which browser checked in, whether active-tab capture is available,
+  the last safe failure reason/message, and the recommended next action.
+- Bridge health is observable in `starlee status`, `starlee doctor`, the
+  menu-bar diagnostics summary, the extension options page, and the authenticated
+  loopback `/bridge-health` endpoint.
 - Capture request status may include request id, source, timestamps, status,
   message, browser name, and safe page metadata such as title, URL, and domain.
   It must not include article bodies, transcripts, selected text, capture
   tokens, or restricted content.
+- Bridge health is stricter than request status: it does not expose request IDs
+  or page metadata, and it replaces failure messages for known browser failure
+  states with concise user-facing recovery text.
 - Generated extension assets are not the same as an installed browser
   extension. `starlee doctor` treats extension assets and extension handshake as
   separate checks.

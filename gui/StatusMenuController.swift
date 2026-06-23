@@ -60,6 +60,7 @@ final class StatusMenuController: NSObject {
     private func addSummary(to menu: NSMenu) {
         let doctor = client.runJSON(["doctor"])
         let status = doctor?["status"] as? [String: Any]
+        let bridge = status?["bridge_health"] as? [String: Any]
         let count = (status?["capture_count"] as? NSNumber)?.intValue ?? 0
         let ok = (doctor?["ok"] as? Bool) ?? false
         let title = "● \(count) captures · \(ok ? "ready" : "needs setup")"
@@ -70,6 +71,11 @@ final class StatusMenuController: NSObject {
         )
         summary.isEnabled = false
         menu.addItem(summary)
+        if let action = bridge?["recommended_next_action"] as? String, !action.isEmpty {
+            let bridgeItem = NSMenuItem(title: "Browser bridge: \(action)", action: nil, keyEquivalent: "")
+            bridgeItem.isEnabled = false
+            menu.addItem(bridgeItem)
+        }
     }
 
     private func addRecentMenu(to menu: NSMenu) {

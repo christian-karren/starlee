@@ -20,8 +20,9 @@ use crate::{
     embedding::{Embedder, FastEmbedder},
     index::Index,
     model::{
-        CaptureInput, CorpusOverview, DoctorCheck, DoctorReport, GetResult, QueryResult, Record,
-        SearchHit, SearchScope, SetupReport, SourceType, SpotifySyncEvent, SpotifySyncLog, Status,
+        BridgeHealth, CaptureInput, CorpusOverview, DoctorCheck, DoctorReport, GetResult,
+        QueryResult, Record, SearchHit, SearchScope, SetupReport, SourceType, SpotifySyncEvent,
+        SpotifySyncLog, Status,
     },
     public_fetch, sensor_assets, spotify,
     spotify::{SpotifyConfigureReport, SpotifySyncReport, SpotifySyncStatus},
@@ -77,9 +78,10 @@ impl Engine {
     }
 
     pub fn onboarding(&self) -> Result<SetupReport> {
-        let status = self.setup()?;
+        self.setup()?;
         let config = self.local_config()?;
         let extension_path = sensor_assets::install(&self.home, &config)?;
+        let status = self.status()?;
         Ok(SetupReport {
             status,
             bookmarklet: "redacted: run `starlee bookmarklet` locally to generate the token-bearing bookmarklet".into(),
@@ -301,7 +303,12 @@ impl Engine {
         let schema_version = self.index.schema_version()?;
         let chunks_stale = self.index.stale_chunk_count(self.embedder.name())?;
         let store = ConfigStore::new(&self.home);
-        let config = store.load_or_create()?;
+        let mut config = store.load_or_create()?;
+        let changed = expire_stale_capture_request(&mut config);
+        if changed {
+            store.save(&config)?;
+        }
+        let bridge_health = self.bridge_health_from_config(&config);
         Ok(Status {
             home: self.home.display().to_string(),
             vault: self.home.join("vault").display().to_string(),
@@ -327,6 +334,7 @@ impl Engine {
             schema_version,
             embedding_model_current: self.embedder.name().into(),
             chunks_stale,
+            bridge_health,
         })
     }
 
@@ -500,6 +508,11 @@ impl Engine {
                 .clone()
                 .unwrap_or_else(|| "no extension handshake recorded".into()),
         });
+        checks.push(DoctorCheck {
+            name: "browser_bridge".into(),
+            ok: status.bridge_health.ok,
+            detail: status.bridge_health.recommended_next_action.clone(),
+        });
 
         let next_actions = checks
             .iter()
@@ -536,6 +549,7 @@ impl Engine {
                 "extension_handshake" => {
                     "Load or reload ~/Starlee/sensor-extension in your browser."
                 }
+                "browser_bridge" => status.bridge_health.recommended_next_action.as_str(),
                 _ => "Run `starlee setup` and then `starlee doctor` again.",
             })
             .map(str::to_owned)
@@ -546,6 +560,64 @@ impl Engine {
             checks,
             next_actions,
         })
+    }
+
+    pub fn bridge_health(&self) -> Result<BridgeHealth> {
+        let store = ConfigStore::new(&self.home);
+        let mut config = store.load_or_create()?;
+        let changed = expire_stale_capture_request(&mut config);
+        if changed {
+            store.save(&config)?;
+        }
+        Ok(self.bridge_health_from_config(&config))
+    }
+
+    fn bridge_health_from_config(&self, config: &LocalConfig) -> BridgeHealth {
+        let extension_path = self.home.join("sensor-extension");
+        let extension_setup_present = extension_path.join("manifest.json").exists();
+        let extension_config_present = extension_path.join("starlee-config.json").exists();
+        let checked_in_recently =
+            extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS);
+        let last_request_status = config
+            .capture_request_status
+            .as_ref()
+            .map(|status| status.status.clone());
+        let last_failure = config
+            .capture_request_status
+            .as_ref()
+            .filter(|status| capture_status_is_terminal(&status.status))
+            .filter(|status| status.status != CAPTURE_STATUS_SAVED);
+        let last_failure_reason = last_failure.map(|status| status.status.clone());
+        let last_failure_message = last_failure.and_then(|status| {
+            safe_bridge_failure_message(&status.status, status.message.as_deref())
+        });
+        let ok = extension_setup_present
+            && extension_config_present
+            && checked_in_recently
+            && config.extension.can_capture_active_tab;
+        BridgeHealth {
+            ok,
+            extension_setup_present,
+            extension_config_present,
+            checked_in_recently,
+            browser: config.extension.browser.clone(),
+            extension_version: config.extension.extension_version.clone(),
+            can_capture_active_tab: config.extension.can_capture_active_tab,
+            last_hello_at: config.extension.last_handshake_at.clone(),
+            last_request_status,
+            last_failure_reason,
+            last_failure_message,
+            recommended_next_action: bridge_next_action(
+                extension_setup_present,
+                extension_config_present,
+                checked_in_recently,
+                config.extension.can_capture_active_tab,
+                config
+                    .capture_request_status
+                    .as_ref()
+                    .map(|status| status.status.as_str()),
+            ),
+        }
     }
 
     pub fn record_extension_hello(
@@ -604,10 +676,7 @@ impl Engine {
         } else {
             status.status = CAPTURE_STATUS_EXTENSION_UNAVAILABLE.into();
             status.completed_at = Some(Utc::now().to_rfc3339());
-            status.message = Some(
-                "No browser extension has checked in recently. Reload the Starlee extension, then try again."
-                    .into(),
-            );
+            status.message = default_capture_status_message(CAPTURE_STATUS_EXTENSION_UNAVAILABLE);
             config.pending_capture_request = None;
         }
         config.capture_request_status = Some(status.clone());
@@ -1051,9 +1120,10 @@ fn domain_from_url(value: &str) -> Option<String> {
 }
 
 fn extension_is_fresh(extension: &ExtensionState, max_age: Duration) -> bool {
-    if !extension.can_capture_active_tab {
-        return false;
-    }
+    extension.can_capture_active_tab && extension_heartbeat_is_fresh(extension, max_age)
+}
+
+fn extension_heartbeat_is_fresh(extension: &ExtensionState, max_age: Duration) -> bool {
     let Some(last_handshake_at) = extension.last_handshake_at.as_deref() else {
         return false;
     };
@@ -1084,9 +1154,7 @@ fn expire_stale_capture_request(config: &mut LocalConfig) -> bool {
     }
     status.status = CAPTURE_STATUS_TIMED_OUT.into();
     status.completed_at = Some(Utc::now().to_rfc3339());
-    status.message = Some(
-        "The browser extension did not complete this capture before the request expired.".into(),
-    );
+    status.message = Some("The browser did not pick up the request in time.".into());
     config.pending_capture_request = None;
     true
 }
@@ -1142,20 +1210,70 @@ fn default_capture_status_message(status: &str) -> Option<String> {
         CAPTURE_STATUS_SAVED => "Saved to Starlee.",
         CAPTURE_STATUS_FAILED => "Starlee capture failed.",
         CAPTURE_STATUS_PERMISSION_DENIED => {
-            "The browser did not grant Starlee access to this page."
+            "Grant Starlee site access in the browser, or reload the page and try again."
         }
         CAPTURE_STATUS_UNSUPPORTED_PAGE => {
-            "This page does not expose an article or YouTube video for Starlee to capture."
+            "The active page is not an article or YouTube watch page Starlee can capture."
         }
         CAPTURE_STATUS_EXTENSION_UNAVAILABLE => {
-            "No browser extension has checked in recently. Reload the Starlee extension, then try again."
+            "Load or reload the Starlee browser extension, then try again."
         }
-        CAPTURE_STATUS_TIMED_OUT => {
-            "The browser extension did not complete this capture before the request expired."
-        }
+        CAPTURE_STATUS_TIMED_OUT => "The browser did not pick up the request in time.",
         _ => return None,
     };
     Some(message.into())
+}
+
+fn safe_bridge_failure_message(status: &str, stored_message: Option<&str>) -> Option<String> {
+    match status {
+        CAPTURE_STATUS_PERMISSION_DENIED
+        | CAPTURE_STATUS_UNSUPPORTED_PAGE
+        | CAPTURE_STATUS_EXTENSION_UNAVAILABLE
+        | CAPTURE_STATUS_TIMED_OUT
+        | CAPTURE_STATUS_FAILED => default_capture_status_message(status),
+        _ => stored_message
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.chars().take(240).collect()),
+    }
+}
+
+fn bridge_next_action(
+    extension_setup_present: bool,
+    extension_config_present: bool,
+    checked_in_recently: bool,
+    can_capture_active_tab: bool,
+    last_request_status: Option<&str>,
+) -> String {
+    if !extension_setup_present || !extension_config_present {
+        return "Run `starlee setup`, then load or reload ~/Starlee/sensor-extension in your browser."
+            .into();
+    }
+    if !checked_in_recently {
+        return "Load or reload the Starlee browser extension, then try again.".into();
+    }
+    if !can_capture_active_tab {
+        return "Grant Starlee site access in the browser, or reload the page and try again."
+            .into();
+    }
+    match last_request_status {
+        Some(CAPTURE_STATUS_PERMISSION_DENIED) => {
+            "Grant Starlee site access in the browser, or reload the page and try again.".into()
+        }
+        Some(CAPTURE_STATUS_UNSUPPORTED_PAGE) => {
+            "Open an article or YouTube watch page, then try capture again.".into()
+        }
+        Some(CAPTURE_STATUS_TIMED_OUT) => {
+            "Make the target browser window active, reload the extension, then try again.".into()
+        }
+        Some(CAPTURE_STATUS_EXTENSION_UNAVAILABLE) => {
+            "Load or reload the Starlee browser extension, then try again.".into()
+        }
+        Some(CAPTURE_STATUS_FAILED) => {
+            "Retry capture from the active tab; run `starlee doctor` if it fails again.".into()
+        }
+        _ => "Bridge is ready. Open an article or YouTube watch page and capture again.".into(),
+    }
 }
 
 fn sanitize_page_metadata(page: CaptureRequestPageMetadata) -> CaptureRequestPageMetadata {
@@ -1432,6 +1550,123 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn bridge_health_reports_fresh_extension_heartbeat_as_ready() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+
+        let health = engine.bridge_health()?;
+
+        assert!(health.ok);
+        assert!(health.extension_setup_present);
+        assert!(health.extension_config_present);
+        assert!(health.checked_in_recently);
+        assert_eq!(health.browser.as_deref(), Some("Chrome"));
+        assert!(health.can_capture_active_tab);
+        assert_eq!(health.last_request_status, None);
+        assert!(health.recommended_next_action.contains("Bridge is ready"));
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_health_reports_missing_or_stale_heartbeat_with_next_action() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let engine = Engine::new(temp.path().to_owned());
+
+        let missing = engine.bridge_health()?;
+        assert!(!missing.ok);
+        assert!(!missing.checked_in_recently);
+        assert!(
+            missing
+                .recommended_next_action
+                .contains("Load or reload the Starlee browser extension")
+        );
+
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        age_extension_hello(temp.path(), 60)?;
+        let stale = engine.bridge_health()?;
+        assert!(!stale.ok);
+        assert!(!stale.checked_in_recently);
+        assert!(
+            stale
+                .recommended_next_action
+                .contains("Load or reload the Starlee browser extension")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_health_includes_last_request_failure_without_sensitive_payload() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        let request = engine.create_capture_request("menu-bar")?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_PERMISSION_DENIED,
+            Some("PRIVATE SELECTED TEXT and transcript should not leak".into()),
+            Some(CaptureRequestPageMetadata {
+                title: Some("Private title".into()),
+                url: Some("https://private.example/article".into()),
+                domain: Some("private.example".into()),
+            }),
+        )?;
+
+        let health = engine.bridge_health()?;
+        let serialized = serde_json::to_string(&health)?;
+
+        assert_eq!(
+            health.last_request_status.as_deref(),
+            Some(CAPTURE_STATUS_PERMISSION_DENIED)
+        );
+        assert_eq!(
+            health.last_failure_reason.as_deref(),
+            Some(CAPTURE_STATUS_PERMISSION_DENIED)
+        );
+        assert!(
+            health
+                .last_failure_message
+                .as_deref()
+                .is_some_and(|message| message.contains("Grant Starlee site access"))
+        );
+        assert!(!serialized.contains(&request.id));
+        assert!(!serialized.contains("PRIVATE SELECTED TEXT"));
+        assert!(!serialized.contains("transcript"));
+        assert!(!serialized.contains("Private title"));
+        assert!(!serialized.contains("private.example"));
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_health_output_does_not_expose_tokens_or_content() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let engine = Engine::new(temp.path().to_owned());
+        let store = ConfigStore::new(temp.path());
+        let config = store.load_or_create()?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        let request = engine.create_capture_request("menu-bar")?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_FAILED,
+            Some("restricted body transcript selected text capture token".into()),
+            None,
+        )?;
+
+        let serialized = serde_json::to_string(&engine.bridge_health()?)?;
+
+        assert!(!serialized.contains(&config.capture_token));
+        assert!(!serialized.contains(&request.id));
+        assert!(!serialized.contains("restricted body"));
+        assert!(!serialized.contains("selected text"));
+        assert!(!serialized.contains("capture token"));
+        Ok(())
+    }
+
     fn age_capture_request(home: &std::path::Path, seconds: i64) -> Result<()> {
         let store = ConfigStore::new(home);
         let mut config = store.load_or_create()?;
@@ -1443,5 +1678,21 @@ mod tests {
             pending.requested_at = old;
         }
         store.save(&config)
+    }
+
+    fn age_extension_hello(home: &std::path::Path, seconds: i64) -> Result<()> {
+        let store = ConfigStore::new(home);
+        let mut config = store.load_or_create()?;
+        config.extension.last_handshake_at =
+            Some((Utc::now() - chrono::TimeDelta::seconds(seconds)).to_rfc3339());
+        store.save(&config)
+    }
+
+    fn install_extension_setup(home: &std::path::Path) -> Result<()> {
+        let extension_path = home.join("sensor-extension");
+        std::fs::create_dir_all(&extension_path)?;
+        std::fs::write(extension_path.join("manifest.json"), "{}")?;
+        std::fs::write(extension_path.join("starlee-config.json"), "{}")?;
+        Ok(())
     }
 }

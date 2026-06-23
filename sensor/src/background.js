@@ -9,7 +9,8 @@ const MESSAGE = Object.freeze({
   status: "STARLEE_STATUS",
   hello: "STARLEE_HELLO",
   takeCaptureRequest: "STARLEE_TAKE_CAPTURE_REQUEST",
-  captureNow: "STARLEE_CAPTURE_NOW"
+  captureNow: "STARLEE_CAPTURE_NOW",
+  bridgeHealth: "STARLEE_BRIDGE_HEALTH"
 });
 const CAPTURE_STATUS = Object.freeze({
   saved: "capture_saved",
@@ -45,6 +46,10 @@ function handleMessage(message, _sender, sendResponse) {
   }
   if (message?.type === MESSAGE.takeCaptureRequest) {
     takeCaptureRequest().then(sendResponse);
+    return true;
+  }
+  if (message?.type === MESSAGE.bridgeHealth) {
+    bridgeHealth().then(sendResponse);
     return true;
   }
 }
@@ -241,6 +246,39 @@ async function status() {
     browser: browserName(),
     ...diagnostic
   };
+}
+
+async function bridgeHealth() {
+  const { token, port } = await localSettings();
+  if (!token) {
+    return {
+      ok: false,
+      recommended_next_action: "Open Starlee Capture settings and connect the local Starlee app."
+    };
+  }
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/bridge-health`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        ok: false,
+        recommended_next_action: response.status === 401
+          ? "Capture token was rejected by local Starlee."
+          : `Local Starlee returned HTTP ${response.status}.`
+      };
+    }
+    return body.bridge_health || {
+      ok: false,
+      recommended_next_action: "Run starlee doctor to inspect browser bridge health."
+    };
+  } catch {
+    return {
+      ok: false,
+      recommended_next_action: "Local Starlee is not reachable. Open Starlee or run starlee serve."
+    };
+  }
 }
 
 async function recordHandshake(result) {

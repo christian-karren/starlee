@@ -65,6 +65,31 @@ available, the item is still captured with `[Transcript unavailable]`.
 `GET /health` is intentionally unauthenticated and returns no user data or
 secrets. `OPTIONS` supports browser CORS preflight.
 
+`GET /bridge-health` requires the bearer token and returns sanitized browser
+bridge diagnostics:
+
+```json
+{
+  "bridge_health": {
+    "ok": true,
+    "extension_setup_present": true,
+    "extension_config_present": true,
+    "checked_in_recently": true,
+    "browser": "Chrome",
+    "extension_version": "0.1.0",
+    "can_capture_active_tab": true,
+    "last_hello_at": "2026-06-23T05:00:00Z",
+    "last_request_status": "capture_saved",
+    "last_failure_reason": null,
+    "last_failure_message": null,
+    "recommended_next_action": "Bridge is ready. Open an article or YouTube watch page and capture again."
+  }
+}
+```
+
+Bridge health never includes capture tokens, request IDs, article bodies,
+transcripts, selected text, restricted content, or page metadata.
+
 ## Extension handshake
 
 Browser extensions should announce themselves after startup or reload:
@@ -190,3 +215,11 @@ Success feedback in the macOS menu bar is reserved for `capture_saved`.
 `queued`, `picked_up`, `extracting`, and `posted` stay in loading state.
 All other terminal states return a distinct error state with an actionable
 message.
+
+Default recovery messages are intentionally concise:
+
+- `extension_unavailable`: load or reload the Starlee browser extension.
+- `permission_denied`: grant Starlee site access in the browser, or reload the
+  page.
+- `unsupported_page`: the active page is not an article or YouTube watch page.
+- `timed_out`: the browser did not pick up the request in time.

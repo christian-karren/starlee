@@ -261,6 +261,23 @@ pub struct Status {
     pub schema_version: i64,
     pub embedding_model_current: String,
     pub chunks_stale: u64,
+    pub bridge_health: BridgeHealth,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeHealth {
+    pub ok: bool,
+    pub extension_setup_present: bool,
+    pub extension_config_present: bool,
+    pub checked_in_recently: bool,
+    pub browser: Option<String>,
+    pub extension_version: Option<String>,
+    pub can_capture_active_tab: bool,
+    pub last_hello_at: Option<String>,
+    pub last_request_status: Option<String>,
+    pub last_failure_reason: Option<String>,
+    pub last_failure_message: Option<String>,
+    pub recommended_next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

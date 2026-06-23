@@ -98,6 +98,16 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                 "status":"ready", "service":"starlee-capture", "payload_version":1
             }),
         ),
+        (&Method::Get, "/bridge-health") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            respond(
+                request,
+                StatusCode(200),
+                json!({"bridge_health": engine.bridge_health()?}),
+            )
+        }
         (&Method::Post, "/extension/hello") => {
             if !authorized(&request, &config.capture_token) {
                 return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
