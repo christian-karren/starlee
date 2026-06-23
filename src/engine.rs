@@ -8,12 +8,15 @@ use std::{
 };
 
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
 use crate::{
     bundle::{self, BundleAudit},
-    config::{CaptureRequestState, CaptureRequestStatus, ConfigStore, ExtensionState, LocalConfig},
+    config::{
+        CaptureRequestPageMetadata, CaptureRequestState, CaptureRequestStatus, ConfigStore,
+        ExtensionState, LocalConfig,
+    },
     embedding::{Embedder, FastEmbedder},
     index::Index,
     model::{
@@ -25,6 +28,20 @@ use crate::{
     vault::Vault,
     youtube::enrich_youtube,
 };
+
+pub const CAPTURE_REQUEST_TTL: Duration = Duration::from_secs(10);
+pub const EXTENSION_HEARTBEAT_FRESHNESS: Duration = Duration::from_secs(15);
+
+pub const CAPTURE_STATUS_QUEUED: &str = "queued";
+pub const CAPTURE_STATUS_PICKED_UP: &str = "picked_up";
+pub const CAPTURE_STATUS_EXTRACTING: &str = "extracting";
+pub const CAPTURE_STATUS_POSTED: &str = "posted";
+pub const CAPTURE_STATUS_SAVED: &str = "capture_saved";
+pub const CAPTURE_STATUS_FAILED: &str = "capture_failed";
+pub const CAPTURE_STATUS_PERMISSION_DENIED: &str = "permission_denied";
+pub const CAPTURE_STATUS_UNSUPPORTED_PAGE: &str = "unsupported_page";
+pub const CAPTURE_STATUS_EXTENSION_UNAVAILABLE: &str = "extension_unavailable";
+pub const CAPTURE_STATUS_TIMED_OUT: &str = "timed_out";
 
 pub struct Engine {
     home: PathBuf,
@@ -549,9 +566,13 @@ impl Engine {
         Ok(config.extension)
     }
 
-    pub fn create_capture_request(&self, source: impl Into<String>) -> Result<CaptureRequestState> {
+    pub fn create_capture_request(
+        &self,
+        source: impl Into<String>,
+    ) -> Result<CaptureRequestStatus> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
+        expire_stale_capture_request(&mut config);
         let source = source.into();
         let id_material = format!(
             "{}:{}:{}",
@@ -560,33 +581,52 @@ impl Engine {
             source
         );
         let id = token_fingerprint(&id_material);
+        let requested_at = Utc::now().to_rfc3339();
+        let browser = config.extension.browser.clone();
         let request = CaptureRequestState {
-            id,
-            requested_at: Utc::now().to_rfc3339(),
-            source,
+            id: id.clone(),
+            requested_at: requested_at.clone(),
+            source: source.clone(),
         };
-        config.capture_request_status = Some(CaptureRequestStatus {
-            id: request.id.clone(),
-            requested_at: request.requested_at.clone(),
-            source: request.source.clone(),
-            status: "queued".into(),
+        let mut status = CaptureRequestStatus {
+            id,
+            requested_at,
+            source,
+            picked_up_at: None,
+            browser,
+            page: None,
+            status: CAPTURE_STATUS_QUEUED.into(),
             completed_at: None,
-            message: None,
-        });
-        config.pending_capture_request = Some(request.clone());
+            message: Some("Capture request queued for the browser extension.".into()),
+        };
+        if extension_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS) {
+            config.pending_capture_request = Some(request);
+        } else {
+            status.status = CAPTURE_STATUS_EXTENSION_UNAVAILABLE.into();
+            status.completed_at = Some(Utc::now().to_rfc3339());
+            status.message = Some(
+                "No browser extension has checked in recently. Reload the Starlee extension, then try again."
+                    .into(),
+            );
+            config.pending_capture_request = None;
+        }
+        config.capture_request_status = Some(status.clone());
         store.save(&config)?;
-        Ok(request)
+        Ok(status)
     }
 
     pub fn take_capture_request(&self) -> Result<Option<CaptureRequestState>> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
+        expire_stale_capture_request(&mut config);
         let request = config.pending_capture_request.take();
         if let Some(request) = request.as_ref()
             && let Some(status) = config.capture_request_status.as_mut()
             && status.id == request.id
+            && !capture_status_is_terminal(&status.status)
         {
-            status.status = "picked_up".into();
+            status.status = CAPTURE_STATUS_PICKED_UP.into();
+            status.picked_up_at = Some(Utc::now().to_rfc3339());
             status.message = Some("Browser extension picked up the capture request.".into());
         }
         store.save(&config)?;
@@ -594,7 +634,12 @@ impl Engine {
     }
 
     pub fn capture_request_status(&self, id: &str) -> Result<Option<CaptureRequestStatus>> {
-        let config = self.local_config()?;
+        let store = ConfigStore::new(&self.home);
+        let mut config = store.load_or_create()?;
+        let changed = expire_stale_capture_request(&mut config);
+        if changed {
+            store.save(&config)?;
+        }
         Ok(config
             .capture_request_status
             .filter(|status| status.id == id))
@@ -605,18 +650,34 @@ impl Engine {
         id: &str,
         status: impl Into<String>,
         message: Option<String>,
+        page: Option<CaptureRequestPageMetadata>,
     ) -> Result<Option<CaptureRequestStatus>> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
+        expire_stale_capture_request(&mut config);
         let Some(mut request_status) = config.capture_request_status.clone() else {
             return Ok(None);
         };
         if request_status.id != id {
             return Ok(None);
         }
-        request_status.status = status.into();
-        request_status.completed_at = Some(Utc::now().to_rfc3339());
-        request_status.message = message;
+        if capture_status_is_terminal(&request_status.status) {
+            store.save(&config)?;
+            return Ok(Some(request_status));
+        }
+        let status = normalize_capture_request_status(&status.into());
+        request_status.status = status.clone();
+        if status == CAPTURE_STATUS_PICKED_UP && request_status.picked_up_at.is_none() {
+            request_status.picked_up_at = Some(Utc::now().to_rfc3339());
+        }
+        if capture_status_is_terminal(&status) {
+            request_status.completed_at = Some(Utc::now().to_rfc3339());
+            config.pending_capture_request = None;
+        }
+        if let Some(page) = page {
+            request_status.page = Some(sanitize_page_metadata(page));
+        }
+        request_status.message = message.or_else(|| default_capture_status_message(&status));
         config.capture_request_status = Some(request_status.clone());
         store.save(&config)?;
         Ok(Some(request_status))
@@ -983,6 +1044,130 @@ fn domain_from_url(value: &str) -> Option<String> {
         .map(|host| host.trim_start_matches("www.").to_owned())
 }
 
+fn extension_is_fresh(extension: &ExtensionState, max_age: Duration) -> bool {
+    if !extension.can_capture_active_tab {
+        return false;
+    }
+    let Some(last_handshake_at) = extension.last_handshake_at.as_deref() else {
+        return false;
+    };
+    let Some(last_handshake_at) = parse_rfc3339_utc(last_handshake_at) else {
+        return false;
+    };
+    let Ok(max_age) = chrono::TimeDelta::from_std(max_age) else {
+        return false;
+    };
+    Utc::now().signed_duration_since(last_handshake_at) <= max_age
+}
+
+fn expire_stale_capture_request(config: &mut LocalConfig) -> bool {
+    let Some(status) = config.capture_request_status.as_mut() else {
+        config.pending_capture_request = None;
+        return false;
+    };
+    if capture_status_is_terminal(&status.status) {
+        config.pending_capture_request = None;
+        return false;
+    }
+    let Some(requested_at) = parse_rfc3339_utc(&status.requested_at) else {
+        return false;
+    };
+    let Ok(ttl) = chrono::TimeDelta::from_std(CAPTURE_REQUEST_TTL) else {
+        return false;
+    };
+    if Utc::now().signed_duration_since(requested_at) <= ttl {
+        return false;
+    }
+    status.status = CAPTURE_STATUS_TIMED_OUT.into();
+    status.completed_at = Some(Utc::now().to_rfc3339());
+    status.message = Some(
+        "The browser extension did not complete this capture before the request expired.".into(),
+    );
+    config.pending_capture_request = None;
+    true
+}
+
+fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|value| value.with_timezone(&Utc))
+}
+
+fn normalize_capture_request_status(status: &str) -> String {
+    match status {
+        CAPTURE_STATUS_QUEUED
+        | CAPTURE_STATUS_PICKED_UP
+        | CAPTURE_STATUS_EXTRACTING
+        | CAPTURE_STATUS_POSTED
+        | CAPTURE_STATUS_SAVED
+        | CAPTURE_STATUS_FAILED
+        | CAPTURE_STATUS_PERMISSION_DENIED
+        | CAPTURE_STATUS_UNSUPPORTED_PAGE
+        | CAPTURE_STATUS_EXTENSION_UNAVAILABLE
+        | CAPTURE_STATUS_TIMED_OUT => status.to_owned(),
+        "service_down" | "token_missing" | "token_invalid" | "payload_too_large"
+        | "empty_extract" | "no_active_tab" => CAPTURE_STATUS_FAILED.into(),
+        _ => CAPTURE_STATUS_FAILED.into(),
+    }
+}
+
+fn capture_status_is_terminal(status: &str) -> bool {
+    matches!(
+        status,
+        CAPTURE_STATUS_SAVED
+            | CAPTURE_STATUS_FAILED
+            | CAPTURE_STATUS_PERMISSION_DENIED
+            | CAPTURE_STATUS_UNSUPPORTED_PAGE
+            | CAPTURE_STATUS_EXTENSION_UNAVAILABLE
+            | CAPTURE_STATUS_TIMED_OUT
+    )
+}
+
+fn default_capture_status_message(status: &str) -> Option<String> {
+    let message = match status {
+        CAPTURE_STATUS_EXTRACTING => "Browser extension is extracting the active tab.",
+        CAPTURE_STATUS_POSTED => "Browser extension posted the capture to Starlee.",
+        CAPTURE_STATUS_SAVED => "Saved to Starlee.",
+        CAPTURE_STATUS_FAILED => "Starlee capture failed.",
+        CAPTURE_STATUS_PERMISSION_DENIED => {
+            "The browser did not grant Starlee access to this page."
+        }
+        CAPTURE_STATUS_UNSUPPORTED_PAGE => {
+            "This page does not expose an article or YouTube video for Starlee to capture."
+        }
+        CAPTURE_STATUS_EXTENSION_UNAVAILABLE => {
+            "No browser extension has checked in recently. Reload the Starlee extension, then try again."
+        }
+        CAPTURE_STATUS_TIMED_OUT => {
+            "The browser extension did not complete this capture before the request expired."
+        }
+        _ => return None,
+    };
+    Some(message.into())
+}
+
+fn sanitize_page_metadata(page: CaptureRequestPageMetadata) -> CaptureRequestPageMetadata {
+    CaptureRequestPageMetadata {
+        title: page
+            .title
+            .and_then(|value| sanitize_metadata_string(&value, 240)),
+        url: page
+            .url
+            .and_then(|value| sanitize_metadata_string(&value, 2048)),
+        domain: page
+            .domain
+            .and_then(|value| sanitize_metadata_string(&value, 255)),
+    }
+}
+
+fn sanitize_metadata_string(value: &str, max_chars: usize) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(value.chars().take(max_chars).collect())
+}
+
 fn add_terms(counts: &mut HashMap<String, usize>, text: &str) {
     let stopwords = stopwords();
     let mut document_terms = HashSet::new();
@@ -1018,4 +1203,151 @@ fn stopwords() -> HashSet<&'static str> {
     ]
     .into_iter()
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_request_lifecycle_reaches_saved_with_safe_metadata() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+
+        let request = engine.create_capture_request("test")?;
+        assert_eq!(request.status, CAPTURE_STATUS_QUEUED);
+
+        let picked_up = engine.take_capture_request()?.expect("request available");
+        assert_eq!(picked_up.id, request.id);
+        let status = engine
+            .capture_request_status(&request.id)?
+            .expect("status available");
+        assert_eq!(status.status, CAPTURE_STATUS_PICKED_UP);
+        assert!(status.picked_up_at.is_some());
+
+        let extracting = engine
+            .record_capture_request_result(&request.id, CAPTURE_STATUS_EXTRACTING, None, None)?
+            .expect("extracting status");
+        assert_eq!(extracting.status, CAPTURE_STATUS_EXTRACTING);
+        assert!(extracting.completed_at.is_none());
+
+        let posted = engine
+            .record_capture_request_result(
+                &request.id,
+                CAPTURE_STATUS_POSTED,
+                None,
+                Some(CaptureRequestPageMetadata {
+                    title: Some("A useful page".into()),
+                    url: Some("https://example.com/article".into()),
+                    domain: Some("example.com".into()),
+                }),
+            )?
+            .expect("posted status");
+        assert_eq!(posted.status, CAPTURE_STATUS_POSTED);
+        assert_eq!(
+            posted.page.as_ref().and_then(|page| page.domain.as_deref()),
+            Some("example.com")
+        );
+
+        let saved = engine
+            .record_capture_request_result(
+                &request.id,
+                CAPTURE_STATUS_SAVED,
+                Some("Saved to Starlee.".into()),
+                None,
+            )?
+            .expect("saved status");
+        assert_eq!(saved.status, CAPTURE_STATUS_SAVED);
+        assert!(saved.completed_at.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn capture_request_failure_states_are_terminal() -> Result<()> {
+        for status in [
+            CAPTURE_STATUS_FAILED,
+            CAPTURE_STATUS_PERMISSION_DENIED,
+            CAPTURE_STATUS_UNSUPPORTED_PAGE,
+        ] {
+            let temp = tempfile::tempdir()?;
+            let engine = Engine::new(temp.path().to_owned());
+            engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+            let request = engine.create_capture_request("test")?;
+            let failed = engine
+                .record_capture_request_result(&request.id, status, None, None)?
+                .expect("terminal status");
+            assert_eq!(failed.status, status);
+            assert!(failed.completed_at.is_some());
+            let ignored = engine
+                .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?
+                .expect("terminal status remains available");
+            assert_eq!(ignored.status, status);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stale_capture_request_times_out_and_is_not_served() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        let request = engine.create_capture_request("test")?;
+
+        let store = ConfigStore::new(temp.path());
+        let mut config = store.load_or_create()?;
+        let old = (Utc::now() - chrono::TimeDelta::seconds(30)).to_rfc3339();
+        if let Some(status) = config.capture_request_status.as_mut() {
+            status.requested_at = old.clone();
+        }
+        if let Some(pending) = config.pending_capture_request.as_mut() {
+            pending.requested_at = old;
+        }
+        store.save(&config)?;
+
+        assert!(engine.take_capture_request()?.is_none());
+        let status = engine
+            .capture_request_status(&request.id)?
+            .expect("timed out status");
+        assert_eq!(status.status, CAPTURE_STATUS_TIMED_OUT);
+        assert!(status.completed_at.is_some());
+
+        let ignored = engine
+            .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?
+            .expect("timed out status remains available");
+        assert_eq!(ignored.status, CAPTURE_STATUS_TIMED_OUT);
+        Ok(())
+    }
+
+    #[test]
+    fn wrong_request_id_and_duplicate_pickup_do_not_progress_request() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        let request = engine.create_capture_request("test")?;
+
+        assert!(
+            engine
+                .record_capture_request_result("wrong-id", CAPTURE_STATUS_SAVED, None, None)?
+                .is_none()
+        );
+        assert!(engine.take_capture_request()?.is_some());
+        assert!(engine.take_capture_request()?.is_none());
+        let status = engine
+            .capture_request_status(&request.id)?
+            .expect("status remains for original id");
+        assert_eq!(status.status, CAPTURE_STATUS_PICKED_UP);
+        Ok(())
+    }
+
+    #[test]
+    fn stale_extension_heartbeat_prevents_queueing() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        let request = engine.create_capture_request("menu-bar")?;
+        assert_eq!(request.status, CAPTURE_STATUS_EXTENSION_UNAVAILABLE);
+        assert!(request.completed_at.is_some());
+        assert!(engine.take_capture_request()?.is_none());
+        Ok(())
+    }
 }

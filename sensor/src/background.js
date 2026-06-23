@@ -3,6 +3,7 @@ const DEFAULT_POLL_MINUTES = 1;
 const FALLBACK_POLL_SECONDS = 3;
 const BADGE_CLEAR_MS = 3500;
 const ALARM_NAME = "starlee-poll";
+const HELLO_REFRESH_MS = 5000;
 const MESSAGE = Object.freeze({
   capture: "STARLEE_CAPTURE",
   status: "STARLEE_STATUS",
@@ -13,10 +14,15 @@ const MESSAGE = Object.freeze({
 const CAPTURE_STATUS = Object.freeze({
   saved: "capture_saved",
   failed: "capture_failed",
-  pickedUp: "picked_up"
+  pickedUp: "picked_up",
+  extracting: "extracting",
+  posted: "posted",
+  permissionDenied: "permission_denied",
+  unsupportedPage: "unsupported_page"
 });
 let bundledConfigPromise;
 let polling = false;
+let lastHelloAt = 0;
 const processedRequests = new Set();
 
 chrome.runtime.onMessage.addListener(handleMessage);
@@ -59,6 +65,7 @@ async function sendCapture(payload, options = {}) {
     return result;
   }
   try {
+    await recordCaptureRequestStatus(options.requestId, CAPTURE_STATUS.posted, "Browser extension posted the capture to Starlee.", safePageMetadata(payload));
     const response = await fetch(`http://127.0.0.1:${port}/capture`, {
       method: "POST",
       headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
@@ -133,6 +140,7 @@ async function hello(_options = {}) {
       return result;
     }
     const result = { ok: true, code: "connected", service: body };
+    lastHelloAt = Date.now();
     await recordHandshake(result);
     return result;
   } catch {
@@ -158,10 +166,11 @@ async function pollCaptureRequest() {
 
 async function captureTabForRequest(tab, request) {
   if (!tab?.id) {
-    const result = errorResult("no_active_tab", "No active browser tab is available.");
+    const result = errorResult(CAPTURE_STATUS.failed, "No active browser tab is available.");
     await recordCaptureRequestResult(request.id, result);
     return result;
   }
+  await recordCaptureRequestStatus(request.id, CAPTURE_STATUS.extracting, "Browser extension is extracting the active tab.");
   try {
     return await chrome.tabs.sendMessage(tab.id, {
       type: MESSAGE.captureNow,
@@ -169,7 +178,7 @@ async function captureTabForRequest(tab, request) {
       requestId: request.id
     });
   } catch {
-    const result = errorResult("permission_denied", "Chrome has not granted Starlee access to this page, or this page cannot run extensions.");
+    const result = errorResult(CAPTURE_STATUS.permissionDenied, "Chrome has not granted Starlee access to this page, or this page cannot run extensions.");
     await recordCaptureRequestResult(request.id, result);
     return result;
   }
@@ -178,6 +187,7 @@ async function captureTabForRequest(tab, request) {
 async function takeCaptureRequest() {
   const { token, port } = await localSettings();
   if (!token) return { ok: false, request: null, code: "token_missing" };
+  await refreshHelloIfNeeded();
   let request;
   try {
     const response = await fetch(`http://127.0.0.1:${port}/capture-request`, {
@@ -260,6 +270,15 @@ async function recordMenuRequest(request, status) {
 
 async function recordCaptureRequestResult(requestId, result) {
   if (!requestId) return;
+  await recordCaptureRequestStatus(
+    requestId,
+    result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed,
+    result.ok ? "Saved to Starlee." : result.error
+  );
+}
+
+async function recordCaptureRequestStatus(requestId, status, message, page) {
+  if (!requestId) return;
   const { token, port } = await localSettings();
   if (!token) return;
   await fetch(`http://127.0.0.1:${port}/capture-request/result`, {
@@ -267,10 +286,16 @@ async function recordCaptureRequestResult(requestId, result) {
     headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       id: requestId,
-      status: result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed,
-      message: result.ok ? "Saved to Starlee." : result.error
+      status,
+      message,
+      ...(page ? { page } : {})
     })
   }).catch(() => {});
+}
+
+async function refreshHelloIfNeeded() {
+  if (Date.now() - lastHelloAt < HELLO_REFRESH_MS) return;
+  await hello();
 }
 
 async function showResult(result) {
@@ -287,6 +312,23 @@ async function showResult(result) {
 
 function errorResult(code, error) {
   return { ok: false, code, error };
+}
+
+function safePageMetadata(payload) {
+  const url = payload?.url || "";
+  return {
+    title: payload?.dom_extract?.title || payload?.youtube?.title || payload?.title || "",
+    url,
+    domain: domainFromUrl(url)
+  };
+}
+
+function domainFromUrl(value) {
+  try {
+    return value ? new URL(value).hostname.replace(/^www\./, "") : "";
+  } catch {
+    return "";
+  }
 }
 
 function browserName() {

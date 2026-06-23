@@ -62,11 +62,27 @@ pub struct CaptureRequestStatus {
     pub requested_at: String,
     #[serde(default)]
     pub source: String,
+    #[serde(default)]
+    pub picked_up_at: Option<String>,
+    #[serde(default)]
+    pub browser: Option<String>,
+    #[serde(default)]
+    pub page: Option<CaptureRequestPageMetadata>,
     pub status: String,
     #[serde(default)]
     pub completed_at: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CaptureRequestPageMetadata {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
