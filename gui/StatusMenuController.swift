@@ -8,6 +8,7 @@ final class StatusMenuController: NSObject {
     private var isCapturing = false
     private var loadingWorkItem: DispatchWorkItem?
     private var timeoutWorkItem: DispatchWorkItem?
+    private var statusPollWorkItem: DispatchWorkItem?
     private var animationTimer: Timer?
     private var defaultImage: NSImage?
 
@@ -121,7 +122,12 @@ final class StatusMenuController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: timeout)
 
         client.requestCurrentArticleCapture { [weak self] result in
-            self?.finishCapture(result)
+            guard let self else { return }
+            if result.ok, let requestId = result.requestId {
+                self.pollCaptureRequestStatus(id: requestId)
+            } else {
+                self.finishCapture(PostResult(ok: false, message: result.message))
+            }
         }
     }
 
@@ -129,14 +135,39 @@ final class StatusMenuController: NSObject {
         guard isCapturing else { return }
         loadingWorkItem?.cancel()
         timeoutWorkItem?.cancel()
+        statusPollWorkItem?.cancel()
         loadingWorkItem = nil
         timeoutWorkItem = nil
+        statusPollWorkItem = nil
         stopAnimationTimer()
 
         if result.ok {
             playSuccessAnimation()
         } else {
             playErrorAnimation(message: result.message)
+        }
+    }
+
+    private func pollCaptureRequestStatus(id: String) {
+        guard isCapturing else { return }
+        client.captureRequestStatus(id: id) { [weak self] result in
+            guard let self, self.isCapturing else { return }
+            if !result.ok {
+                self.finishCapture(PostResult(ok: false, message: result.message))
+                return
+            }
+            switch result.status {
+            case "capture_saved":
+                self.finishCapture(PostResult(ok: true, message: result.message))
+            case "capture_failed", "service_down", "token_missing", "token_invalid", "permission_denied", "no_active_tab", "empty_extract", "payload_too_large":
+                self.finishCapture(PostResult(ok: false, message: result.message.isEmpty ? "Starlee capture failed." : result.message))
+            default:
+                let next = DispatchWorkItem { [weak self] in
+                    self?.pollCaptureRequestStatus(id: id)
+                }
+                self.statusPollWorkItem = next
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: next)
+            }
         }
     }
 

@@ -109,3 +109,30 @@ Authorization: Bearer <local token>
 
 When a request is present, the extension captures the active tab with the same
 rendered-DOM payload used by the toolbar button and posts it to `/capture`.
+
+The extension then records the final result for the original request:
+
+```http
+POST http://127.0.0.1:47291/capture-request/result
+Authorization: Bearer <local token>
+Content-Type: application/json
+```
+
+```json
+{
+  "id": "<request id>",
+  "status": "capture_saved",
+  "message": "Saved to Starlee."
+}
+```
+
+The menu-bar app polls request status while its icon is in the loading state:
+
+```http
+GET http://127.0.0.1:47291/capture-request/status?id=<request id>
+Authorization: Bearer <local token>
+```
+
+Success feedback in the macOS menu bar is reserved for `capture_saved`. Queued
+or picked-up requests stay in loading state; failed captures return a distinct
+error state.

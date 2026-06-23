@@ -45,7 +45,8 @@ async function capture(_message, sendResponse) {
     const response = await chrome.runtime.sendMessage({
       type: MESSAGE.capture,
       payload,
-      source: _message?.source || "active-tab"
+      source: _message?.source || "active-tab",
+      requestId: _message?.requestId
     });
     sendResponse(response);
   } catch (error) {
@@ -62,7 +63,7 @@ async function pollMenuBarCaptureRequest() {
   if (document.visibilityState !== "visible") return;
   const response = await takeMenuBarCaptureRequest();
   if (!response?.request) return;
-  capture({ source: "menu-bar" }, () => {});
+  capture({ source: "menu-bar", requestId: response.request.id }, () => {});
 }
 
 async function takeMenuBarCaptureRequest() {

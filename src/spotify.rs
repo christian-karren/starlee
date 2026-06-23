@@ -877,6 +877,7 @@ mod tests {
             query_relevance_floor: 0.35,
             extension: crate::config::ExtensionState::default(),
             pending_capture_request: None,
+            capture_request_status: None,
             youtube_api_key: None,
             spotify_client_id: Some("client123".into()),
             spotify_redirect_uri: Some("http://127.0.0.1:8888/callback".into()),

@@ -21,6 +21,8 @@ pub struct LocalConfig {
     #[serde(default)]
     pub pending_capture_request: Option<CaptureRequestState>,
     #[serde(default)]
+    pub capture_request_status: Option<CaptureRequestStatus>,
+    #[serde(default)]
     pub youtube_api_key: Option<String>,
     #[serde(default)]
     pub spotify_client_id: Option<String>,
@@ -52,6 +54,19 @@ pub struct CaptureRequestState {
     pub requested_at: String,
     #[serde(default)]
     pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureRequestStatus {
+    pub id: String,
+    pub requested_at: String,
+    #[serde(default)]
+    pub source: String,
+    pub status: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +134,7 @@ impl ConfigStore {
             query_relevance_floor: default_query_relevance_floor(),
             extension: ExtensionState::default(),
             pending_capture_request: None,
+            capture_request_status: None,
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: Some(DEFAULT_SPOTIFY_REDIRECT_URI.into()),
@@ -215,6 +231,7 @@ mod tests {
             query_relevance_floor: default_query_relevance_floor(),
             extension: ExtensionState::default(),
             pending_capture_request: None,
+            capture_request_status: None,
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: Some(DEFAULT_SPOTIFY_REDIRECT_URI.into()),
@@ -240,6 +257,7 @@ mod tests {
               "capture_token": "abc123",
               "extension": {},
               "pending_capture_request": null,
+              "capture_request_status": null,
               "youtube_api_key": null,
               "borrowed_bundles": []
             }"#,

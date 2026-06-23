@@ -82,7 +82,11 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
     if request.method() == &Method::Options {
         return respond(request, StatusCode(204), json!({}));
     }
-    match (request.method(), request.url()) {
+    let path = request
+        .url()
+        .split_once('?')
+        .map_or(request.url(), |(path, _)| path);
+    match (request.method(), path) {
         (&Method::Get, "/health") => respond(
             request,
             StatusCode(200),
@@ -140,6 +144,53 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                 json!({"request": engine.take_capture_request()?}),
             )
         }
+        (&Method::Get, "/capture-request/status") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            let Some(id) = query_param(request.url(), "id") else {
+                return respond(
+                    request,
+                    StatusCode(400),
+                    json!({"error":"missing request id"}),
+                );
+            };
+            respond(
+                request,
+                StatusCode(200),
+                json!({"request": engine.capture_request_status(&id)?}),
+            )
+        }
+        (&Method::Post, "/capture-request/result") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            let body = read_body(&mut request)?;
+            let value = serde_json::from_str::<serde_json::Value>(&body)?;
+            let Some(id) = value.get("id").and_then(serde_json::Value::as_str) else {
+                return respond(
+                    request,
+                    StatusCode(400),
+                    json!({"error":"missing request id"}),
+                );
+            };
+            let Some(status) = value.get("status").and_then(serde_json::Value::as_str) else {
+                return respond(
+                    request,
+                    StatusCode(400),
+                    json!({"error":"missing request status"}),
+                );
+            };
+            let message = value
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            respond(
+                request,
+                StatusCode(200),
+                json!({"request": engine.record_capture_request_result(id, status, message)?}),
+            )
+        }
         (&Method::Post, "/capture") => {
             if !authorized(&request, &config.capture_token) {
                 return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
@@ -184,6 +235,14 @@ fn authorized(request: &Request, token: &str) -> bool {
         .find(|header| header.field.equiv("Authorization"))
         .map(|header| header.value.as_str() == format!("Bearer {token}"))
         .unwrap_or(false)
+}
+
+fn query_param(url: &str, key: &str) -> Option<String> {
+    let query = url.split_once('?')?.1;
+    query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (name == key).then(|| value.to_owned())
+    })
 }
 
 fn respond(request: Request, status: StatusCode, body: serde_json::Value) -> Result<()> {
@@ -249,6 +308,7 @@ mod tests {
             query_relevance_floor: 0.35,
             extension: Default::default(),
             pending_capture_request: None,
+            capture_request_status: None,
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: None,
@@ -293,6 +353,7 @@ mod tests {
             query_relevance_floor: 0.35,
             extension: Default::default(),
             pending_capture_request: None,
+            capture_request_status: None,
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: None,
@@ -317,10 +378,41 @@ mod tests {
             Some("secret-token"),
         )?;
         assert!(created.starts_with("HTTP/1.1 202"));
+        let request_id = created
+            .split("\"id\":\"")
+            .nth(1)
+            .and_then(|value| value.split('"').next())
+            .expect("created capture request includes an id")
+            .to_owned();
+
+        let queued = get_path(
+            &server.address,
+            &format!("/capture-request/status?id={request_id}"),
+            Some("secret-token"),
+        )?;
+        assert!(queued.contains("\"status\":\"queued\""));
 
         let first = get_path(&server.address, "/capture-request", Some("secret-token"))?;
         assert!(first.contains("\"request\""));
         assert!(first.contains("\"id\""));
+        let picked_up = get_path(
+            &server.address,
+            &format!("/capture-request/status?id={request_id}"),
+            Some("secret-token"),
+        )?;
+        assert!(picked_up.contains("\"status\":\"picked_up\""));
+
+        let saved = post_path(
+            &server.address,
+            "/capture-request/result",
+            &format!(
+                r#"{{"id":"{request_id}","status":"capture_saved","message":"Saved to vault."}}"#
+            ),
+            Some("secret-token"),
+        )?;
+        assert!(saved.starts_with("HTTP/1.1 200"));
+        assert!(saved.contains("\"status\":\"capture_saved\""));
+
         let second = get_path(&server.address, "/capture-request", Some("secret-token"))?;
         assert!(second.contains("\"request\":null"));
         drop(server);
