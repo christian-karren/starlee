@@ -84,11 +84,14 @@ Content-Type: application/json
 ```
 
 The response records local setup state only. It never returns the token.
+The menu-bar bridge treats the handshake as fresh for a short window; current
+extensions refresh it while polling so a loaded extension is not blocked.
 
 ## Menu-bar capture bridge
 
 The macOS menu-bar app requests browser capture by creating a local pending
-request:
+request. If no extension has checked in recently, the service returns
+`409` with `extension_unavailable` and does not queue a request:
 
 ```http
 POST http://127.0.0.1:47291/capture-request
@@ -100,6 +103,25 @@ Content-Type: application/json
 { "source": "menu-bar" }
 ```
 
+Successful responses are enveloped as `{"request": ...}` and include only
+protocol metadata:
+
+```json
+{
+  "request": {
+    "id": "<request id>",
+    "source": "menu-bar",
+    "requested_at": "2026-06-23T05:00:00Z",
+    "picked_up_at": null,
+    "completed_at": null,
+    "status": "queued",
+    "message": "Capture request queued for the browser extension.",
+    "browser": "Chrome",
+    "page": null
+  }
+}
+```
+
 The browser extension polls:
 
 ```http
@@ -107,5 +129,64 @@ GET http://127.0.0.1:47291/capture-request
 Authorization: Bearer <local token>
 ```
 
+When a request is present, the service atomically removes it from the pending
+slot and marks it `picked_up`, preventing duplicate extension pickups. Requests
+older than 10 seconds become `timed_out` and are not served to the extension.
+
 When a request is present, the extension captures the active tab with the same
-rendered-DOM payload used by the toolbar button and posts it to `/capture`.
+rendered-DOM payload used by the toolbar button and posts it to `/capture`. It
+also records intermediate lifecycle updates:
+
+- `extracting`: the extension is asking the content script to read the active
+  tab.
+- `posted`: the extension posted a capture payload to the local service.
+
+The extension then records the final result for the original request:
+
+```http
+POST http://127.0.0.1:47291/capture-request/result
+Authorization: Bearer <local token>
+Content-Type: application/json
+```
+
+```json
+{
+  "id": "<request id>",
+  "status": "capture_saved",
+  "message": "Saved to Starlee.",
+  "page": {
+    "title": "Example article",
+    "url": "https://example.com/article",
+    "domain": "example.com"
+  }
+}
+```
+
+`page` is optional and must stay safe: title, URL, and domain only. Article
+bodies, transcripts, selected text, capture tokens, and restricted content must
+not be written to request status metadata.
+
+The menu-bar app polls request status while its icon is in the loading state:
+
+```http
+GET http://127.0.0.1:47291/capture-request/status?id=<request id>
+Authorization: Bearer <local token>
+```
+
+Lifecycle states are:
+
+- `queued`
+- `picked_up`
+- `extracting`
+- `posted`
+- `capture_saved`
+- `capture_failed`
+- `permission_denied`
+- `unsupported_page`
+- `extension_unavailable`
+- `timed_out`
+
+Success feedback in the macOS menu bar is reserved for `capture_saved`.
+`queued`, `picked_up`, `extracting`, and `posted` stay in loading state.
+All other terminal states return a distinct error state with an actionable
+message.

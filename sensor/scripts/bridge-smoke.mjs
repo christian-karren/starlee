@@ -49,21 +49,24 @@ async function processRequest(request) {
   storage.lastMenuRequestStatus = "picked_up";
 
   const payload = capturePayload(dom.window.document);
-  const captureResponse = await post("/capture", payload, 201);
-  const result = {
+  const page = {
+    title: payload.dom_extract.title,
+    url: payload.url,
+    domain: new URL(payload.url).hostname,
+  };
+  await post("/capture-request/result", {
+    id: request.id,
+    status: "posted",
+    message: "Browser extension posted the capture to Starlee.",
+    page,
+  });
+  await post("/capture", payload, 201);
+  const terminal = await post("/capture-request/result", {
     id: request.id,
     status: "capture_saved",
-    source: request.source || "menu-bar",
-    record: {
-      metadata: {
-        id: captureResponse.metadata.id,
-        title: captureResponse.metadata.title,
-        url: captureResponse.metadata.url,
-      },
-    },
-  };
-  const terminal = await post("/capture-request/result", result);
-  storage.lastMenuRequestStatus = terminal.status;
+    message: "Saved to Starlee.",
+  });
+  storage.lastMenuRequestStatus = terminal.request.status;
   return { ok: true, terminal };
 }
 

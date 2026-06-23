@@ -3,6 +3,7 @@ const DEFAULT_POLL_MINUTES = 1;
 const FALLBACK_POLL_SECONDS = 3;
 const BADGE_CLEAR_MS = 3500;
 const ALARM_NAME = "starlee-poll";
+const HELLO_REFRESH_MS = 5000;
 const MESSAGE = Object.freeze({
   capture: "STARLEE_CAPTURE",
   status: "STARLEE_STATUS",
@@ -13,17 +14,25 @@ const MESSAGE = Object.freeze({
 const CAPTURE_STATUS = Object.freeze({
   saved: "capture_saved",
   failed: "capture_failed",
-  pickedUp: "picked_up"
+  pickedUp: "picked_up",
+  extracting: "extracting",
+  posted: "posted",
+  permissionDenied: "permission_denied",
+  unsupportedPage: "unsupported_page"
 });
 let bundledConfigPromise;
 let polling = false;
+let lastHelloAt = 0;
 const processedRequests = new Set();
 
 chrome.runtime.onMessage.addListener(handleMessage);
 
 function handleMessage(message, _sender, sendResponse) {
   if (message?.type === MESSAGE.capture) {
-    sendCapture(message.payload, { source: message.source || "content-script" }).then(sendResponse);
+    sendCapture(message.payload, {
+      source: message.source || "content-script",
+      requestId: message.requestId
+    }).then(sendResponse);
     return true;
   }
   if (message?.type === MESSAGE.status) {
@@ -52,9 +61,11 @@ async function sendCapture(payload, options = {}) {
   if (!token) {
     const result = errorResult("token_missing", "Open Starlee Capture settings and connect the local Starlee app.");
     await recordCaptureResult(result, options.source);
+    await recordCaptureRequestResult(options.requestId, result);
     return result;
   }
   try {
+    await recordCaptureRequestStatus(options.requestId, CAPTURE_STATUS.posted, "Browser extension posted the capture to Starlee.", safePageMetadata(payload));
     const response = await fetch(`http://127.0.0.1:${port}/capture`, {
       method: "POST",
       headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
@@ -69,14 +80,17 @@ async function sendCapture(payload, options = {}) {
           : "capture_failed";
       const result = errorResult(code, body.error || `Starlee rejected the capture with HTTP ${response.status}.`);
       await recordCaptureResult(result, options.source);
+      await recordCaptureRequestResult(options.requestId, result);
       return result;
     }
     const result = { ok: true, code: "capture_saved", record: body };
     await recordCaptureResult(result, options.source);
+    await recordCaptureRequestResult(options.requestId, result);
     return result;
   } catch {
     const result = errorResult("service_down", "Local Starlee is not reachable. Open Starlee or run starlee serve.");
     await recordCaptureResult(result, options.source);
+    await recordCaptureRequestResult(options.requestId, result);
     return result;
   }
 }
@@ -126,6 +140,7 @@ async function hello(_options = {}) {
       return result;
     }
     const result = { ok: true, code: "connected", service: body };
+    lastHelloAt = Date.now();
     await recordHandshake(result);
     return result;
   } catch {
@@ -140,20 +155,39 @@ async function pollCaptureRequest() {
   const request = response.request;
   if (!request) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const result = await captureTab(tab);
-  const terminalStatus = result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed;
-  await recordCaptureRequestResult(request, terminalStatus, result);
+  const result = await captureTabForRequest(tab, request);
   await chrome.storage.local.set({
     lastMenuRequestId: request.id || "",
     lastMenuRequestAt: new Date().toISOString(),
-    lastMenuRequestStatus: terminalStatus
+    lastMenuRequestStatus: result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed
   });
   await showResult(result);
+}
+
+async function captureTabForRequest(tab, request) {
+  if (!tab?.id) {
+    const result = errorResult(CAPTURE_STATUS.failed, "No active browser tab is available.");
+    await recordCaptureRequestResult(request.id, result);
+    return result;
+  }
+  await recordCaptureRequestStatus(request.id, CAPTURE_STATUS.extracting, "Browser extension is extracting the active tab.");
+  try {
+    return await chrome.tabs.sendMessage(tab.id, {
+      type: MESSAGE.captureNow,
+      source: "menu-bar",
+      requestId: request.id
+    });
+  } catch {
+    const result = errorResult(CAPTURE_STATUS.permissionDenied, "Chrome has not granted Starlee access to this page, or this page cannot run extensions.");
+    await recordCaptureRequestResult(request.id, result);
+    return result;
+  }
 }
 
 async function takeCaptureRequest() {
   const { token, port } = await localSettings();
   if (!token) return { ok: false, request: null, code: "token_missing" };
+  await refreshHelloIfNeeded();
   let request;
   try {
     const response = await fetch(`http://127.0.0.1:${port}/capture-request`, {
@@ -234,32 +268,34 @@ async function recordMenuRequest(request, status) {
   });
 }
 
-async function recordCaptureRequestResult(request, status, captureResult) {
+async function recordCaptureRequestResult(requestId, result) {
+  if (!requestId) return;
+  await recordCaptureRequestStatus(
+    requestId,
+    result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed,
+    result.ok ? "Saved to Starlee." : result.error
+  );
+}
+
+async function recordCaptureRequestStatus(requestId, status, message, page) {
+  if (!requestId) return;
   const { token, port } = await localSettings();
-  if (!token || !request?.id) return;
-  const metadata = captureResult?.record?.metadata || {};
-  const body = {
-    id: request.id,
-    status,
-    source: request.source || "menu-bar",
-    error: captureResult?.ok ? undefined : captureResult?.error || status,
-    record: captureResult?.ok ? {
-      metadata: {
-        id: metadata.id,
-        title: metadata.title,
-        url: metadata.url
-      }
-    } : undefined
-  };
-  try {
-    await fetch(`http://127.0.0.1:${port}/capture-request/result`, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-  } catch {
-    // The browser status remains local if the native bridge disappears after capture.
-  }
+  if (!token) return;
+  await fetch(`http://127.0.0.1:${port}/capture-request/result`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: requestId,
+      status,
+      message,
+      ...(page ? { page } : {})
+    })
+  }).catch(() => {});
+}
+
+async function refreshHelloIfNeeded() {
+  if (Date.now() - lastHelloAt < HELLO_REFRESH_MS) return;
+  await hello();
 }
 
 async function showResult(result) {
@@ -276,6 +312,23 @@ async function showResult(result) {
 
 function errorResult(code, error) {
   return { ok: false, code, error };
+}
+
+function safePageMetadata(payload) {
+  const url = payload?.url || "";
+  return {
+    title: payload?.dom_extract?.title || payload?.youtube?.title || payload?.title || "",
+    url,
+    domain: domainFromUrl(url)
+  };
+}
+
+function domainFromUrl(value) {
+  try {
+    return value ? new URL(value).hostname.replace(/^www\./, "") : "";
+  } catch {
+    return "";
+  }
 }
 
 function browserName() {

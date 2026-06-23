@@ -30,10 +30,25 @@ query -> local BGE embedding -> reciprocal-rank fusion -> cited result
   write vault files directly.
 - The MCP process co-hosts a bearer-authenticated capture endpoint bound to
   `127.0.0.1`; the token lives only in the local mode-`0600` config file.
-- The macOS menu-bar app does not read browser DOM directly. It creates a
-  local pending capture request; the browser extension polls the loopback
-  service, extracts the active tab, and posts the rendered payload back to
-  `/capture`.
+- The macOS menu-bar app does not read browser DOM directly. A normal click
+  creates a local pending capture request; the browser extension polls the
+  loopback service, extracts the active tab, posts the rendered payload back to
+  `/capture`, then records the request result. The menu-bar icon only plays
+  success feedback after the request reaches `capture_saved`.
+- The menu-bar capture bridge is an observable local protocol, not a direct
+  native-to-browser handoff. Request states are `queued`, `picked_up`,
+  `extracting`, `posted`, `capture_saved`, `capture_failed`,
+  `permission_denied`, `unsupported_page`, `extension_unavailable`, and
+  `timed_out`. Pending requests expire after a short TTL so an old click cannot
+  be captured later by accident.
+- Extension freshness comes from the local `/extension/hello` heartbeat. If no
+  extension has checked in recently, menu-bar capture returns
+  `extension_unavailable` without queueing work. The extension owns active-tab
+  extraction and refreshes its heartbeat while polling.
+- Capture request status may include request id, source, timestamps, status,
+  message, browser name, and safe page metadata such as title, URL, and domain.
+  It must not include article bodies, transcripts, selected text, capture
+  tokens, or restricted content.
 - Generated extension assets are not the same as an installed browser
   extension. `starlee doctor` treats extension assets and extension handshake as
   separate checks.

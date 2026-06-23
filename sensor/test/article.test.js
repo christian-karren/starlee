@@ -51,3 +51,11 @@ test("capture payload includes consumed_at engagement timestamp", () => {
   assert.equal(payload.type, "article");
   assert.match(payload.consumed_at, /^\d{4}-\d{2}-\d{2}T/);
 });
+
+test("capture payload rejects unsupported pages before posting", () => {
+  const dom = new JSDOM(`<!doctype html><title>Settings</title><main><button>Save</button></main>`, { url: "https://example.com/settings" });
+  assert.throws(
+    () => capturePayload(dom.window.document),
+    /does not look like an article or YouTube video/
+  );
+});

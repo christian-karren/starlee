@@ -1,7 +1,7 @@
 import { capturePayload, detectedType } from "./payload.js";
 
-const MENU_BAR_POLL_MS = 3000;
-const MENU_BAR_INITIAL_POLL_MS = 750;
+const MENU_BAR_POLL_MS = 350;
+const MENU_BAR_INITIAL_POLL_MS = 150;
 const BUTTON_RESET_MS = 3500;
 const MESSAGE = Object.freeze({
   captureNow: "STARLEE_CAPTURE_NOW",
@@ -45,11 +45,16 @@ async function capture(_message, sendResponse) {
     const response = await chrome.runtime.sendMessage({
       type: MESSAGE.capture,
       payload,
-      source: _message?.source || "active-tab"
+      source: _message?.source || "active-tab",
+      requestId: _message?.requestId
     });
     sendResponse(response);
   } catch (error) {
-    sendResponse({ ok: false, code: "empty_extract", error: error.message });
+    const message = error.message || "This page cannot be captured by Starlee.";
+    const code = message.includes("does not look like")
+      ? "unsupported_page"
+      : "capture_failed";
+    sendResponse({ ok: false, code, error: message });
   }
 }
 
@@ -62,7 +67,7 @@ async function pollMenuBarCaptureRequest() {
   if (document.visibilityState !== "visible") return;
   const response = await takeMenuBarCaptureRequest();
   if (!response?.request) return;
-  capture({ source: "menu-bar" }, () => {});
+  capture({ source: "menu-bar", requestId: response.request.id }, () => {});
 }
 
 async function takeMenuBarCaptureRequest() {

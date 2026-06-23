@@ -21,7 +21,7 @@ pub struct LocalConfig {
     #[serde(default)]
     pub pending_capture_request: Option<CaptureRequestState>,
     #[serde(default)]
-    pub last_capture_request_result: Option<CaptureRequestResultState>,
+    pub capture_request_status: Option<CaptureRequestStatus>,
     #[serde(default)]
     pub youtube_api_key: Option<String>,
     #[serde(default)]
@@ -57,20 +57,32 @@ pub struct CaptureRequestState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CaptureRequestResultState {
+pub struct CaptureRequestStatus {
     pub id: String,
-    pub status: String,
-    pub completed_at: String,
+    pub requested_at: String,
     #[serde(default)]
     pub source: String,
     #[serde(default)]
-    pub record_id: Option<String>,
+    pub picked_up_at: Option<String>,
+    #[serde(default)]
+    pub browser: Option<String>,
+    #[serde(default)]
+    pub page: Option<CaptureRequestPageMetadata>,
+    pub status: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CaptureRequestPageMetadata {
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
     #[serde(default)]
-    pub error: Option<String>,
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,7 +150,7 @@ impl ConfigStore {
             query_relevance_floor: default_query_relevance_floor(),
             extension: ExtensionState::default(),
             pending_capture_request: None,
-            last_capture_request_result: None,
+            capture_request_status: None,
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: Some(DEFAULT_SPOTIFY_REDIRECT_URI.into()),
@@ -235,7 +247,7 @@ mod tests {
             query_relevance_floor: default_query_relevance_floor(),
             extension: ExtensionState::default(),
             pending_capture_request: None,
-            last_capture_request_result: None,
+            capture_request_status: None,
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: Some(DEFAULT_SPOTIFY_REDIRECT_URI.into()),
@@ -261,7 +273,7 @@ mod tests {
               "capture_token": "abc123",
               "extension": {},
               "pending_capture_request": null,
-              "last_capture_request_result": null,
+              "capture_request_status": null,
               "youtube_api_key": null,
               "borrowed_bundles": []
             }"#,

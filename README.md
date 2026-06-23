@@ -45,9 +45,9 @@ that as an installed extension. Load `~/Starlee/sensor-extension` once in
 the extension, `starlee doctor` should show `extension_handshake: true`.
 
 The generated extension folder includes the local-only capture configuration,
-so the “Save article to Starlee” page button and the Starlee menu-bar “Save
-Current Article” action work without pasting the capture token by hand. If you
-regenerate setup, reload the unpacked extension in Chrome.
+so the “Save article to Starlee” page button and the Starlee menu-bar capture
+action work without pasting the capture token by hand. If you regenerate setup,
+reload the unpacked extension in Chrome.
 
 Open the menu-bar app:
 
@@ -55,11 +55,13 @@ Open the menu-bar app:
 open ~/Applications/Starlee.app
 ```
 
-The app includes a menu-bar item with Save Current Article, Recent Captures,
-Browser Setup, diagnostics, vault access, and capture-service controls. The Save
-Current Article action writes a local capture request; the browser extension
-polls the loopback service and extracts the active tab when browser permissions
-allow it.
+The app appears as a menu-bar icon. Click it once to capture the current
+browser article or YouTube watch page. The icon only shows the success pulse
+after the browser extension reports that the capture was saved; request pickup
+and extraction remain in the loading state, stale requests time out quickly,
+and failures distinguish extension availability, page permission, unsupported
+pages, and capture errors. Option-click the icon to open management tools for Recent Captures,
+Browser Setup, diagnostics, vault access, capture-service controls, and Quit.
 
 You can still run setup manually:
 
