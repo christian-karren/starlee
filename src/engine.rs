@@ -654,11 +654,17 @@ impl Engine {
     ) -> Result<Option<CaptureRequestStatus>> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
-        expire_stale_capture_request(&mut config);
+        let expired = expire_stale_capture_request(&mut config);
         let Some(mut request_status) = config.capture_request_status.clone() else {
+            if expired {
+                store.save(&config)?;
+            }
             return Ok(None);
         };
         if request_status.id != id {
+            if expired {
+                store.save(&config)?;
+            }
             return Ok(None);
         }
         if capture_status_is_terminal(&request_status.status) {
@@ -1062,12 +1068,10 @@ fn extension_is_fresh(extension: &ExtensionState, max_age: Duration) -> bool {
 
 fn expire_stale_capture_request(config: &mut LocalConfig) -> bool {
     let Some(status) = config.capture_request_status.as_mut() else {
-        config.pending_capture_request = None;
-        return false;
+        return clear_pending_capture_request(config);
     };
     if capture_status_is_terminal(&status.status) {
-        config.pending_capture_request = None;
-        return false;
+        return clear_pending_capture_request(config);
     }
     let Some(requested_at) = parse_rfc3339_utc(&status.requested_at) else {
         return false;
@@ -1085,6 +1089,14 @@ fn expire_stale_capture_request(config: &mut LocalConfig) -> bool {
     );
     config.pending_capture_request = None;
     true
+}
+
+fn clear_pending_capture_request(config: &mut LocalConfig) -> bool {
+    if config.pending_capture_request.is_some() {
+        config.pending_capture_request = None;
+        return true;
+    }
+    false
 }
 
 fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
@@ -1294,16 +1306,7 @@ mod tests {
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
         let request = engine.create_capture_request("test")?;
 
-        let store = ConfigStore::new(temp.path());
-        let mut config = store.load_or_create()?;
-        let old = (Utc::now() - chrono::TimeDelta::seconds(30)).to_rfc3339();
-        if let Some(status) = config.capture_request_status.as_mut() {
-            status.requested_at = old.clone();
-        }
-        if let Some(pending) = config.pending_capture_request.as_mut() {
-            pending.requested_at = old;
-        }
-        store.save(&config)?;
+        age_capture_request(temp.path(), 30)?;
 
         assert!(engine.take_capture_request()?.is_none());
         let status = engine
@@ -1316,6 +1319,84 @@ mod tests {
             .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?
             .expect("timed out status remains available");
         assert_eq!(ignored.status, CAPTURE_STATUS_TIMED_OUT);
+        Ok(())
+    }
+
+    #[test]
+    fn stale_capture_result_with_wrong_id_persists_timeout() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        let request = engine.create_capture_request("test")?;
+        age_capture_request(temp.path(), 30)?;
+
+        assert!(
+            engine
+                .record_capture_request_result("wrong-id", CAPTURE_STATUS_SAVED, None, None)?
+                .is_none()
+        );
+        let status = engine
+            .capture_request_status(&request.id)?
+            .expect("timed out status");
+        assert_eq!(status.status, CAPTURE_STATUS_TIMED_OUT);
+        assert!(status.completed_at.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn status_lookup_persists_pending_cleanup_for_terminal_request() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        let request = engine.create_capture_request("test")?;
+
+        let store = ConfigStore::new(temp.path());
+        let mut config = store.load_or_create()?;
+        if let Some(status) = config.capture_request_status.as_mut() {
+            status.status = CAPTURE_STATUS_FAILED.into();
+            status.completed_at = Some(Utc::now().to_rfc3339());
+        }
+        assert!(config.pending_capture_request.is_some());
+        store.save(&config)?;
+
+        let status = engine
+            .capture_request_status(&request.id)?
+            .expect("terminal status");
+        assert_eq!(status.status, CAPTURE_STATUS_FAILED);
+        assert!(
+            ConfigStore::new(temp.path())
+                .load_or_create()?
+                .pending_capture_request
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn page_metadata_is_trimmed_limited_and_body_free() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        let request = engine.create_capture_request("test")?;
+        let long_title = format!("  {}  ", "A".repeat(300));
+        let long_url = format!("https://example.com/{}", "b".repeat(2100));
+
+        let posted = engine
+            .record_capture_request_result(
+                &request.id,
+                CAPTURE_STATUS_POSTED,
+                None,
+                Some(CaptureRequestPageMetadata {
+                    title: Some(long_title),
+                    url: Some(long_url),
+                    domain: Some("  example.com  ".into()),
+                }),
+            )?
+            .expect("posted status");
+        let page = posted.page.expect("safe page metadata");
+        assert_eq!(page.title.expect("title").chars().count(), 240);
+        assert_eq!(page.url.expect("url").chars().count(), 2048);
+        assert_eq!(page.domain.as_deref(), Some("example.com"));
         Ok(())
     }
 
@@ -1349,5 +1430,18 @@ mod tests {
         assert!(request.completed_at.is_some());
         assert!(engine.take_capture_request()?.is_none());
         Ok(())
+    }
+
+    fn age_capture_request(home: &std::path::Path, seconds: i64) -> Result<()> {
+        let store = ConfigStore::new(home);
+        let mut config = store.load_or_create()?;
+        let old = (Utc::now() - chrono::TimeDelta::seconds(seconds)).to_rfc3339();
+        if let Some(status) = config.capture_request_status.as_mut() {
+            status.requested_at = old.clone();
+        }
+        if let Some(pending) = config.pending_capture_request.as_mut() {
+            pending.requested_at = old;
+        }
+        store.save(&config)
     }
 }
