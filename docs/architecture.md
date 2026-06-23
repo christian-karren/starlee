@@ -30,10 +30,11 @@ query -> local BGE embedding -> reciprocal-rank fusion -> cited result
   write vault files directly.
 - The MCP process co-hosts a bearer-authenticated capture endpoint bound to
   `127.0.0.1`; the token lives only in the local mode-`0600` config file.
-- The macOS menu-bar app does not read browser DOM directly. It creates a
-  local pending capture request; the browser extension polls the loopback
-  service, extracts the active tab, and posts the rendered payload back to
-  `/capture`.
+- The macOS menu-bar app does not read browser DOM directly. A normal click
+  creates a local pending capture request; the browser extension polls the
+  loopback service, extracts the active tab, posts the rendered payload back to
+  `/capture`, then records the request result. The menu-bar icon only plays
+  success feedback after the request reaches `capture_saved`.
 - Generated extension assets are not the same as an installed browser
   extension. `starlee doctor` treats extension assets and extension handshake as
   separate checks.

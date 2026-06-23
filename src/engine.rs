@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     bundle::{self, BundleAudit},
-    config::{CaptureRequestState, ConfigStore, ExtensionState, LocalConfig},
+    config::{CaptureRequestState, CaptureRequestStatus, ConfigStore, ExtensionState, LocalConfig},
     embedding::{Embedder, FastEmbedder},
     index::Index,
     model::{
@@ -565,6 +565,14 @@ impl Engine {
             requested_at: Utc::now().to_rfc3339(),
             source,
         };
+        config.capture_request_status = Some(CaptureRequestStatus {
+            id: request.id.clone(),
+            requested_at: request.requested_at.clone(),
+            source: request.source.clone(),
+            status: "queued".into(),
+            completed_at: None,
+            message: None,
+        });
         config.pending_capture_request = Some(request.clone());
         store.save(&config)?;
         Ok(request)
@@ -574,8 +582,44 @@ impl Engine {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
         let request = config.pending_capture_request.take();
+        if let Some(request) = request.as_ref()
+            && let Some(status) = config.capture_request_status.as_mut()
+            && status.id == request.id
+        {
+            status.status = "picked_up".into();
+            status.message = Some("Browser extension picked up the capture request.".into());
+        }
         store.save(&config)?;
         Ok(request)
+    }
+
+    pub fn capture_request_status(&self, id: &str) -> Result<Option<CaptureRequestStatus>> {
+        let config = self.local_config()?;
+        Ok(config
+            .capture_request_status
+            .filter(|status| status.id == id))
+    }
+
+    pub fn record_capture_request_result(
+        &self,
+        id: &str,
+        status: impl Into<String>,
+        message: Option<String>,
+    ) -> Result<Option<CaptureRequestStatus>> {
+        let store = ConfigStore::new(&self.home);
+        let mut config = store.load_or_create()?;
+        let Some(mut request_status) = config.capture_request_status.clone() else {
+            return Ok(None);
+        };
+        if request_status.id != id {
+            return Ok(None);
+        }
+        request_status.status = status.into();
+        request_status.completed_at = Some(Utc::now().to_rfc3339());
+        request_status.message = message;
+        config.capture_request_status = Some(request_status.clone());
+        store.save(&config)?;
+        Ok(Some(request_status))
     }
 
     pub fn configure_youtube_api_key(&self, api_key: String) -> Result<()> {
