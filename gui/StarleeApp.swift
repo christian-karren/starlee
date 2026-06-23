@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 button.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
                 button.contentTintColor = .labelColor
             }
-            button.toolTip = "Starlee — save the current article"
+            button.toolTip = "Starlee — click to save, Option-click for tools"
             button.setAccessibilityLabel("Starlee menu bar")
         }
         NSLog("Starlee menu-bar status item created")

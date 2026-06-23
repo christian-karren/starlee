@@ -1,7 +1,7 @@
 import { capturePayload, detectedType } from "./payload.js";
 
-const MENU_BAR_POLL_MS = 3000;
-const MENU_BAR_INITIAL_POLL_MS = 750;
+const MENU_BAR_POLL_MS = 350;
+const MENU_BAR_INITIAL_POLL_MS = 150;
 const BUTTON_RESET_MS = 3500;
 const MESSAGE = Object.freeze({
   captureNow: "STARLEE_CAPTURE_NOW",
