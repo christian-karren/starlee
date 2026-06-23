@@ -305,14 +305,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn requires_token_and_captures_authenticated_payload() -> Result<()> {
-        let temp = tempfile::tempdir()?;
-        let engine = Arc::new(Engine::with_embedder(
-            temp.path().to_owned(),
-            Arc::new(TestEmbedder),
-        ));
-        let config = LocalConfig {
+    fn test_config() -> LocalConfig {
+        LocalConfig {
             version: 1,
             capture_port: 0,
             capture_token: "secret-token".into(),
@@ -326,8 +320,21 @@ mod tests {
             spotify_oauth: None,
             spotify_sync: Default::default(),
             borrowed_bundles: Vec::new(),
-        };
-        let server = spawn(engine.clone(), config)?;
+        }
+    }
+
+    fn test_engine(home: &std::path::Path) -> Arc<Engine> {
+        Arc::new(Engine::with_embedder(
+            home.to_owned(),
+            Arc::new(TestEmbedder),
+        ))
+    }
+
+    #[test]
+    fn requires_token_and_captures_authenticated_payload() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = test_engine(temp.path());
+        let server = spawn(engine.clone(), test_config())?;
         assert!(server.address.starts_with("127.0.0.1:"));
 
         let payload = serde_json::to_string(&json!({
@@ -353,26 +360,8 @@ mod tests {
     #[test]
     fn records_extension_handshake_and_serves_capture_request() -> Result<()> {
         let temp = tempfile::tempdir()?;
-        let engine = Arc::new(Engine::with_embedder(
-            temp.path().to_owned(),
-            Arc::new(TestEmbedder),
-        ));
-        let config = LocalConfig {
-            version: 1,
-            capture_port: 0,
-            capture_token: "secret-token".into(),
-            query_relevance_floor: 0.35,
-            extension: Default::default(),
-            pending_capture_request: None,
-            capture_request_status: None,
-            youtube_api_key: None,
-            spotify_client_id: None,
-            spotify_redirect_uri: None,
-            spotify_oauth: None,
-            spotify_sync: Default::default(),
-            borrowed_bundles: Vec::new(),
-        };
-        let server = spawn(engine.clone(), config)?;
+        let engine = test_engine(temp.path());
+        let server = spawn(engine.clone(), test_config())?;
         let hello = post_path(
             &server.address,
             "/extension/hello",
@@ -456,26 +445,8 @@ mod tests {
     #[test]
     fn rejects_capture_request_when_extension_heartbeat_is_stale() -> Result<()> {
         let temp = tempfile::tempdir()?;
-        let engine = Arc::new(Engine::with_embedder(
-            temp.path().to_owned(),
-            Arc::new(TestEmbedder),
-        ));
-        let config = LocalConfig {
-            version: 1,
-            capture_port: 0,
-            capture_token: "secret-token".into(),
-            query_relevance_floor: 0.35,
-            extension: Default::default(),
-            pending_capture_request: None,
-            capture_request_status: None,
-            youtube_api_key: None,
-            spotify_client_id: None,
-            spotify_redirect_uri: None,
-            spotify_oauth: None,
-            spotify_sync: Default::default(),
-            borrowed_bundles: Vec::new(),
-        };
-        let server = spawn(engine.clone(), config)?;
+        let engine = test_engine(temp.path());
+        let server = spawn(engine.clone(), test_config())?;
         let created = post_path(
             &server.address,
             "/capture-request",
@@ -494,26 +465,8 @@ mod tests {
     #[test]
     fn capture_request_result_rejects_wrong_id_and_records_failure_state() -> Result<()> {
         let temp = tempfile::tempdir()?;
-        let engine = Arc::new(Engine::with_embedder(
-            temp.path().to_owned(),
-            Arc::new(TestEmbedder),
-        ));
-        let config = LocalConfig {
-            version: 1,
-            capture_port: 0,
-            capture_token: "secret-token".into(),
-            query_relevance_floor: 0.35,
-            extension: Default::default(),
-            pending_capture_request: None,
-            capture_request_status: None,
-            youtube_api_key: None,
-            spotify_client_id: None,
-            spotify_redirect_uri: None,
-            spotify_oauth: None,
-            spotify_sync: Default::default(),
-            borrowed_bundles: Vec::new(),
-        };
-        let server = spawn(engine.clone(), config)?;
+        let engine = test_engine(temp.path());
+        let server = spawn(engine.clone(), test_config())?;
         post_path(
             &server.address,
             "/extension/hello",
@@ -551,6 +504,33 @@ mod tests {
         assert!(denied.starts_with("HTTP/1.1 200"));
         assert!(denied.contains("\"status\":\"permission_denied\""));
         assert!(denied.contains("\"completed_at\""));
+        drop(server);
+        Ok(())
+    }
+
+    #[test]
+    fn capture_request_result_requires_id_and_status() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = test_engine(temp.path());
+        let server = spawn(engine.clone(), test_config())?;
+
+        let missing_id = post_path(
+            &server.address,
+            "/capture-request/result",
+            r#"{"status":"capture_saved"}"#,
+            Some("secret-token"),
+        )?;
+        assert!(missing_id.starts_with("HTTP/1.1 400"));
+        assert!(missing_id.contains("missing request id"));
+
+        let missing_status = post_path(
+            &server.address,
+            "/capture-request/result",
+            r#"{"id":"request-id"}"#,
+            Some("secret-token"),
+        )?;
+        assert!(missing_status.starts_with("HTTP/1.1 400"));
+        assert!(missing_status.contains("missing request status"));
         drop(server);
         Ok(())
     }
