@@ -42,4 +42,12 @@ test("routes YouTube before article detection", () => {
   const payload = capturePayload(dom.window.document);
   assert.equal(payload.type, "youtube");
   assert.equal(payload.dom_extract.site, "youtube.com");
+  assert.match(payload.consumed_at, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("capture payload includes consumed_at engagement timestamp", () => {
+  const dom = new JSDOM(`<!doctype html><title>Fallback title</title>${BODY}`, { url: "https://example.com/story" });
+  const payload = capturePayload(dom.window.document);
+  assert.equal(payload.type, "article");
+  assert.match(payload.consumed_at, /^\d{4}-\d{2}-\d{2}T/);
 });

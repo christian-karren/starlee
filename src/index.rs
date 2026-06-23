@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Result, bail};
 use bytemuck::cast_slice;
-use rusqlite::{Connection, ffi::sqlite3_auto_extension, params};
+use rusqlite::{Connection, OptionalExtension, ffi::sqlite3_auto_extension, params};
 use sqlite_vec::sqlite3_vec_init;
 
 use chrono::{DateTime, Utc};
@@ -21,6 +21,51 @@ static REGISTER_VEC: Once = Once::new();
 
 pub struct Index {
     path: PathBuf,
+}
+
+pub const CURRENT_SCHEMA_VERSION: i64 = 4;
+
+#[derive(Clone, Copy)]
+struct Migration {
+    version: i64,
+    description: &'static str,
+    sql: &'static str,
+}
+
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        description: "initialize schema metadata",
+        sql: "SELECT 1;",
+    },
+    Migration {
+        version: 2,
+        description: "add consumed_at to sources",
+        sql: "ALTER TABLE sources ADD COLUMN consumed_at TEXT;",
+    },
+    Migration {
+        version: 3,
+        description: "add embedding_model to chunks",
+        sql: "ALTER TABLE chunks ADD COLUMN embedding_model TEXT NOT NULL DEFAULT '';",
+    },
+    Migration {
+        version: 4,
+        description: "add sync readiness placeholders",
+        sql: "ALTER TABLE sources ADD COLUMN device_id TEXT;
+              CREATE TABLE IF NOT EXISTS sync_state(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    },
+];
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct MigrationReport {
+    pub schema_version: i64,
+    pub applied: Vec<AppliedMigration>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct AppliedMigration {
+    pub version: i64,
+    pub description: String,
 }
 
 impl Index {
@@ -45,57 +90,22 @@ impl Index {
     }
 
     pub fn init(&self) -> Result<()> {
-        let connection = self.connection()?;
-        connection.execute_batch(
-            "CREATE TABLE IF NOT EXISTS sources (
-                id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL,
-                author TEXT, site TEXT, url TEXT, captured_at TEXT NOT NULL,
-                published_at TEXT, access TEXT NOT NULL, summary TEXT NOT NULL,
-                file_path TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS chunks (
-                rowid INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL,
-                source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-                ord INTEGER NOT NULL, char_start INTEGER, char_end INTEGER,
-                t_start REAL, t_end REAL, access TEXT NOT NULL, text TEXT NOT NULL
-            );
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
-                text, content='chunks', content_rowid='rowid'
-            );
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors USING vec0(
-                embedding FLOAT[384]
-            );
-            CREATE TABLE IF NOT EXISTS spotify_sync_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                episode_id TEXT,
-                episode_title TEXT,
-                show_name TEXT,
-                stage_reached TEXT NOT NULL,
-                outcome TEXT NOT NULL,
-                reason_code TEXT NOT NULL,
-                explanation TEXT NOT NULL,
-                underlying_error TEXT,
-                listen_duration_s INTEGER,
-                threshold_s INTEGER
-            );
-            CREATE INDEX IF NOT EXISTS spotify_sync_events_timestamp_idx
-                ON spotify_sync_events(timestamp DESC);
-            CREATE INDEX IF NOT EXISTS spotify_sync_events_reason_idx
-                ON spotify_sync_events(reason_code, timestamp DESC);
-            CREATE INDEX IF NOT EXISTS spotify_sync_events_episode_idx
-                ON spotify_sync_events(episode_id, timestamp DESC);
-            DROP TRIGGER IF EXISTS chunks_ai;
-            DROP TRIGGER IF EXISTS chunks_ad;
-            CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
-                INSERT INTO chunk_fts(rowid,text) VALUES(new.rowid,new.text);
-            END;
-            CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
-                INSERT INTO chunk_fts(chunk_fts,rowid,text) VALUES('delete',old.rowid,old.text);
-                DELETE FROM chunk_vectors WHERE rowid=old.rowid;
-            END;",
-        )?;
+        let mut connection = self.connection()?;
+        create_base_schema(&connection)?;
+        run_migrations(&mut connection)?;
         Ok(())
+    }
+
+    pub fn migrate(&self) -> Result<MigrationReport> {
+        let mut connection = self.connection()?;
+        create_base_schema(&connection)?;
+        run_migrations(&mut connection)
+    }
+
+    pub fn schema_version(&self) -> Result<i64> {
+        self.init()?;
+        let connection = self.connection()?;
+        schema_version(&connection)
     }
 
     pub fn upsert(&self, record: &Record, embedder: &dyn Embedder) -> Result<()> {
@@ -117,21 +127,22 @@ impl Index {
         let tx = connection.transaction()?;
         tx.execute("DELETE FROM sources WHERE id=?1", [&record.metadata.id])?;
         tx.execute(
-            "INSERT INTO sources(id,type,title,author,site,url,captured_at,published_at,access,summary,file_path)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            "INSERT INTO sources(id,type,title,author,site,url,captured_at,published_at,access,summary,file_path,consumed_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![record.metadata.id, serde_json::to_value(&record.metadata.source_type)?.as_str(),
                 record.metadata.title, record.metadata.author, record.metadata.site, record.metadata.url,
                 record.metadata.captured_at.to_rfc3339(), record.metadata.published_at,
-                serde_json::to_value(&record.metadata.access)?.as_str(), record.metadata.summary, record.file_path]
+                serde_json::to_value(&record.metadata.access)?.as_str(), record.metadata.summary, record.file_path,
+                record.metadata.consumed_at]
         )?;
         for (ord, (chunk, embedding)) in chunks.into_iter().zip(embeddings).enumerate() {
             if embedding.len() != EMBEDDING_DIMENSION {
                 bail!("embedding dimension mismatch for chunk {ord}");
             }
             tx.execute(
-                "INSERT INTO chunks(id,source_id,ord,char_start,char_end,access,text) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                "INSERT INTO chunks(id,source_id,ord,char_start,char_end,access,text,embedding_model) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
                 params![format!("{}:{ord}", record.metadata.id), record.metadata.id, ord, chunk.0, chunk.1,
-                    serde_json::to_value(&record.metadata.access)?.as_str(), chunk.2]
+                    serde_json::to_value(&record.metadata.access)?.as_str(), chunk.2, embedder.name()]
             )?;
             let rowid = tx.last_insert_rowid();
             tx.execute(
@@ -158,6 +169,32 @@ impl Index {
             self.upsert(record, embedder)?;
         }
         Ok(())
+    }
+
+    pub fn reembed_stale(&self, records: &[Record], embedder: &dyn Embedder) -> Result<usize> {
+        self.init()?;
+        let stale_ids = self.stale_source_ids(embedder.name())?;
+        if stale_ids.is_empty() {
+            return Ok(0);
+        }
+        let stale = stale_ids.into_iter().collect::<std::collections::HashSet<_>>();
+        let mut updated = 0;
+        for record in records {
+            if stale.contains(&record.metadata.id) {
+                self.upsert(record, embedder)?;
+                updated += 1;
+            }
+        }
+        Ok(updated)
+    }
+
+    fn stale_source_ids(&self, model: &str) -> Result<Vec<String>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT DISTINCT source_id FROM chunks WHERE embedding_model != ?1 ORDER BY source_id",
+        )?;
+        let rows = statement.query_map([model], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn search(
@@ -210,7 +247,7 @@ impl Index {
         let connection = self.connection()?;
         let query_embedding = embedder.embed_query(query)?;
         let mut statement = connection.prepare(
-            "SELECT s.title,s.url,s.site,s.captured_at,c.text,s.file_path,c.ord,v.distance
+            "SELECT s.title,s.url,s.site,s.captured_at,c.text,s.file_path,c.ord,v.distance,s.consumed_at
              FROM chunk_vectors v JOIN chunks c ON c.rowid=v.rowid
              JOIN sources s ON s.id=c.source_id
              WHERE v.embedding MATCH ?1 AND k = ?2 ORDER BY v.distance",
@@ -227,6 +264,7 @@ impl Index {
                     domain: domain_from(url.as_deref()).or(site),
                     url,
                     captured_at: row.get(3)?,
+                    consumed_at: row.get(8)?,
                     vault_path: row.get(5)?,
                     chunk_index: row.get::<_, i64>(6)? as usize,
                     chunk_text: row.get(4)?,
@@ -253,7 +291,7 @@ impl Index {
     ) -> Result<()> {
         let mut statement = connection.prepare(
             "SELECT s.id,s.title,s.url,s.captured_at,s.access,
-                    snippet(chunk_fts,0,'[',']',' … ',24),s.file_path,bm25(chunk_fts)
+                    snippet(chunk_fts,0,'[',']',' … ',24),s.file_path,bm25(chunk_fts),s.consumed_at
              FROM chunk_fts JOIN chunks c ON c.rowid=chunk_fts.rowid
              JOIN sources s ON s.id=c.source_id WHERE chunk_fts MATCH ?1
              ORDER BY bm25(chunk_fts),s.captured_at DESC LIMIT ?2",
@@ -283,7 +321,7 @@ impl Index {
         candidates: &mut HashMap<String, (SearchHit, f64)>,
     ) -> Result<()> {
         let mut statement = connection.prepare(
-            "SELECT s.id,s.title,s.url,s.captured_at,s.access,c.text,s.file_path,v.distance
+            "SELECT s.id,s.title,s.url,s.captured_at,s.access,c.text,s.file_path,v.distance,s.consumed_at
              FROM chunk_vectors v JOIN chunks c ON c.rowid=v.rowid
              JOIN sources s ON s.id=c.source_id
              WHERE v.embedding MATCH ?1 AND k = ?2 ORDER BY v.distance",
@@ -332,7 +370,7 @@ impl Index {
         self.init()?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id,title,url,captured_at,access,summary,file_path FROM sources ORDER BY captured_at DESC LIMIT ?1")?;
+            "SELECT id,title,url,captured_at,access,summary,file_path,consumed_at FROM sources ORDER BY COALESCE(consumed_at,captured_at) DESC LIMIT ?1")?;
         let rows = statement.query_map([limit], |row| {
             let access: String = row.get(4)?;
             Ok(SearchHit {
@@ -340,6 +378,7 @@ impl Index {
                 title: row.get(1)?,
                 url: row.get(2)?,
                 captured_at: row.get(3)?,
+                consumed_at: row.get(7)?,
                 access: if access == "public" {
                     Access::Public
                 } else {
@@ -459,6 +498,18 @@ impl Index {
         ))
     }
 
+    pub fn stale_chunk_count(&self, model: &str) -> Result<u64> {
+        self.init()?;
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE embedding_model != ?1",
+                [model],
+                |r| r.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     pub fn export_bundle(&self, path: &Path, include_public_bodies: bool) -> Result<BundleAudit> {
         self.init()?;
         if path.exists() {
@@ -526,6 +577,115 @@ fn map_spotify_sync_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<SpotifySy
     })
 }
 
+fn create_base_schema(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sources (
+            id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL,
+            author TEXT, site TEXT, url TEXT, captured_at TEXT NOT NULL,
+            published_at TEXT, access TEXT NOT NULL, summary TEXT NOT NULL,
+            file_path TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS chunks (
+            rowid INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL,
+            source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            ord INTEGER NOT NULL, char_start INTEGER, char_end INTEGER,
+            t_start REAL, t_end REAL, access TEXT NOT NULL, text TEXT NOT NULL
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
+            text, content='chunks', content_rowid='rowid'
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors USING vec0(
+            embedding FLOAT[384]
+        );
+        CREATE TABLE IF NOT EXISTS spotify_sync_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            episode_id TEXT,
+            episode_title TEXT,
+            show_name TEXT,
+            stage_reached TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            reason_code TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            underlying_error TEXT,
+            listen_duration_s INTEGER,
+            threshold_s INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS spotify_sync_events_timestamp_idx
+            ON spotify_sync_events(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS spotify_sync_events_reason_idx
+            ON spotify_sync_events(reason_code, timestamp DESC);
+        CREATE INDEX IF NOT EXISTS spotify_sync_events_episode_idx
+            ON spotify_sync_events(episode_id, timestamp DESC);
+        DROP TRIGGER IF EXISTS chunks_ai;
+        DROP TRIGGER IF EXISTS chunks_ad;
+        CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+            INSERT INTO chunk_fts(rowid,text) VALUES(new.rowid,new.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+            INSERT INTO chunk_fts(chunk_fts,rowid,text) VALUES('delete',old.rowid,old.text);
+            DELETE FROM chunk_vectors WHERE rowid=old.rowid;
+        END;",
+    )?;
+    Ok(())
+}
+
+fn run_migrations(connection: &mut Connection) -> Result<MigrationReport> {
+    run_migrations_with(connection, MIGRATIONS)
+}
+
+fn run_migrations_with(
+    connection: &mut Connection,
+    migrations: &[Migration],
+) -> Result<MigrationReport> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    )?;
+    let mut current_version = schema_version(connection)?;
+    let mut applied = Vec::new();
+    for migration in migrations {
+        if migration.version <= current_version {
+            continue;
+        }
+        eprintln!(
+            "Applying migration {}: {}",
+            migration.version, migration.description
+        );
+        let tx = connection.unchecked_transaction()?;
+        if let Err(error) = tx.execute_batch(migration.sql) {
+            return Err(anyhow::anyhow!(
+                "Migration {} failed: {error}. Database unchanged.",
+                migration.version
+            ));
+        }
+        tx.execute(
+            "INSERT OR REPLACE INTO schema_meta(key,value) VALUES('version',?1)",
+            [migration.version.to_string()],
+        )?;
+        tx.commit()?;
+        current_version = migration.version;
+        applied.push(AppliedMigration {
+            version: migration.version,
+            description: migration.description.to_owned(),
+        });
+    }
+    Ok(MigrationReport {
+        schema_version: current_version,
+        applied,
+    })
+}
+
+fn schema_version(connection: &Connection) -> Result<i64> {
+    Ok(connection
+        .query_row(
+            "SELECT CAST(value AS INTEGER) FROM schema_meta WHERE key='version'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(0))
+}
+
 fn escape_fts(word: &str) -> String {
     format!("\"{}\"", word.replace('"', "\"\""))
 }
@@ -537,6 +697,7 @@ fn map_search_hit(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
         title: row.get(1)?,
         url: row.get(2)?,
         captured_at: row.get(3)?,
+        consumed_at: row.get(8)?,
         access: if access == "public" {
             Access::Public
         } else {
@@ -668,5 +829,74 @@ mod tests {
             Some("2026-06-22T08:10:00Z")
         );
         Ok(())
+    }
+
+    #[test]
+    fn migrations_create_durable_schema_and_are_idempotent() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let index = Index::new(temp.path().join("index.db"));
+        index.init()?;
+
+        let connection = index.connection()?;
+        assert_eq!(schema_version(&connection)?, CURRENT_SCHEMA_VERSION);
+        assert!(column_exists(&connection, "sources", "consumed_at")?);
+        assert!(column_exists(&connection, "sources", "device_id")?);
+        assert!(column_exists(&connection, "chunks", "embedding_model")?);
+        assert!(table_exists(&connection, "sync_state")?);
+        assert!(table_exists(&connection, "schema_meta")?);
+        drop(connection);
+
+        let report = index.migrate()?;
+        assert_eq!(report.schema_version, CURRENT_SCHEMA_VERSION);
+        assert!(report.applied.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn migration_failure_rolls_back_and_keeps_prior_version() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut connection = Connection::open(temp.path().join("rollback.db"))?;
+        connection.execute_batch(
+            "CREATE TABLE sources(id TEXT PRIMARY KEY);
+             CREATE TABLE chunks(id TEXT PRIMARY KEY);",
+        )?;
+        let migrations = [
+            Migration {
+                version: 1,
+                description: "ok",
+                sql: "CREATE TABLE ok_table(id TEXT PRIMARY KEY);",
+            },
+            Migration {
+                version: 2,
+                description: "bad",
+                sql: "CREATE TABLE half_applied(id TEXT PRIMARY KEY); THIS IS NOT SQL;",
+            },
+        ];
+
+        let error = run_migrations_with(&mut connection, &migrations).unwrap_err();
+        assert!(error.to_string().contains("Migration 2 failed"));
+        assert_eq!(schema_version(&connection)?, 1);
+        assert!(table_exists(&connection, "ok_table")?);
+        assert!(!table_exists(&connection, "half_applied")?);
+        Ok(())
+    }
+
+    fn column_exists(connection: &Connection, table: &str, column: &str) -> Result<bool> {
+        let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+        let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+        for candidate in columns {
+            if candidate? == column {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn table_exists(connection: &Connection, table: &str) -> Result<bool> {
+        Ok(connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+            [table],
+            |row| row.get::<_, bool>(0),
+        )?)
     }
 }

@@ -36,6 +36,8 @@ pub struct Frontmatter {
     pub url: Option<String>,
     pub captured_at: DateTime<Utc>,
     #[serde(default)]
+    pub consumed_at: Option<String>,
+    #[serde(default)]
     pub published_at: Option<String>,
     #[serde(default)]
     pub duration: Option<u64>,
@@ -85,6 +87,8 @@ pub struct CaptureInput {
     #[serde(default)]
     pub url: Option<String>,
     #[serde(default)]
+    pub consumed_at: Option<String>,
+    #[serde(default)]
     pub published_at: Option<String>,
     #[serde(default)]
     pub duration: Option<u64>,
@@ -132,6 +136,7 @@ impl CaptureInput {
             site: None,
             source: None,
             url: None,
+            consumed_at: None,
             published_at: None,
             duration: None,
             video_id: None,
@@ -164,6 +169,8 @@ pub struct BorrowedRecord {
     pub title: String,
     pub url: Option<String>,
     pub captured_at: String,
+    #[serde(default)]
+    pub consumed_at: Option<String>,
     pub access: Access,
     pub summary: String,
     pub bundle_path: String,
@@ -182,6 +189,8 @@ pub struct SearchHit {
     pub title: String,
     pub url: Option<String>,
     pub captured_at: String,
+    #[serde(default)]
+    pub consumed_at: Option<String>,
     pub access: Access,
     pub snippet: String,
     pub file_path: String,
@@ -204,6 +213,8 @@ pub struct QueryChunk {
     pub url: Option<String>,
     pub domain: Option<String>,
     pub captured_at: String,
+    #[serde(default)]
+    pub consumed_at: Option<String>,
     pub vault_path: String,
     pub chunk_index: usize,
     pub chunk_text: String,
@@ -247,6 +258,9 @@ pub struct Status {
     pub spotify_account: Option<String>,
     pub spotify_last_synced_at: Option<String>,
     pub spotify_next_sync_at: Option<String>,
+    pub schema_version: i64,
+    pub embedding_model_current: String,
+    pub chunks_stale: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

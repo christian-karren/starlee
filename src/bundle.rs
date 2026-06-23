@@ -103,6 +103,7 @@ pub fn search(
                     title,
                     url,
                     captured_at,
+                    consumed_at: None,
                     access: if access == "public" {
                         Access::Public
                     } else {
@@ -166,6 +167,7 @@ pub fn get(paths: &[PathBuf], id: &str) -> Result<Option<BorrowedRecord>> {
                 title: row.get(1)?,
                 url: row.get(2)?,
                 captured_at: row.get(3)?,
+                consumed_at: None,
                 access: if access == "public" {
                     Access::Public
                 } else {

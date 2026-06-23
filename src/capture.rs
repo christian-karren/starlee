@@ -18,6 +18,8 @@ pub struct CapturePayload {
     pub access: Access,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub consumed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +92,7 @@ impl CapturePayload {
         input.video_id = video_id;
         input.summary = self.dom_extract.summary;
         input.tags = self.tags;
+        input.consumed_at = self.consumed_at;
         Ok(input)
     }
 }
@@ -146,6 +149,7 @@ mod tests {
             }],
             access: Access::Restricted,
             tags: Vec::new(),
+            consumed_at: None,
         };
         assert_eq!(payload.into_input()?.text, "[01:02] A useful idea");
         Ok(())
@@ -170,11 +174,11 @@ mod tests {
             transcript: Vec::new(),
             access: Access::Restricted,
             tags: Vec::new(),
+            consumed_at: Some("2026-06-22T12:00:00Z".into()),
         };
-        assert_eq!(
-            payload.into_input()?.text,
-            "A selected passage from the rendered page."
-        );
+        let input = payload.into_input()?;
+        assert_eq!(input.text, "A selected passage from the rendered page.");
+        assert_eq!(input.consumed_at.as_deref(), Some("2026-06-22T12:00:00Z"));
         Ok(())
     }
 }

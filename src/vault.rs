@@ -99,6 +99,7 @@ impl Vault {
             source: input.source,
             url: input.url,
             captured_at,
+            consumed_at: input.consumed_at,
             published_at: input.published_at,
             duration: input.duration,
             video_id: input.video_id,

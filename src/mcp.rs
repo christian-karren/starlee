@@ -139,7 +139,7 @@ fn call_tool(engine: &Engine, name: &str, args: Value) -> Result<Value> {
         "get" => serde_json::to_value(engine.get_any(args["id"].as_str().unwrap_or_default())?)?,
         "status" => serde_json::to_value(engine.status()?)?,
         "doctor" => serde_json::to_value(engine.doctor()?)?,
-        "reindex" => serde_json::to_value(engine.reindex()?)?,
+        "reindex" => serde_json::to_value(engine.reindex(false)?)?,
         "bookmarklet" => serde_json::to_value(bookmarklet(&engine.local_config()?))?,
         "configure_youtube" => {
             engine.configure_youtube_api_key(

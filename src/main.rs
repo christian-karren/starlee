@@ -82,7 +82,11 @@ enum Command {
     },
     Status,
     Doctor,
-    Reindex,
+    Reindex {
+        #[arg(long)]
+        stale_embeddings_only: bool,
+    },
+    Migrate,
     Bookmarklet,
     ConfigureYoutube {
         #[arg(long)]
@@ -187,7 +191,23 @@ fn main() -> Result<()> {
         Command::Get { id } => serde_json::to_value(engine.get_any(&id)?)?,
         Command::Status => serde_json::to_value(engine.status()?)?,
         Command::Doctor => serde_json::to_value(engine.doctor()?)?,
-        Command::Reindex => serde_json::to_value(engine.reindex()?)?,
+        Command::Reindex {
+            stale_embeddings_only,
+        } => serde_json::to_value(engine.reindex(stale_embeddings_only)?)?,
+        Command::Migrate => {
+            let report = engine.migrate()?;
+            if report.applied.is_empty() {
+                eprintln!("Schema is up to date (version {}).", report.schema_version);
+            } else {
+                for migration in &report.applied {
+                    eprintln!(
+                        "Applied migration {}: {}",
+                        migration.version, migration.description
+                    );
+                }
+            }
+            serde_json::to_value(report)?
+        }
         Command::Bookmarklet => serde_json::to_value(config::bookmarklet(&engine.local_config()?))?,
         Command::ConfigureYoutube { api_key } => {
             engine.configure_youtube_api_key(api_key)?;
@@ -320,7 +340,9 @@ mod integration_tests {
             Access::Restricted,
         );
         input.tags = vec!["memory".into()];
+        input.consumed_at = Some("2026-06-22T08:30:00Z".into());
         let captured = engine.capture(input)?;
+        assert_eq!(captured.metadata.consumed_at.as_deref(), Some("2026-06-22T08:30:00Z"));
         assert!(PathBuf::from(&captured.file_path).exists());
         assert_eq!(
             engine
@@ -333,8 +355,9 @@ mod integration_tests {
             "Knowledge compounds"
         );
         let before = engine.status()?;
-        let after = engine.reindex()?;
+        let after = engine.reindex(false)?;
         assert_eq!(before.capture_count, after.capture_count);
+        assert_eq!(after.chunks_stale, 0);
         assert_eq!(
             engine.get(&captured.metadata.id)?.unwrap().body,
             captured.body
@@ -455,6 +478,7 @@ mod integration_tests {
         assert_eq!(query.chunks[0].domain.as_deref(), Some("example.com"));
         assert_eq!(query.chunks[0].chunk_index, 0);
         assert!(query.chunks[0].similarity >= 0.35);
+        assert_eq!(query.chunks[0].consumed_at, None);
 
         let overview = engine.corpus_overview()?;
         assert_eq!(overview.total_captures, 1);
@@ -539,6 +563,28 @@ mod integration_tests {
         assert!(check.ok);
         assert_eq!(check.detail, "Spotify Test User");
         assert!(engine.status()?.spotify_oauth_configured);
+        Ok(())
+    }
+
+    #[test]
+    fn stale_embedding_reindex_updates_only_stale_sources() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        engine.capture(CaptureInput::new(
+            "Stale note",
+            "A durable digital brain makes forgotten ideas searchable again.",
+            SourceType::Note,
+            Access::Restricted,
+        ))?;
+        let db = temp.path().join("index.db");
+        let connection = rusqlite::Connection::open(db)?;
+        connection.execute("UPDATE chunks SET embedding_model='older-model'", [])?;
+        drop(connection);
+
+        assert!(engine.status()?.chunks_stale > 0);
+        let status = engine.reindex(true)?;
+        assert_eq!(status.chunks_stale, 0);
+        assert_eq!(status.embedding_model_current, "deterministic-test-embedder");
         Ok(())
     }
 

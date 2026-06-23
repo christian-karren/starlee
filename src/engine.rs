@@ -264,14 +264,26 @@ impl Engine {
         Ok(bundle::get(&paths, id)?.map(|record| GetResult::Borrowed { record }))
     }
 
-    pub fn reindex(&self) -> Result<Status> {
+    pub fn reindex(&self, stale_embeddings_only: bool) -> Result<Status> {
         let records = self.vault.records()?;
-        self.index.rebuild(&records, self.embedder.as_ref())?;
+        if stale_embeddings_only {
+            self.index
+                .reembed_stale(&records, self.embedder.as_ref())?;
+        } else {
+            self.index.rebuild(&records, self.embedder.as_ref())?;
+        }
         self.status()
+    }
+
+    pub fn migrate(&self) -> Result<crate::index::MigrationReport> {
+        std::fs::create_dir_all(&self.home)?;
+        self.index.migrate()
     }
 
     pub fn status(&self) -> Result<Status> {
         let (capture_count, chunk_count) = self.index.counts()?;
+        let schema_version = self.index.schema_version()?;
+        let chunks_stale = self.index.stale_chunk_count(self.embedder.name())?;
         let store = ConfigStore::new(&self.home);
         let config = store.load_or_create()?;
         Ok(Status {
@@ -296,6 +308,9 @@ impl Engine {
                 .next_sync_at
                 .clone()
                 .or_else(|| Some(spotify::next_sync_at(chrono::Local::now()).to_rfc3339())),
+            schema_version,
+            embedding_model_current: self.embedder.name().into(),
+            chunks_stale,
         })
     }
 
@@ -383,6 +398,21 @@ impl Engine {
             });
         }
         let extension_seen = config.extension.last_handshake_at.is_some();
+        checks.push(DoctorCheck {
+            name: "schema_version".into(),
+            ok: status.schema_version >= crate::index::CURRENT_SCHEMA_VERSION,
+            detail: status.schema_version.to_string(),
+        });
+        checks.push(DoctorCheck {
+            name: "embedding_model_current".into(),
+            ok: true,
+            detail: status.embedding_model_current.clone(),
+        });
+        checks.push(DoctorCheck {
+            name: "chunks_stale".into(),
+            ok: status.chunks_stale == 0,
+            detail: status.chunks_stale.to_string(),
+        });
         checks.push(DoctorCheck {
             name: "spotify_oauth".into(),
             ok: spotify::oauth_is_valid(&config),
@@ -485,6 +515,8 @@ impl Engine {
                 "spotify_recent_skips_failures" => {
                     "Run `starlee sync-log --show-skips` to inspect recent Spotify skip and failure reasons."
                 }
+                "schema_version" => "Run `starlee migrate` to apply pending database migrations.",
+                "chunks_stale" => "Run `starlee reindex --stale-embeddings-only` to refresh stale embeddings.",
                 "extension_handshake" => {
                     "Load or reload ~/Starlee/sensor-extension in your browser."
                 }
