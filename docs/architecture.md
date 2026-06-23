@@ -11,24 +11,56 @@
 ## Data flow
 
 ```text
-CLI / MCP capture
+CLI / MCP / browser capture
       |
       v
-normalize metadata -> write Markdown atomically -> content-aware chunk -> FTS5 + sqlite-vec
+normalize metadata -> write Markdown atomically -> content-aware chunk
                                                         |
-query -> local BGE embedding -> reciprocal-rank fusion -> cited result
+                                                        v
+                                         chunk text + timestamps -> FTS5 + sqlite-vec
+                                                        |
+query -> local BGE embedding + BM25 terms -> reciprocal-rank fusion -> cited result
 ```
+
+## Retrieval Lifecycle
+
+Capture and ingest paths normalize input into `CaptureInput`. Browser article
+captures supply rendered text; YouTube captures may supply timestamped
+transcript segments that are rendered as readable `[MM:SS]` lines. The engine
+optionally enriches YouTube metadata locally from a user-configured API key,
+then writes a Markdown record with YAML frontmatter through `Vault`.
+
+Markdown is the durable memory. `Index::upsert()` reads the resulting `Record`
+and creates embedding units from `Record.body`. Articles and notes prefer
+paragraph and sentence boundaries, with fixed-size windowing as a fallback for
+long or unstructured text. Transcript-like captures group timestamped lines
+into bounded chunks and populate `chunks.t_start` and `chunks.t_end` from the
+segment timestamps when available.
+
+Each chunk is embedded through the existing local `Embedder` abstraction. The
+default `FastEmbedder` runs quantized BGE-small from the local model cache. The
+index stores chunk text in SQLite, mirrors it into FTS5, stores the vector in
+`sqlite-vec`, records the embedding model name on each chunk, and keeps source
+metadata such as URL, title, access, captured time, and consumed time.
+
+Search and query retrieval both use local hybrid signals. BM25 matches help
+exact terms, names, titles, and phrases surface; vector matches keep semantic
+recall working. Candidates are fused in the index and returned with citation
+metadata. The MCP query path still applies the configured relevance floor before
+returning chunks to agents.
 
 ## Components
 
 - `Engine` owns orchestration and is shared by CLI, MCP, HTTP capture, and the
   optional menu-bar shell.
 - `Vault` owns the portable file contract.
-- `Index` owns disposable FTS and vector search state, including reciprocal-rank
-  fusion. It chunks Markdown by source type before embedding: articles and
-  notes prefer paragraph/sentence boundaries, transcript-like captures prefer
-  timestamped lines when present, and fixed windows remain the fallback.
-  Embeddings are recomputed from Markdown during reindex.
+- `Index` owns disposable chunking, FTS, and vector search state, including
+  reciprocal-rank fusion. It chunks Markdown by source type before embedding:
+  articles and notes prefer paragraph/sentence boundaries, transcript-like
+  captures prefer timestamped lines when present, and fixed windows remain the
+  fallback. Embeddings are recomputed from Markdown during reindex, and stale
+  embedding reindex only refreshes chunks whose stored model name differs from
+  the current embedder.
 - Browser sensors emit a versioned payload into the engine; they never
   write vault files directly.
 - The MCP process co-hosts a bearer-authenticated capture endpoint bound to
