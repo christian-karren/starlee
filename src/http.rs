@@ -13,7 +13,11 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
-use crate::{capture::CapturePayload, config::LocalConfig, engine::Engine};
+use crate::{
+    capture::CapturePayload,
+    config::{CaptureRequestResultState, LocalConfig},
+    engine::Engine,
+};
 
 const MAX_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
 
@@ -140,6 +144,47 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                 json!({"request": engine.take_capture_request()?}),
             )
         }
+        (&Method::Post, "/capture-request/result") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            let body = read_body(&mut request)?;
+            let value = serde_json::from_str::<serde_json::Value>(&body)?;
+            let result = CaptureRequestResultState {
+                id: required_string(&value, "id")?,
+                status: required_string(&value, "status")?,
+                completed_at: chrono::Utc::now().to_rfc3339(),
+                source: value
+                    .get("source")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                record_id: value
+                    .get("record")
+                    .and_then(|record| record.get("metadata"))
+                    .and_then(|metadata| metadata.get("id"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                title: value
+                    .get("record")
+                    .and_then(|record| record.get("metadata"))
+                    .and_then(|metadata| metadata.get("title"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                url: value
+                    .get("record")
+                    .and_then(|record| record.get("metadata"))
+                    .and_then(|metadata| metadata.get("url"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                error: value
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|error| error.chars().take(300).collect()),
+            };
+            let result = engine.record_capture_request_result(result)?;
+            respond(request, StatusCode(200), serde_json::to_value(result)?)
+        }
         (&Method::Post, "/capture") => {
             if !authorized(&request, &config.capture_token) {
                 return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
@@ -163,6 +208,15 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
         }
         _ => respond(request, StatusCode(404), json!({"error":"not found"})),
     }
+}
+
+fn required_string(value: &serde_json::Value, key: &str) -> Result<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .filter(|value| !value.trim().is_empty())
+        .with_context(|| format!("missing required {key}"))
 }
 
 fn read_body(request: &mut Request) -> Result<String> {
@@ -207,8 +261,10 @@ fn header(name: &str, value: &str) -> Header {
 #[cfg(test)]
 mod tests {
     use std::{
+        fs,
         io::{Read, Write},
         net::TcpStream,
+        process::Command,
         sync::Arc,
     };
 
@@ -249,6 +305,7 @@ mod tests {
             query_relevance_floor: 0.35,
             extension: Default::default(),
             pending_capture_request: None,
+            last_capture_request_result: None,
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: None,
@@ -293,6 +350,7 @@ mod tests {
             query_relevance_floor: 0.35,
             extension: Default::default(),
             pending_capture_request: None,
+            last_capture_request_result: None,
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: None,
@@ -323,6 +381,82 @@ mod tests {
         assert!(first.contains("\"id\""));
         let second = get_path(&server.address, "/capture-request", Some("secret-token"))?;
         assert!(second.contains("\"request\":null"));
+        drop(server);
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_smoke_saves_menu_bar_capture_and_records_sanitized_terminal_status() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Arc::new(Engine::with_embedder(
+            temp.path().to_owned(),
+            Arc::new(TestEmbedder),
+        ));
+        let config = LocalConfig {
+            version: 1,
+            capture_port: 0,
+            capture_token: "bridge-smoke-token".into(),
+            query_relevance_floor: 0.35,
+            extension: Default::default(),
+            pending_capture_request: None,
+            last_capture_request_result: None,
+            youtube_api_key: None,
+            spotify_client_id: None,
+            spotify_redirect_uri: None,
+            spotify_oauth: None,
+            spotify_sync: Default::default(),
+            borrowed_bundles: Vec::new(),
+        };
+        let server = spawn(engine.clone(), config)?;
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let output = Command::new("node")
+            .arg(manifest_dir.join("sensor/scripts/bridge-smoke.mjs"))
+            .arg(&server.address)
+            .arg("bridge-smoke-token")
+            .arg(manifest_dir.join("sensor/test/fixture.html"))
+            .current_dir(&manifest_dir)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "bridge harness failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let trace: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(
+            trace["saved"]["terminal"]["status"].as_str(),
+            Some("capture_saved")
+        );
+        assert_eq!(trace["duplicate"]["skipped"].as_str(), Some("duplicate"));
+        assert!(trace["secondPickup"]["request"].is_null());
+        assert_eq!(
+            trace["storage"]["lastMenuRequestStatus"].as_str(),
+            Some("capture_saved")
+        );
+
+        let markdown_files = markdown_files(&temp.path().join("vault"))?;
+        assert_eq!(markdown_files.len(), 1, "expected exactly one vault entry");
+        let document = fs::read_to_string(&markdown_files[0])?;
+        assert!(document.contains("title: A durable browser memory"));
+        assert!(document.contains("url: http://127.0.0.1:4173/test/fixture.html"));
+        assert!(document.contains("Starlee keeps a local Markdown record"));
+
+        let config = engine.local_config()?;
+        let terminal = config
+            .last_capture_request_result
+            .expect("terminal capture request result recorded");
+        assert_eq!(terminal.status, "capture_saved");
+        assert_eq!(terminal.source, "menu-bar");
+        assert_eq!(terminal.title.as_deref(), Some("A durable browser memory"));
+        assert_eq!(
+            terminal.url.as_deref(),
+            Some("http://127.0.0.1:4173/test/fixture.html")
+        );
+        let status_json = serde_json::to_string(&terminal)?;
+        assert!(!status_json.contains("bridge-smoke-token"));
+        assert!(!status_json.contains("Starlee keeps a local Markdown record"));
+        assert!(!status_json.contains("selected_text"));
+        assert!(!status_json.contains("transcript"));
         drop(server);
         Ok(())
     }
@@ -358,5 +492,22 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response)?;
         Ok(response)
+    }
+
+    fn markdown_files(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
+        let mut files = Vec::new();
+        if !root.exists() {
+            return Ok(files);
+        }
+        for entry in fs::read_dir(root)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                files.extend(markdown_files(&path)?);
+            } else if path.extension().and_then(|value| value.to_str()) == Some("md") {
+                files.push(path);
+            }
+        }
+        files.sort();
+        Ok(files)
     }
 }

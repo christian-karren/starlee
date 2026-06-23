@@ -141,10 +141,12 @@ async function pollCaptureRequest() {
   if (!request) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const result = await captureTab(tab);
+  const terminalStatus = result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed;
+  await recordCaptureRequestResult(request, terminalStatus, result);
   await chrome.storage.local.set({
     lastMenuRequestId: request.id || "",
     lastMenuRequestAt: new Date().toISOString(),
-    lastMenuRequestStatus: result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed
+    lastMenuRequestStatus: terminalStatus
   });
   await showResult(result);
 }
@@ -230,6 +232,34 @@ async function recordMenuRequest(request, status) {
     lastMenuRequestAt: new Date().toISOString(),
     lastMenuRequestStatus: status
   });
+}
+
+async function recordCaptureRequestResult(request, status, captureResult) {
+  const { token, port } = await localSettings();
+  if (!token || !request?.id) return;
+  const metadata = captureResult?.record?.metadata || {};
+  const body = {
+    id: request.id,
+    status,
+    source: request.source || "menu-bar",
+    error: captureResult?.ok ? undefined : captureResult?.error || status,
+    record: captureResult?.ok ? {
+      metadata: {
+        id: metadata.id,
+        title: metadata.title,
+        url: metadata.url
+      }
+    } : undefined
+  };
+  try {
+    await fetch(`http://127.0.0.1:${port}/capture-request/result`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } catch {
+    // The browser status remains local if the native bridge disappears after capture.
+  }
 }
 
 async function showResult(result) {

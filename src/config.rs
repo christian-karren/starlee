@@ -21,6 +21,8 @@ pub struct LocalConfig {
     #[serde(default)]
     pub pending_capture_request: Option<CaptureRequestState>,
     #[serde(default)]
+    pub last_capture_request_result: Option<CaptureRequestResultState>,
+    #[serde(default)]
     pub youtube_api_key: Option<String>,
     #[serde(default)]
     pub spotify_client_id: Option<String>,
@@ -52,6 +54,23 @@ pub struct CaptureRequestState {
     pub requested_at: String,
     #[serde(default)]
     pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureRequestResultState {
+    pub id: String,
+    pub status: String,
+    pub completed_at: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub record_id: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +138,7 @@ impl ConfigStore {
             query_relevance_floor: default_query_relevance_floor(),
             extension: ExtensionState::default(),
             pending_capture_request: None,
+            last_capture_request_result: None,
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: Some(DEFAULT_SPOTIFY_REDIRECT_URI.into()),
@@ -215,6 +235,7 @@ mod tests {
             query_relevance_floor: default_query_relevance_floor(),
             extension: ExtensionState::default(),
             pending_capture_request: None,
+            last_capture_request_result: None,
             youtube_api_key: None,
             spotify_client_id: None,
             spotify_redirect_uri: Some(DEFAULT_SPOTIFY_REDIRECT_URI.into()),
@@ -240,6 +261,7 @@ mod tests {
               "capture_token": "abc123",
               "extension": {},
               "pending_capture_request": null,
+              "last_capture_request_result": null,
               "youtube_api_key": null,
               "borrowed_bundles": []
             }"#,

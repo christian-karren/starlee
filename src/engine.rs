@@ -13,7 +13,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     bundle::{self, BundleAudit},
-    config::{CaptureRequestState, ConfigStore, ExtensionState, LocalConfig},
+    config::{
+        CaptureRequestResultState, CaptureRequestState, ConfigStore, ExtensionState, LocalConfig,
+    },
     embedding::{Embedder, FastEmbedder},
     index::Index,
     model::{
@@ -576,6 +578,17 @@ impl Engine {
         let request = config.pending_capture_request.take();
         store.save(&config)?;
         Ok(request)
+    }
+
+    pub fn record_capture_request_result(
+        &self,
+        result: CaptureRequestResultState,
+    ) -> Result<CaptureRequestResultState> {
+        let store = ConfigStore::new(&self.home);
+        let mut config = store.load_or_create()?;
+        config.last_capture_request_result = Some(result.clone());
+        store.save(&config)?;
+        Ok(result)
     }
 
     pub fn configure_youtube_api_key(&self, api_key: String) -> Result<()> {
