@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     bundle::{BundleAudit, audit},
+    chunking::{ChunkOptions, chunk_text},
     embedding::{EMBEDDING_DIMENSION, Embedder},
     model::{Access, QueryChunk, Record, SearchHit, SpotifyReasonCount, SpotifySyncEvent},
 };
@@ -111,10 +112,14 @@ impl Index {
 
     pub fn upsert(&self, record: &Record, embedder: &dyn Embedder) -> Result<()> {
         self.init()?;
-        let chunks = chunk_text(&record.body, 1800, 270);
+        let chunks = chunk_text(
+            &record.body,
+            &record.metadata.source_type,
+            ChunkOptions::default(),
+        );
         let texts = chunks
             .iter()
-            .map(|chunk| chunk.2.clone())
+            .map(|chunk| chunk.text.clone())
             .collect::<Vec<_>>();
         let embeddings = embedder.embed_documents(&texts)?;
         if embeddings.len() != chunks.len() {
@@ -141,9 +146,11 @@ impl Index {
                 bail!("embedding dimension mismatch for chunk {ord}");
             }
             tx.execute(
-                "INSERT INTO chunks(id,source_id,ord,char_start,char_end,access,text,embedding_model) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
-                params![format!("{}:{ord}", record.metadata.id), record.metadata.id, ord, chunk.0, chunk.1,
-                    serde_json::to_value(&record.metadata.access)?.as_str(), chunk.2, embedder.name()]
+                "INSERT INTO chunks(id,source_id,ord,char_start,char_end,t_start,t_end,access,text,embedding_model)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![format!("{}:{ord}", record.metadata.id), record.metadata.id, ord, chunk.char_start,
+                    chunk.char_end, chunk.t_start, chunk.t_end, serde_json::to_value(&record.metadata.access)?.as_str(),
+                    chunk.text, embedder.name()]
             )?;
             let rowid = tx.last_insert_rowid();
             tx.execute(
@@ -194,7 +201,9 @@ impl Index {
     fn stale_source_ids(&self, model: &str) -> Result<Vec<String>> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT DISTINCT source_id FROM chunks WHERE embedding_model != ?1 ORDER BY source_id",
+            "SELECT DISTINCT source_id FROM chunks
+             WHERE embedding_model IS NULL OR embedding_model != ?1
+             ORDER BY source_id",
         )?;
         let rows = statement.query_map([model], |row| row.get(0))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -506,7 +515,7 @@ impl Index {
         let connection = self.connection()?;
         connection
             .query_row(
-                "SELECT count(*) FROM chunks WHERE embedding_model != ?1",
+                "SELECT count(*) FROM chunks WHERE embedding_model IS NULL OR embedding_model != ?1",
                 [model],
                 |r| r.get(0),
             )
@@ -743,39 +752,11 @@ fn domain_from(value: Option<&str>) -> Option<String> {
         .map(|host| host.trim_start_matches("www.").to_owned())
 }
 
-fn chunk_text(text: &str, max_chars: usize, overlap: usize) -> Vec<(usize, usize, String)> {
-    if text.is_empty() {
-        return Vec::new();
-    }
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    while start < text.len() {
-        while !text.is_char_boundary(start) {
-            start += 1;
-        }
-        let mut end = (start + max_chars).min(text.len());
-        while end > start && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        if end < text.len()
-            && let Some(boundary) = text[start..end].rfind(char::is_whitespace)
-            && boundary > max_chars / 2
-        {
-            end = start + boundary;
-        }
-        chunks.push((start, end, text[start..end].trim().to_owned()));
-        if end == text.len() {
-            break;
-        }
-        start = end.saturating_sub(overlap);
-    }
-    chunks
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
+        chunking::fixed_window_chunks,
         embedding::{EMBEDDING_DIMENSION, Embedder},
         model::{Access, Frontmatter, SourceType},
     };
@@ -809,9 +790,9 @@ mod tests {
     #[test]
     fn chunks_long_text_with_overlap() {
         let text = "word ".repeat(1000);
-        let chunks = chunk_text(&text, 1000, 150);
+        let chunks = fixed_window_chunks(&text, 1000, 150);
         assert!(chunks.len() > 4);
-        assert_eq!(chunks[0].0, 0);
+        assert_eq!(chunks[0].char_start, 0);
     }
 
     #[test]
@@ -1051,6 +1032,33 @@ mod tests {
     }
 
     #[test]
+    fn upsert_persists_transcript_timestamp_ranges() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let index = Index::new(temp.path().join("index.db"));
+        let mut record = test_record(
+            "video-1",
+            "[00:01] Opening thought\n[00:04] More context\n[00:09] A new section",
+            None,
+        );
+        record.metadata.source_type = SourceType::Youtube;
+        index.upsert(&record, &StaticEmbedder { name: "model-a" })?;
+
+        let connection = index.connection()?;
+        let ranges = {
+            let mut statement = connection.prepare(
+                "SELECT t_start,t_end FROM chunks WHERE source_id='video-1' ORDER BY ord",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((row.get::<_, Option<f64>>(0)?, row.get::<_, Option<f64>>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        assert_eq!(ranges.first().copied(), Some((Some(1.0), Some(9.0))));
+        Ok(())
+    }
+
+    #[test]
     fn reembed_stale_updates_only_sources_with_stale_chunks() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let index = Index::new(temp.path().join("index.db"));
@@ -1078,6 +1086,28 @@ mod tests {
             )?,
             "model-a"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn missing_embedding_model_counts_as_stale() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let index = Index::new(temp.path().join("index.db"));
+        let stale = test_record("missing-model", "This source lacks model provenance", None);
+        index.upsert(&stale, &StaticEmbedder { name: "model-a" })?;
+        let connection = index.connection()?;
+        connection.execute(
+            "UPDATE chunks SET embedding_model='' WHERE source_id='missing-model'",
+            [],
+        )?;
+        drop(connection);
+
+        assert_eq!(index.stale_chunk_count("model-a")?, 1);
+        assert_eq!(
+            index.reembed_stale(&[stale], &StaticEmbedder { name: "model-a" })?,
+            1
+        );
+        assert_eq!(index.stale_chunk_count("model-a")?, 0);
         Ok(())
     }
 

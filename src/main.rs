@@ -1,5 +1,6 @@
 mod bundle;
 mod capture;
+mod chunking;
 mod config;
 mod embedding;
 mod engine;
