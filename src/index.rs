@@ -257,41 +257,105 @@ impl Index {
             return Ok(Vec::new());
         }
         let connection = self.connection()?;
+        let candidate_limit = limit.saturating_mul(8).max(limit);
+        let mut candidates: HashMap<i64, (QueryChunk, f64)> = HashMap::new();
+        self.collect_query_chunk_fts(&connection, query, candidate_limit, &mut candidates)?;
         let query_embedding = embedder.embed_query(query)?;
+        self.collect_query_chunk_vectors(
+            &connection,
+            &query_embedding,
+            candidate_limit,
+            &mut candidates,
+        )?;
+        let mut chunks = candidates
+            .into_values()
+            .map(|(mut chunk, score)| {
+                chunk.similarity = chunk.similarity.max(score.min(1.0) as f32);
+                chunk
+            })
+            .collect::<Vec<_>>();
+        chunks.sort_by(|a, b| {
+            b.similarity
+                .total_cmp(&a.similarity)
+                .then_with(|| b.captured_at.cmp(&a.captured_at))
+        });
+        chunks.truncate(limit);
+        for (index, chunk) in chunks.iter_mut().enumerate() {
+            chunk.index = index + 1;
+        }
+        Ok(chunks)
+    }
+
+    fn collect_query_chunk_fts(
+        &self,
+        connection: &Connection,
+        query: &str,
+        limit: usize,
+        candidates: &mut HashMap<i64, (QueryChunk, f64)>,
+    ) -> Result<()> {
         let mut statement = connection.prepare(
-            "SELECT s.title,s.url,s.site,s.captured_at,c.text,s.file_path,c.ord,v.distance,s.consumed_at
+            "SELECT c.rowid,s.title,s.url,s.site,s.captured_at,c.text,s.file_path,c.ord,bm25(chunk_fts),s.consumed_at
+             FROM chunk_fts JOIN chunks c ON c.rowid=chunk_fts.rowid
+             JOIN sources s ON s.id=c.source_id WHERE chunk_fts MATCH ?1
+             ORDER BY bm25(chunk_fts),s.captured_at DESC LIMIT ?2",
+        )?;
+        let fts_query = query
+            .split_whitespace()
+            .map(escape_fts)
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let rows = statement.query_map(params![fts_query, limit], map_query_chunk_fts)?;
+        for (rank, row) in rows.enumerate() {
+            let (rowid, mut chunk) = row?;
+            let score = 0.45 / (60.0 + rank as f64 + 1.0);
+            chunk.similarity = 0.9_f32 - (rank as f32 * 0.01).min(0.2);
+            candidates
+                .entry(rowid)
+                .and_modify(|entry| {
+                    entry.1 += score;
+                    entry.0.similarity = entry.0.similarity.max(chunk.similarity);
+                })
+                .or_insert((chunk, score));
+        }
+        Ok(())
+    }
+
+    fn collect_query_chunk_vectors(
+        &self,
+        connection: &Connection,
+        query_embedding: &[f32],
+        limit: usize,
+        candidates: &mut HashMap<i64, (QueryChunk, f64)>,
+    ) -> Result<()> {
+        let mut statement = connection.prepare(
+            "SELECT c.rowid,s.title,s.url,s.site,s.captured_at,c.text,s.file_path,c.ord,v.distance,s.consumed_at
              FROM chunk_vectors v JOIN chunks c ON c.rowid=v.rowid
              JOIN sources s ON s.id=c.source_id
              WHERE v.embedding MATCH ?1 AND k = ?2 ORDER BY v.distance",
         )?;
         let rows = statement.query_map(
-            params![cast_slice::<f32, u8>(&query_embedding), limit],
+            params![cast_slice::<f32, u8>(query_embedding), limit],
             |row| {
-                let url: Option<String> = row.get(1)?;
-                let site: Option<String> = row.get(2)?;
-                let distance: f32 = row.get(7)?;
-                Ok(QueryChunk {
-                    index: 0,
-                    title: row.get(0)?,
-                    domain: domain_from(url.as_deref()).or(site),
-                    url,
-                    captured_at: row.get(3)?,
-                    consumed_at: row.get(8)?,
-                    vault_path: row.get(5)?,
-                    chunk_index: row.get::<_, i64>(6)? as usize,
-                    chunk_text: row.get(4)?,
-                    similarity: distance_to_similarity(distance),
-                })
+                let rowid: i64 = row.get(0)?;
+                let distance: f32 = row.get(8)?;
+                Ok((
+                    rowid,
+                    map_query_chunk(row, distance_to_similarity(distance))?,
+                ))
             },
         )?;
-        rows.enumerate()
-            .map(|(index, row)| {
-                let mut chunk = row?;
-                chunk.index = index + 1;
-                Ok::<QueryChunk, rusqlite::Error>(chunk)
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(Into::into)
+        for (rank, row) in rows.enumerate() {
+            let (rowid, chunk) = row?;
+            let score = 0.55 / (60.0 + rank as f64 + 1.0);
+            candidates
+                .entry(rowid)
+                .and_modify(|entry| {
+                    entry.1 += score;
+                    entry.0.similarity = entry.0.similarity.max(chunk.similarity);
+                })
+                .or_insert((chunk, score));
+        }
+        Ok(())
     }
 
     fn collect_fts(
@@ -742,6 +806,28 @@ fn map_search_hit(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
     })
 }
 
+fn map_query_chunk_fts(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, QueryChunk)> {
+    let rowid: i64 = row.get(0)?;
+    Ok((rowid, map_query_chunk(row, 0.0)?))
+}
+
+fn map_query_chunk(row: &rusqlite::Row<'_>, similarity: f32) -> rusqlite::Result<QueryChunk> {
+    let url: Option<String> = row.get(2)?;
+    let site: Option<String> = row.get(3)?;
+    Ok(QueryChunk {
+        index: 0,
+        title: row.get(1)?,
+        domain: domain_from(url.as_deref()).or(site),
+        url,
+        captured_at: row.get(4)?,
+        consumed_at: row.get(9)?,
+        vault_path: row.get(6)?,
+        chunk_index: row.get::<_, i64>(7)? as usize,
+        chunk_text: row.get(5)?,
+        similarity,
+    })
+}
+
 fn distance_to_similarity(distance: f32) -> f32 {
     1.0 / (1.0 + distance.max(0.0))
 }
@@ -783,7 +869,22 @@ mod tests {
     fn test_vector(text: &str) -> Vec<f32> {
         let mut vector = vec![0.0; EMBEDDING_DIMENSION];
         vector[0] = 1.0;
-        vector[1] = text.len() as f32;
+        let lower = text.to_lowercase();
+        if lower.contains("durable")
+            || lower.contains("forgotten")
+            || lower.contains("recall")
+            || lower.contains("remember")
+            || lower.contains("memory")
+        {
+            vector[2] = 1.0;
+        }
+        if lower.contains("design") || lower.contains("pattern") || lower.contains("architecture") {
+            vector[3] = 1.0;
+        }
+        if lower.contains("recipe") || lower.contains("sourdough") || lower.contains("fermentation")
+        {
+            vector[4] = 1.0;
+        }
         vector
     }
 
@@ -793,6 +894,67 @@ mod tests {
         let chunks = fixed_window_chunks(&text, 1000, 150);
         assert!(chunks.len() > 4);
         assert_eq!(chunks[0].char_start, 0);
+    }
+
+    #[test]
+    fn query_chunks_uses_bm25_for_exact_phrase_recall() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let index = Index::new(temp.path().join("index.db"));
+        index.upsert(
+            &test_record(
+                "exact",
+                "The launch notes mention the calibration token ZK-427 aurora gasket for a narrow hardware fix.",
+                Some("2026-06-22T12:30:00Z".into()),
+            ),
+            &StaticEmbedder { name: "model-a" },
+        )?;
+        index.upsert(
+            &test_record(
+                "nearby",
+                "General memory architecture notes discuss durable recall and design patterns.",
+                None,
+            ),
+            &StaticEmbedder { name: "model-a" },
+        )?;
+
+        let chunks = index.query_chunks(
+            "ZK-427 aurora gasket",
+            2,
+            &StaticEmbedder { name: "model-a" },
+        )?;
+
+        assert_eq!(chunks[0].title, "exact title");
+        assert!(chunks[0].chunk_text.contains("ZK-427 aurora gasket"));
+        assert!(chunks[0].similarity >= 0.35);
+        assert_eq!(
+            chunks[0].consumed_at.as_deref(),
+            Some("2026-06-22T12:30:00Z")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn query_chunks_preserves_vector_semantic_recall() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let index = Index::new(temp.path().join("index.db"));
+        index.upsert(
+            &test_record(
+                "memory",
+                "A durable digital brain helps people recall forgotten design patterns.",
+                None,
+            ),
+            &StaticEmbedder { name: "model-a" },
+        )?;
+
+        let chunks = index.query_chunks(
+            "remember old architecture",
+            1,
+            &StaticEmbedder { name: "model-a" },
+        )?;
+
+        assert_eq!(chunks[0].title, "memory title");
+        assert!(chunks[0].similarity >= 0.35);
+        Ok(())
     }
 
     #[test]

@@ -7,7 +7,8 @@ Starlee includes:
 
 - initialize a local Starlee home;
 - capture pasted text as human-readable Markdown with YAML frontmatter;
-- chunk and index captures with SQLite FTS5 and sqlite-vec;
+- chunk captures on article and transcript boundaries, then index them with
+  SQLite FTS5 and sqlite-vec;
 - generate 384-dimensional embeddings locally with quantized BGE-small;
 - search, list recent captures, get a record, and rebuild the index;
 - expose capture, retrieval, setup, and sharing through an MCP stdio server;
@@ -121,8 +122,9 @@ starlee doctor
 ```
 
 Run `starlee mcp` to start the stdio transport. The MCP tools cover setup,
-capture, hybrid search, recent/get, reindex, bookmarklet generation, optional
-YouTube configuration, export, and ingest.
+capture, hybrid search, citation-ready hybrid query retrieval, recent/get,
+reindex, bookmarklet generation, optional YouTube configuration, export, and
+ingest.
 The MCP process also serves browser capture on `http://127.0.0.1:47291` by
 default. Run `starlee serve` when only the capture endpoint is needed.
 Run `starlee bookmarklet` (or call the MCP `bookmarklet` tool) only when you
