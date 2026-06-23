@@ -14,7 +14,7 @@
 CLI / MCP capture
       |
       v
-normalize metadata -> write Markdown atomically -> chunk -> FTS5 + sqlite-vec
+normalize metadata -> write Markdown atomically -> content-aware chunk -> FTS5 + sqlite-vec
                                                         |
 query -> local BGE embedding -> reciprocal-rank fusion -> cited result
 ```
@@ -25,7 +25,10 @@ query -> local BGE embedding -> reciprocal-rank fusion -> cited result
   optional menu-bar shell.
 - `Vault` owns the portable file contract.
 - `Index` owns disposable FTS and vector search state, including reciprocal-rank
-  fusion. Embeddings are recomputed from Markdown during reindex.
+  fusion. It chunks Markdown by source type before embedding: articles and
+  notes prefer paragraph/sentence boundaries, transcript-like captures prefer
+  timestamped lines when present, and fixed windows remain the fallback.
+  Embeddings are recomputed from Markdown during reindex.
 - Browser sensors emit a versioned payload into the engine; they never
   write vault files directly.
 - The MCP process co-hosts a bearer-authenticated capture endpoint bound to
@@ -52,6 +55,10 @@ query -> local BGE embedding -> reciprocal-rank fusion -> cited result
 - Generated extension assets are not the same as an installed browser
   extension. `starlee doctor` treats extension assets and extension handshake as
   separate checks.
+- Chunk rows store the embedding model that produced each vector. `starlee
+  reindex --stale-embeddings-only` refreshes only sources whose chunk model is
+  missing or different from the current local embedder, so model upgrades do not
+  require deleting the whole index.
 - Share bundles are standalone SQLite files containing metadata, summaries, and
   vectors. Restricted chunk text is always `NULL`, enforced by a pre-write audit.
 - Borrowed bundles are opened read-only and searched without copying them into
@@ -60,5 +67,7 @@ query -> local BGE embedding -> reciprocal-rank fusion -> cited result
 ## Recovery
 
 The vault is the only irreplaceable component. `starlee reindex` removes the
-SQLite cache and recomputes chunks and vectors from Markdown. Share bundles and
-borrowed-base configuration never modify the owner vault.
+SQLite cache and recomputes chunks and vectors from Markdown. Stale-only
+reindexing keeps the cache and replaces only sources with missing or outdated
+embedding provenance. Share bundles and borrowed-base configuration never modify
+the owner vault.

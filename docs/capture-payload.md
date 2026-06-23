@@ -52,8 +52,10 @@ Content-Type: application/json
 ```
 
 Starlee renders transcript segments as `[00:12] Timestamped transcript text` in
-Markdown so agents can preserve moment-level provenance. If no transcript is
-available, the item is still captured with `[Transcript unavailable]`.
+Markdown so agents can preserve moment-level provenance. Timestamp-aware
+indexing reads those canonical lines and stores chunk `t_start`/`t_end` ranges
+when timing exists. If no transcript is available, the item is still captured
+with `[Transcript unavailable]`.
 
 ## Responses
 
