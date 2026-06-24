@@ -306,11 +306,11 @@ final class StatusMenuController: NSObject {
         )
     }
 
-    @objc private func showDoctor() {
+    @objc func showDoctor() {
         DialogPresenter.show(title: "Starlee Diagnostics", message: client.run(["doctor"]))
     }
 
-    @objc private func openVault() {
+    @objc func openVault() {
         NSWorkspace.shared.open(client.home.appendingPathComponent("vault"))
     }
 

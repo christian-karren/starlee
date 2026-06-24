@@ -7,6 +7,6 @@
   <key>CFBundleVersion</key><string>1</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleExecutable</key><string>StarleeMenuBar</string>
-  <key>LSUIElement</key><true/>
+  <key>CFBundleIconFile</key><string>StarleeDesktopIcon</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
