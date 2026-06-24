@@ -27,14 +27,15 @@ if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_APP:-1}" != "0" ]; then
   pkill -f "$APP_DEST/Starlee.app/Contents/MacOS/StarleeMenuBar" >/dev/null 2>&1 || true
   rm -rf "$APP_DEST/Starlee.app"
   cp -R "$APP_PATH" "$APP_DEST/Starlee.app"
+  # The desktop app is user-facing UI, not a daemon. Older installs created a
+  # KeepAlive LaunchAgent for it; if the app was quarantined, unsigned, or
+  # otherwise killed at startup, launchd would hot-loop and flicker the Dock.
   MENUBAR_PLIST="$HOME/Library/LaunchAgents/com.starlee.menubar.plist"
   if [ -f "$MENUBAR_PLIST" ]; then
     launchctl bootout "gui/$(id -u)" "$MENUBAR_PLIST" >/dev/null 2>&1 || true
-    launchctl bootstrap "gui/$(id -u)" "$MENUBAR_PLIST"
-    launchctl kickstart -k "gui/$(id -u)/com.starlee.menubar"
-  else
-    open "$APP_DEST/Starlee.app"
+    rm -f "$MENUBAR_PLIST"
   fi
+  open "$APP_DEST/Starlee.app"
 fi
 
 if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_SAFARI:-1}" != "0" ]; then

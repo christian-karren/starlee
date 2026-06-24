@@ -5,6 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 APP="$ROOT/target/release/Starlee.app"
 ICON_SOURCE="$ROOT/assets/brand/starlee_desktop_application_icon.png"
 ICONSET="$ROOT/target/release/StarleeDesktopIcon.iconset"
+rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -parse-as-library -O -framework AppKit -framework UserNotifications "$ROOT"/gui/*.swift -o "$APP/Contents/MacOS/StarleeMenuBar"
 cp "$ROOT/gui/Info.plist" "$APP/Contents/Info.plist"
@@ -27,5 +28,8 @@ if [ -d "$ROOT/gui/Resources" ]; then
   cp -R "$ROOT/gui/Resources/." "$APP/Contents/Resources/"
 fi
 chmod 755 "$APP/Contents/MacOS/StarleeMenuBar" "$APP/Contents/Resources/starlee"
+if command -v codesign >/dev/null 2>&1; then
+  codesign --force --deep --sign - "$APP" >/dev/null
+fi
 "$ROOT/scripts/verify-gui-bundle.sh" "$APP"
 printf '%s\n' "$APP"
