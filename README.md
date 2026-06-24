@@ -18,8 +18,9 @@ Starlee includes:
 - install as a Codex Plugin with bundled Starlee MCP tools and workflow guidance;
 - expose Spotify sync diagnostics and Spotify episode vault schema, while
   clearly reporting Spotify's current podcast-history API limitation;
-- provide a macOS menu-bar/floating-button app that can request capture from a
-  browser extension after the user has loaded or installed that extension.
+- provide a Dock-visible macOS app with a desktop status window and a persistent
+  menu-bar capture icon that can request capture from a browser extension after
+  the user has loaded or installed that extension.
 
 ## Install
 
@@ -61,13 +62,21 @@ Open the menu-bar app:
 open ~/Applications/Starlee.app
 ```
 
-The app appears as a menu-bar icon. Click it once to capture the current
-browser article or YouTube watch page. The icon only shows the success pulse
-after the browser extension reports that the capture was saved; request pickup
-and extraction remain in the loading state, stale requests time out quickly,
-and failures distinguish extension availability, page permission, unsupported
-pages, and capture errors. Option-click the icon to open management tools for Recent Captures,
-Browser Setup, diagnostics, vault access, capture-service controls, and Quit.
+The app appears in the Dock and opens a desktop status window for the local
+capture system, browser bridge, and loopback endpoint. It also keeps the
+Starlee menu-bar icon available for one-tap capture. Click the menu-bar icon
+once to capture the current browser article or YouTube watch page. The icon only
+shows the success pulse after the browser extension reports that the capture was
+saved; request pickup and extraction remain in the loading state, stale requests
+time out quickly, and failures distinguish extension availability, page
+permission, unsupported pages, and capture errors. Option-click the icon to open
+management tools for Recent Captures, Browser Setup, diagnostics, vault access,
+capture-service controls, and Quit.
+
+Closing the desktop window leaves the menu-bar capture icon running. Reopening
+Starlee from Finder or the Dock brings the window back instead of creating a
+second menu-bar icon. Quit Starlee from the app menu or the menu-bar management
+menu to stop the desktop app process.
 For YouTube watch pages, Starlee stores a restricted canonical video record with
 title, channel when available, video id, consumed time, transcript
 status/source/reason, and either timestamped transcript lines from the rendered
