@@ -68,7 +68,7 @@ pub fn search(
         validate(path)?;
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let mut statement = connection.prepare(
-            "SELECT s.id,s.title,s.url,s.captured_at,s.access,s.summary,c.embedding
+            "SELECT s.id,s.title,s.type,s.site,s.url,s.captured_at,s.access,s.summary,c.embedding
              FROM sources s JOIN chunks c ON c.source_id=s.id",
         )?;
         let bundle_name = path
@@ -80,15 +80,17 @@ pub fn search(
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
                 row.get::<_, String>(5)?,
-                row.get::<_, Vec<u8>>(6)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Vec<u8>>(8)?,
             ))
         })?;
         for row in rows {
-            let (id, title, url, captured_at, access, summary, bytes) = row?;
+            let (id, title, source_type, site, url, captured_at, access, summary, bytes) = row?;
             let vector = decode_vector(&bytes)?;
             let similarity = cosine(query_embedding, &vector);
             let lexical_text = format!("{title} {summary}").to_lowercase();
@@ -101,6 +103,9 @@ pub fn search(
                 hit: SearchHit {
                     id,
                     title,
+                    source_type: serde_json::from_value(serde_json::Value::String(source_type))
+                        .unwrap_or_default(),
+                    site,
                     url,
                     captured_at,
                     consumed_at: None,

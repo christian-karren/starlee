@@ -200,22 +200,28 @@ impl Index {
         self.init()?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id,title,url,captured_at,access,summary,file_path,consumed_at FROM sources ORDER BY COALESCE(consumed_at,captured_at) DESC LIMIT ?1")?;
+            "SELECT id,title,type,site,url,captured_at,access,summary,file_path,consumed_at
+             FROM sources ORDER BY COALESCE(consumed_at,captured_at) DESC LIMIT ?1",
+        )?;
         let rows = statement.query_map([limit], |row| {
-            let access: String = row.get(4)?;
+            let source_type: String = row.get(2)?;
+            let access: String = row.get(6)?;
             Ok(SearchHit {
                 id: row.get(0)?,
                 title: row.get(1)?,
-                url: row.get(2)?,
-                captured_at: row.get(3)?,
-                consumed_at: row.get(7)?,
+                source_type: serde_json::from_value(serde_json::Value::String(source_type))
+                    .unwrap_or_default(),
+                site: row.get(3)?,
+                url: row.get(4)?,
+                captured_at: row.get(5)?,
+                consumed_at: row.get(9)?,
                 access: if access == "public" {
                     Access::Public
                 } else {
                     Access::Restricted
                 },
-                snippet: row.get(5)?,
-                file_path: row.get(6)?,
+                snippet: row.get(7)?,
+                file_path: row.get(8)?,
                 score: 0.0,
                 source: "own".into(),
             })
