@@ -194,6 +194,10 @@ pub enum GetResult {
 pub struct SearchHit {
     pub id: String,
     pub title: String,
+    #[serde(rename = "type")]
+    pub source_type: SourceType,
+    #[serde(default)]
+    pub site: Option<String>,
     pub url: Option<String>,
     pub captured_at: String,
     #[serde(default)]

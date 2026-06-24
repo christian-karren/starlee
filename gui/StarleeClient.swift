@@ -47,6 +47,15 @@ final class StarleeClient {
         return try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
     }
 
+    func runAsync(_ arguments: [String], completion: @escaping (String) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let output = self.run(arguments)
+            DispatchQueue.main.async {
+                completion(output)
+            }
+        }
+    }
+
     func localConfig() -> [String: Any]? {
         let url = home.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: url) else { return nil }

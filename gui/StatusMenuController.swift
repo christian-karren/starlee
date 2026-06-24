@@ -45,7 +45,6 @@ final class StatusMenuController: NSObject {
         menu.addItem(item("Open Vault", #selector(openVault)))
         menu.addItem(item("Start Capture Endpoint", #selector(startEngine)))
         menu.addItem(item("Stop Capture Endpoint", #selector(stopEngine)))
-        menu.addItem(item("Refresh", #selector(refresh)))
         menu.addItem(.separator())
         menu.addItem(item("Quit Starlee", #selector(quit)))
         return menu
@@ -297,7 +296,7 @@ final class StatusMenuController: NSObject {
         DialogPresenter.show(title: value["title"] as? String ?? "Starlee", message: value["snippet"] as? String ?? "")
     }
 
-    @objc private func browserSetup() {
+    @objc func browserSetup() {
         let extensionURL = client.home.appendingPathComponent("sensor-extension")
         NSWorkspace.shared.activateFileViewerSelecting([extensionURL])
         if let chromeURL = URL(string: "chrome://extensions") {
@@ -335,10 +334,6 @@ final class StatusMenuController: NSObject {
 
     @objc private func stopEngine() {
         client.stopEngine()
-    }
-
-    @objc private func refresh() {
-        rebuildMenu()
     }
 
     @objc private func quit() {

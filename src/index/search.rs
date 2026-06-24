@@ -161,7 +161,7 @@ fn collect_fts(
     candidates: &mut HashMap<String, (SearchHit, f64)>,
 ) -> Result<()> {
     let mut statement = connection.prepare(
-        "SELECT s.id,s.title,s.url,s.captured_at,s.access,
+        "SELECT s.id,s.title,s.type,s.site,s.url,s.captured_at,s.access,
                     snippet(chunk_fts,0,'[',']',' … ',24),s.file_path,bm25(chunk_fts),s.consumed_at
              FROM chunk_fts JOIN chunks c ON c.rowid=chunk_fts.rowid
              JOIN sources s ON s.id=c.source_id WHERE chunk_fts MATCH ?1
@@ -191,7 +191,7 @@ fn collect_vectors(
     candidates: &mut HashMap<String, (SearchHit, f64)>,
 ) -> Result<()> {
     let mut statement = connection.prepare(
-        "SELECT s.id,s.title,s.url,s.captured_at,s.access,c.text,s.file_path,v.distance,s.consumed_at
+        "SELECT s.id,s.title,s.type,s.site,s.url,s.captured_at,s.access,c.text,s.file_path,v.distance,s.consumed_at
              FROM chunk_vectors v JOIN chunks c ON c.rowid=v.rowid
              JOIN sources s ON s.id=c.source_id
              WHERE v.embedding MATCH ?1 AND k = ?2 ORDER BY v.distance",
@@ -216,20 +216,24 @@ fn escape_fts(word: &str) -> String {
 }
 
 fn map_search_hit(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
-    let access: String = row.get(4)?;
+    let source_type: String = row.get(2)?;
+    let access: String = row.get(6)?;
     Ok(SearchHit {
         id: row.get(0)?,
         title: row.get(1)?,
-        url: row.get(2)?,
-        captured_at: row.get(3)?,
-        consumed_at: row.get(8)?,
+        source_type: serde_json::from_value(serde_json::Value::String(source_type))
+            .unwrap_or_default(),
+        site: row.get(3)?,
+        url: row.get(4)?,
+        captured_at: row.get(5)?,
+        consumed_at: row.get(10)?,
         access: if access == "public" {
             Access::Public
         } else {
             Access::Restricted
         },
-        snippet: row.get(5)?,
-        file_path: row.get(6)?,
+        snippet: row.get(7)?,
+        file_path: row.get(8)?,
         score: 0.0,
         source: "own".into(),
     })

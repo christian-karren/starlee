@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #f9e4b6;
+      }
+
+      #pixel-dither-background {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 0;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="pixel-dither-background" aria-hidden="true"></canvas>
+    <script src="./pixel-dither-background.js"></script>
+    <script>
+      var background = window.createStarleePixelDitherBackground(
+        document.getElementById("pixel-dither-background"),
+        window.starleeDefaultPixelDitherSettings
+      );
+      window.applyStarleeBackgroundSettings = function(settings) {
+        background.apply(settings);
+      };
+    </script>
+  </body>
+</html>
