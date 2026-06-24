@@ -9,8 +9,16 @@ export function detectedType(document) {
 
 export async function capturePayload(document, options = {}) {
   const type = detectedType(document);
+  options.onDiagnostic?.({
+    component: "payload_builder",
+    event: "payload_page_type_detected",
+    status: type || "unsupported",
+    safe_metadata: { page_type: type || "unsupported" }
+  });
   if (type === "youtube") return withConsumedAt(await extractYouTube(document, {
-    discoverTranscript: options.discoverYouTubeTranscript ?? false
+    discoverTranscript: options.discoverYouTubeTranscript ?? false,
+    transcriptDiscoveryTimeoutMs: options.transcriptDiscoveryTimeoutMs,
+    onDiagnostic: options.onDiagnostic
   }));
   if (type === "article") return withConsumedAt(extractArticle(document));
   throw new Error("This page does not look like an article or YouTube video");

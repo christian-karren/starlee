@@ -86,6 +86,8 @@ enum Command {
     Diagnostics {
         #[arg(short, long, default_value_t = 30)]
         limit: usize,
+        #[arg(long)]
+        last_capture: bool,
     },
     Reindex {
         #[arg(long)]
@@ -196,7 +198,16 @@ fn main() -> Result<()> {
         Command::Get { id } => serde_json::to_value(engine.get_any(&id)?)?,
         Command::Status => serde_json::to_value(engine.status()?)?,
         Command::Doctor => serde_json::to_value(engine.doctor()?)?,
-        Command::Diagnostics { limit } => serde_json::to_value(engine.capture_diagnostics(limit)?)?,
+        Command::Diagnostics {
+            limit,
+            last_capture,
+        } => {
+            if last_capture {
+                serde_json::to_value(engine.last_capture_trace()?)?
+            } else {
+                serde_json::to_value(engine.capture_diagnostics(limit)?)?
+            }
+        }
         Command::Reindex {
             stale_embeddings_only,
         } => serde_json::to_value(engine.reindex(stale_embeddings_only)?)?,

@@ -1,22 +1,36 @@
 import { capturePayload, detectedType } from "./payload.js";
 
-const MENU_BAR_POLL_MS = 350;
-const MENU_BAR_INITIAL_POLL_MS = 150;
 const BUTTON_RESET_MS = 3500;
 const MESSAGE = Object.freeze({
+  ping: "STARLEE_CONTENT_SCRIPT_PING",
   captureNow: "STARLEE_CAPTURE_NOW",
   capture: "STARLEE_CAPTURE",
-  takeCaptureRequest: "STARLEE_TAKE_CAPTURE_REQUEST"
+  diagnostic: "STARLEE_CAPTURE_DIAGNOSTIC"
 });
 const type = detectedType(document);
 if (type && !document.getElementById("starlee-save-button")) mountButton(type);
-startMenuBarBridge();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === MESSAGE.ping) {
+    sendResponse(contentScriptReadiness(message));
+    return false;
+  }
   if (message?.type !== MESSAGE.captureNow) return;
   capture(message, sendResponse);
   return true;
 });
+
+function contentScriptReadiness(message = {}) {
+  const pageType = detectedType(document) || "unsupported";
+  return {
+    ok: true,
+    code: "content_script_ready",
+    ready: true,
+    requestId: message.requestId,
+    page_type: pageType,
+    page: safePageDomainFromDocument(document)
+  };
+}
 
 function mountButton(type) {
   const button = document.createElement("button");
@@ -36,8 +50,50 @@ function mountButton(type) {
 }
 
 async function capture(_message, sendResponse) {
+  const requestId = _message?.requestId;
+  const source = _message?.source || "active-tab";
+  const pageType = detectedType(document) || "unsupported";
+  await sendDiagnostic(requestId, {
+    component: "content_script",
+    event: "content_script_ready",
+    status: pageType === "unsupported" ? "unsupported" : "ready",
+    source,
+    page: safePageDomainFromDocument(document),
+    safe_metadata: {
+      page_type: pageType
+    }
+  });
+  await sendDiagnostic(requestId, {
+    component: "content_script",
+    event: "content_script_capture_started",
+    status: "started",
+    source,
+    page: safePageFromDocument(document)
+  });
   try {
-    const payload = await capturePayload(document, { discoverYouTubeTranscript: true });
+    const diagnosticEvents = [];
+    if (detectedType(document) === "youtube") {
+      await sendDiagnostic(requestId, {
+        component: "content_script",
+        event: "content_script_youtube_detected",
+        status: "ok",
+        source,
+        page: safePageFromDocument(document)
+      });
+    }
+    const payload = await capturePayload(document, {
+      discoverYouTubeTranscript: true,
+      onDiagnostic: (event) => {
+        diagnosticEvents.push({
+          ...event,
+          source,
+          page: safePageFromDocument(document)
+        });
+      }
+    });
+    for (const event of diagnosticEvents) {
+      await sendDiagnostic(requestId, event);
+    }
     const selectedText = String(window.getSelection?.()?.toString() || "").trim();
     if (selectedText && payload?.dom_extract && payload.type === "article") {
       payload.dom_extract.selected_text = selectedText;
@@ -45,8 +101,8 @@ async function capture(_message, sendResponse) {
     const response = await chrome.runtime.sendMessage({
       type: MESSAGE.capture,
       payload,
-      source: _message?.source || "active-tab",
-      requestId: _message?.requestId
+      source,
+      requestId
     });
     sendResponse(response);
   } catch (error) {
@@ -54,24 +110,50 @@ async function capture(_message, sendResponse) {
     const code = message.includes("does not look like")
       ? "unsupported_page"
       : "capture_failed";
+    await sendDiagnostic(requestId, {
+      component: "content_script",
+      event: "content_script_capture_failed",
+      status: code,
+      source,
+      message,
+      page: safePageFromDocument(document)
+    });
     sendResponse({ ok: false, code, error: message });
   }
 }
 
-function startMenuBarBridge() {
-  setTimeout(pollMenuBarCaptureRequest, MENU_BAR_INITIAL_POLL_MS);
-  setInterval(pollMenuBarCaptureRequest, MENU_BAR_POLL_MS);
+async function sendDiagnostic(requestId, event) {
+  if (!requestId) return;
+  await chrome.runtime
+    .sendMessage({
+      type: MESSAGE.diagnostic,
+      event: {
+        ...event,
+        request_id: requestId
+      }
+    })
+    .catch(() => {});
 }
 
-async function pollMenuBarCaptureRequest() {
-  if (document.visibilityState !== "visible") return;
-  const response = await takeMenuBarCaptureRequest();
-  if (!response?.request) return;
-  capture({ source: "menu-bar", requestId: response.request.id }, () => {});
+function safePageFromDocument(document) {
+  const url = document.location?.href || "";
+  return {
+    title: document.title || "",
+    url,
+    domain: domainFromUrl(url)
+  };
 }
 
-async function takeMenuBarCaptureRequest() {
-  return chrome.runtime
-    .sendMessage({ type: MESSAGE.takeCaptureRequest })
-    .catch(() => null);
+function safePageDomainFromDocument(document) {
+  return {
+    domain: domainFromUrl(document.location?.href || "")
+  };
+}
+
+function domainFromUrl(value) {
+  try {
+    return value ? new URL(value).hostname.replace(/^www\./, "") : "";
+  } catch {
+    return "";
+  }
 }

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::config::CaptureDiagnosticEvent;
+use crate::config::{CaptureDiagnosticEvent, CaptureRequestStatus};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -287,6 +287,33 @@ pub struct BridgeHealth {
     pub recommended_next_action: String,
     #[serde(default)]
     pub recent_diagnostics: Vec<CaptureDiagnosticEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureTraceReport {
+    pub trace_version: u32,
+    pub request_id: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub terminal_status: Option<String>,
+    pub recommended_next_action: String,
+    pub runtime: RuntimeIdentity,
+    #[serde(default)]
+    pub request_status: Option<CaptureRequestStatus>,
+    pub events: Vec<CaptureDiagnosticEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeIdentity {
+    pub starlee_version: String,
+    pub app_build_identifier: Option<String>,
+    pub browser: Option<String>,
+    pub extension_version: Option<String>,
+    pub extension_build: Option<String>,
+    pub git_commit: Option<String>,
+    pub app_path: Option<String>,
+    pub binary_path: Option<String>,
+    pub source_repo_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

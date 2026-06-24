@@ -1,6 +1,6 @@
 //! Browser capture bridge state, diagnostics, and health helpers.
 
-use std::{net::TcpStream, process::Command, time::Duration};
+use std::{collections::BTreeMap, net::TcpStream, process::Command, time::Duration};
 
 use chrono::{DateTime, Utc};
 
@@ -21,6 +21,7 @@ pub const CAPTURE_STATUS_FAILED: &str = "capture_failed";
 pub const CAPTURE_STATUS_PERMISSION_DENIED: &str = "permission_denied";
 pub const CAPTURE_STATUS_UNSUPPORTED_PAGE: &str = "unsupported_page";
 pub const CAPTURE_STATUS_EXTENSION_UNAVAILABLE: &str = "extension_unavailable";
+pub const CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE: &str = "content_script_unreachable";
 pub const CAPTURE_STATUS_TIMED_OUT: &str = "timed_out";
 
 pub(crate) fn capture_service_reachable(port: u16) -> bool {
@@ -100,7 +101,7 @@ fn clear_pending_capture_request(config: &mut LocalConfig) -> bool {
     false
 }
 
-fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|value| value.with_timezone(&Utc))
@@ -117,6 +118,7 @@ pub(crate) fn normalize_capture_request_status(status: &str) -> String {
         | CAPTURE_STATUS_PERMISSION_DENIED
         | CAPTURE_STATUS_UNSUPPORTED_PAGE
         | CAPTURE_STATUS_EXTENSION_UNAVAILABLE
+        | CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE
         | CAPTURE_STATUS_TIMED_OUT => status.to_owned(),
         "service_down" | "token_missing" | "token_invalid" | "payload_too_large"
         | "empty_extract" | "no_active_tab" => CAPTURE_STATUS_FAILED.into(),
@@ -132,6 +134,7 @@ pub(crate) fn capture_status_is_terminal(status: &str) -> bool {
             | CAPTURE_STATUS_PERMISSION_DENIED
             | CAPTURE_STATUS_UNSUPPORTED_PAGE
             | CAPTURE_STATUS_EXTENSION_UNAVAILABLE
+            | CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE
             | CAPTURE_STATUS_TIMED_OUT
     )
 }
@@ -151,6 +154,9 @@ pub(crate) fn default_capture_status_message(status: &str) -> Option<String> {
         CAPTURE_STATUS_EXTENSION_UNAVAILABLE => {
             "Load or reload the Starlee browser extension, then try again."
         }
+        CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE => {
+            "Safari extension could not reach the page content script."
+        }
         CAPTURE_STATUS_TIMED_OUT => "The browser did not pick up the request in time.",
         _ => return None,
     };
@@ -165,6 +171,7 @@ pub(crate) fn safe_bridge_failure_message(
         CAPTURE_STATUS_PERMISSION_DENIED
         | CAPTURE_STATUS_UNSUPPORTED_PAGE
         | CAPTURE_STATUS_EXTENSION_UNAVAILABLE
+        | CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE
         | CAPTURE_STATUS_TIMED_OUT
         | CAPTURE_STATUS_FAILED => default_capture_status_message(status),
         _ => stored_message
@@ -204,6 +211,9 @@ pub(crate) fn bridge_next_action(
         }
         Some(CAPTURE_STATUS_EXTENSION_UNAVAILABLE) => {
             "Load or reload the Starlee browser extension, then try again.".into()
+        }
+        Some(CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE) => {
+            "Open Safari, enable the Starlee Safari extension, allow it on youtube.com, reload the YouTube tab, then try capture again.".into()
         }
         Some(CAPTURE_STATUS_FAILED) => {
             "Retry capture from the active tab; run `starlee doctor` if it fails again.".into()
@@ -257,6 +267,76 @@ pub(crate) fn append_capture_diagnostic(config: &mut LocalConfig, event: Capture
     }
 }
 
+pub(crate) fn sanitize_capture_diagnostic_event(
+    event: CaptureDiagnosticEvent,
+) -> CaptureDiagnosticEvent {
+    let mut safe_metadata = BTreeMap::new();
+    for (key, value) in event.safe_metadata {
+        if let (Some(key), Some(value)) = (
+            sanitize_metadata_key(&key),
+            sanitize_metadata_string(&value, 240),
+        ) {
+            safe_metadata.insert(key, value);
+        }
+    }
+    CaptureDiagnosticEvent {
+        timestamp: parse_rfc3339_utc(&event.timestamp)
+            .map(|value| value.to_rfc3339())
+            .unwrap_or_else(|| Utc::now().to_rfc3339()),
+        component: sanitize_metadata_string(&event.component, 64)
+            .unwrap_or_else(|| "unknown".into()),
+        event: sanitize_metadata_string(&event.event, 96).unwrap_or_else(|| "unknown".into()),
+        request_id: event
+            .request_id
+            .and_then(|value| sanitize_metadata_string(&value, 64)),
+        status: event
+            .status
+            .and_then(|value| sanitize_metadata_string(&value, 64)),
+        source: event
+            .source
+            .and_then(|value| sanitize_metadata_string(&value, 64)),
+        browser: event
+            .browser
+            .and_then(|value| sanitize_metadata_string(&value, 80)),
+        message: event
+            .message
+            .and_then(|value| sanitize_metadata_string(&value, 240)),
+        page: event.page.map(sanitize_page_metadata),
+        safe_metadata,
+    }
+}
+
+fn sanitize_metadata_key(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 80 {
+        return None;
+    }
+    let lower = value.to_ascii_lowercase();
+    if [
+        "token",
+        "cookie",
+        "html",
+        "body",
+        "selected_text",
+        "transcript_text",
+        "embedding",
+        "oauth",
+    ]
+    .iter()
+    .any(|forbidden| lower.contains(forbidden))
+    {
+        return None;
+    }
+    if value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+    {
+        Some(value.to_owned())
+    } else {
+        None
+    }
+}
+
 pub(crate) struct DiagnosticEventInput<'a> {
     pub(crate) component: &'a str,
     pub(crate) event: &'a str,
@@ -289,6 +369,7 @@ pub(crate) fn diagnostic_event(input: DiagnosticEventInput<'_>) -> CaptureDiagno
             .message
             .and_then(|value| sanitize_metadata_string(value, 240)),
         page: input.page.map(sanitize_page_metadata),
+        safe_metadata: BTreeMap::new(),
     }
 }
 

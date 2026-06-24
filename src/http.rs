@@ -15,7 +15,7 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::{
     capture::CapturePayload,
-    config::{CaptureRequestPageMetadata, LocalConfig},
+    config::{CaptureDiagnosticEvent, CaptureRequestPageMetadata, LocalConfig},
     engine::Engine,
 };
 
@@ -124,6 +124,10 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned),
                 value
+                    .get("extension_build")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                value
                     .get("can_capture_active_tab")
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
@@ -211,6 +215,15 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                 StatusCode(200),
                 json!({"request": engine.record_capture_request_result(id, status, message, page)?}),
             )
+        }
+        (&Method::Post, "/capture-diagnostics/event") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            let body = read_body(&mut request)?;
+            let event = serde_json::from_str::<CaptureDiagnosticEvent>(&body)?;
+            let event = engine.record_capture_diagnostic_event(event)?;
+            respond(request, StatusCode(202), json!({"event": event}))
         }
         (&Method::Post, "/capture") => {
             if !authorized(&request, &config.capture_token) {
@@ -544,6 +557,43 @@ mod tests {
         )?;
         assert!(missing_status.starts_with("HTTP/1.1 400"));
         assert!(missing_status.contains("missing request status"));
+        drop(server);
+        Ok(())
+    }
+
+    #[test]
+    fn capture_diagnostic_event_endpoint_requires_auth_and_sanitizes() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = test_engine(temp.path());
+        let server = spawn(engine.clone(), test_config())?;
+        let payload = r#"{
+          "timestamp":"not-a-date",
+          "component":"extension",
+          "event":"youtube_segments_extracted",
+          "request_id":"request-fingerprint",
+          "status":"unavailable",
+          "browser":"Chrome",
+          "message":"No rendered transcript segments found.",
+          "page":{"title":"Video","url":"https://www.youtube.com/watch?v=abc123","domain":"youtube.com"},
+          "safe_metadata":{"segment_count":"0","transcript_text":"forbidden body"}
+        }"#;
+        let unauthorized = post_path(&server.address, "/capture-diagnostics/event", payload, None)?;
+        assert!(unauthorized.starts_with("HTTP/1.1 401"));
+
+        let accepted = post_path(
+            &server.address,
+            "/capture-diagnostics/event",
+            payload,
+            Some("secret-token"),
+        )?;
+        assert!(accepted.starts_with("HTTP/1.1 202"));
+        assert!(accepted.contains("youtube_segments_extracted"));
+        assert!(!accepted.contains("forbidden body"));
+
+        let diagnostics = serde_json::to_string(&engine.capture_diagnostics(10)?)?;
+        assert!(diagnostics.contains("segment_count"));
+        assert!(!diagnostics.contains("transcript_text"));
+        assert!(!diagnostics.contains("forbidden body"));
         drop(server);
         Ok(())
     }

@@ -107,6 +107,11 @@ returning chunks to agents.
   name, request id, lifecycle status, source, browser, sanitized message, and
   sanitized page metadata when available. The shorter `doctor`/bridge-health
   summary redacts request ids and page metadata.
+- YouTube one-tap capture diagnostics include request-correlated extension,
+  content-script, payload-builder, and YouTube extractor milestones. The
+  `starlee diagnostics --last-capture` trace groups the newest request
+  chronologically with runtime identity, terminal status, and a recommended
+  next action.
 - Bridge health is stricter than request status: it does not expose request IDs
   or page metadata, and it replaces failure messages for known browser failure
   states with concise user-facing recovery text.

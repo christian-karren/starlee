@@ -49,7 +49,8 @@ The diagnostics include whether extension setup/config exists, which browser
 checked in, whether the heartbeat is fresh, the last capture request status, the
 last safe failure reason, the next recovery action, and a bounded redacted trace
 of recent menu-bar capture events. For deeper local debugging, run
-`starlee diagnostics --limit 50`.
+`starlee diagnostics --limit 50`; for the most recent one-tap request, run
+`starlee diagnostics --last-capture`.
 
 The generated extension folder includes the local-only capture configuration,
 so the “Save article to Starlee” page button and the Starlee menu-bar capture
@@ -159,6 +160,8 @@ YouTube watch page, or retry after the browser picks up timed-out requests.
 that file is mode `0600`. Browser sensors must send it as `Authorization: Bearer
 <token>`. Starlee binds only to loopback and rejects unauthenticated captures.
 See [docs/capture-payload.md](docs/capture-payload.md) for the versioned contract.
+For failed YouTube one-tap captures, see
+[docs/youtube-capture-debugging.md](docs/youtube-capture-debugging.md).
 
 Optional richer YouTube metadata uses the official Data API only:
 

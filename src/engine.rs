@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     path::PathBuf,
+    process::Command,
     sync::Arc,
     time::Instant,
 };
@@ -18,9 +19,9 @@ use crate::{
     embedding::{Embedder, FastEmbedder},
     index::Index,
     model::{
-        BridgeHealth, CaptureInput, CorpusOverview, DoctorCheck, DoctorReport, GetResult,
-        QueryResult, Record, SearchHit, SearchScope, SetupReport, SourceType, SpotifySyncEvent,
-        SpotifySyncLog, Status,
+        BridgeHealth, CaptureInput, CaptureTraceReport, CorpusOverview, DoctorCheck, DoctorReport,
+        GetResult, QueryResult, Record, RuntimeIdentity, SearchHit, SearchScope, SetupReport,
+        SourceType, SpotifySyncEvent, SpotifySyncLog, Status,
     },
     public_fetch, sensor_assets, spotify,
     spotify::{SpotifyConfigureReport, SpotifySyncReport, SpotifySyncStatus},
@@ -32,9 +33,10 @@ mod bridge;
 
 #[allow(unused_imports)]
 pub use bridge::{
-    CAPTURE_REQUEST_TTL, CAPTURE_STATUS_EXTENSION_UNAVAILABLE, CAPTURE_STATUS_EXTRACTING,
-    CAPTURE_STATUS_FAILED, CAPTURE_STATUS_PERMISSION_DENIED, CAPTURE_STATUS_PICKED_UP,
-    CAPTURE_STATUS_POSTED, CAPTURE_STATUS_QUEUED, CAPTURE_STATUS_SAVED, CAPTURE_STATUS_TIMED_OUT,
+    CAPTURE_REQUEST_TTL, CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE,
+    CAPTURE_STATUS_EXTENSION_UNAVAILABLE, CAPTURE_STATUS_EXTRACTING, CAPTURE_STATUS_FAILED,
+    CAPTURE_STATUS_PERMISSION_DENIED, CAPTURE_STATUS_PICKED_UP, CAPTURE_STATUS_POSTED,
+    CAPTURE_STATUS_QUEUED, CAPTURE_STATUS_SAVED, CAPTURE_STATUS_TIMED_OUT,
     CAPTURE_STATUS_UNSUPPORTED_PAGE, EXTENSION_HEARTBEAT_FRESHNESS,
 };
 
@@ -362,6 +364,100 @@ impl Engine {
         Ok(events)
     }
 
+    pub fn record_capture_diagnostic_event(
+        &self,
+        event: CaptureDiagnosticEvent,
+    ) -> Result<CaptureDiagnosticEvent> {
+        let store = ConfigStore::new(&self.home);
+        let mut config = store.load_or_create()?;
+        let event = sanitize_capture_diagnostic_event(event);
+        append_capture_diagnostic(&mut config, event.clone());
+        store.save(&config)?;
+        Ok(event)
+    }
+
+    pub fn last_capture_trace(&self) -> Result<CaptureTraceReport> {
+        let config = self.local_config()?;
+        let request_id = config
+            .capture_request_status
+            .as_ref()
+            .map(|status| status.id.clone())
+            .or_else(|| {
+                config
+                    .capture_diagnostics
+                    .iter()
+                    .rev()
+                    .find_map(|event| event.request_id.clone())
+            });
+        let mut events = match request_id.as_deref() {
+            Some(id) => config
+                .capture_diagnostics
+                .iter()
+                .filter(|event| event.request_id.as_deref() == Some(id))
+                .cloned()
+                .collect::<Vec<_>>(),
+            None => config.capture_diagnostics.clone(),
+        };
+        events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        let request_status = config.capture_request_status.clone().filter(|status| {
+            request_id
+                .as_deref()
+                .is_none_or(|request_id| status.id == request_id)
+        });
+        let terminal_status = request_status
+            .as_ref()
+            .and_then(|status| {
+                capture_status_is_terminal(&status.status).then(|| status.status.clone())
+            })
+            .or_else(|| {
+                events
+                    .iter()
+                    .rev()
+                    .filter_map(|event| event.status.as_deref())
+                    .find(|status| capture_status_is_terminal(status))
+                    .map(str::to_owned)
+            });
+        let started_at = request_status
+            .as_ref()
+            .map(|status| status.requested_at.clone())
+            .or_else(|| events.first().map(|event| event.timestamp.clone()));
+        let completed_at = request_status
+            .as_ref()
+            .and_then(|status| status.completed_at.clone())
+            .or_else(|| {
+                terminal_status
+                    .as_ref()
+                    .and_then(|terminal| {
+                        events
+                            .iter()
+                            .rev()
+                            .find(|event| event.status.as_ref() == Some(terminal))
+                    })
+                    .map(|event| event.timestamp.clone())
+            });
+        Ok(CaptureTraceReport {
+            trace_version: 1,
+            request_id,
+            started_at,
+            completed_at,
+            terminal_status: terminal_status.clone(),
+            recommended_next_action: bridge_next_action(
+                self.home.join("sensor-extension/manifest.json").exists(),
+                self.home
+                    .join("sensor-extension/starlee-config.json")
+                    .exists(),
+                extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS),
+                config.extension.can_capture_active_tab,
+                terminal_status
+                    .as_deref()
+                    .or_else(|| request_status.as_ref().map(|status| status.status.as_str())),
+            ),
+            runtime: self.runtime_identity(&config),
+            request_status,
+            events,
+        })
+    }
+
     pub fn doctor(&self) -> Result<DoctorReport> {
         let status = self.status()?;
         let config = self.local_config()?;
@@ -592,6 +688,23 @@ impl Engine {
         Ok(self.bridge_health_from_config(&config))
     }
 
+    fn runtime_identity(&self, config: &LocalConfig) -> RuntimeIdentity {
+        RuntimeIdentity {
+            starlee_version: env!("CARGO_PKG_VERSION").into(),
+            app_build_identifier: std::env::var("STARLEE_APP_BUILD_IDENTIFIER").ok(),
+            browser: config.extension.browser.clone(),
+            extension_version: config.extension.extension_version.clone(),
+            extension_build: config.extension.extension_build.clone(),
+            git_commit: git_commit()
+                .or_else(|| option_env!("STARLEE_GIT_COMMIT").map(str::to_owned)),
+            app_path: user_app_path(),
+            binary_path: std::env::current_exe()
+                .ok()
+                .map(|path| path.display().to_string()),
+            source_repo_path: source_repo_path(),
+        }
+    }
+
     fn bridge_health_from_config(&self, config: &LocalConfig) -> BridgeHealth {
         let extension_path = self.home.join("sensor-extension");
         let extension_setup_present = extension_path.join("manifest.json").exists();
@@ -645,6 +758,7 @@ impl Engine {
         &self,
         browser: Option<String>,
         extension_version: Option<String>,
+        extension_build: Option<String>,
         can_capture_active_tab: bool,
     ) -> Result<ExtensionState> {
         let store = ConfigStore::new(&self.home);
@@ -652,6 +766,7 @@ impl Engine {
         config.extension = ExtensionState {
             browser,
             extension_version,
+            extension_build,
             can_capture_active_tab,
             last_handshake_at: Some(Utc::now().to_rfc3339()),
         };
@@ -694,6 +809,21 @@ impl Engine {
         };
         if extension_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS) {
             config.pending_capture_request = Some(request);
+            if status.source == "menu-bar" {
+                append_capture_diagnostic(
+                    &mut config,
+                    diagnostic_event(DiagnosticEventInput {
+                        component: "menu_bar",
+                        event: "menu_bar_capture_clicked",
+                        request_id: Some(&status.id),
+                        status: Some(&status.status),
+                        source: Some(&status.source),
+                        browser: status.browser.as_deref(),
+                        message: Some("Menu-bar capture requested."),
+                        page: None,
+                    }),
+                );
+            }
             append_capture_diagnostic(
                 &mut config,
                 diagnostic_event(DiagnosticEventInput {
@@ -1180,6 +1310,35 @@ fn domain_from_url(value: &str) -> Option<String> {
         .map(|host| host.trim_start_matches("www.").to_owned())
 }
 
+fn user_app_path() -> Option<String> {
+    let path = home_dir().join("Applications/Starlee.app");
+    path.exists().then(|| path.display().to_string())
+}
+
+fn source_repo_path() -> Option<String> {
+    Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn git_commit() -> Option<String> {
+    Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
 fn add_terms(counts: &mut HashMap<String, usize>, text: &str) {
     let stopwords = stopwords();
     let mut document_terms = HashSet::new();
@@ -1245,7 +1404,12 @@ mod tests {
     fn capture_request_lifecycle_reaches_saved_with_safe_metadata() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(
+            Some("Chrome".into()),
+            Some("0.1.0".into()),
+            Some("codex/youtube-capture-diagnostic-harness@b965131".into()),
+            true,
+        )?;
 
         let request = engine.create_capture_request("test")?;
         assert_eq!(request.status, CAPTURE_STATUS_QUEUED);
@@ -1299,7 +1463,7 @@ mod tests {
     fn capture_request_diagnostics_record_safe_lifecycle_trace() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
-        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("menu-bar")?;
 
         assert!(engine.take_capture_request()?.is_some());
@@ -1327,11 +1491,17 @@ mod tests {
             statuses,
             vec![
                 CAPTURE_STATUS_QUEUED,
+                CAPTURE_STATUS_QUEUED,
                 CAPTURE_STATUS_PICKED_UP,
                 CAPTURE_STATUS_EXTRACTING,
                 CAPTURE_STATUS_POSTED,
                 CAPTURE_STATUS_SAVED
             ]
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|event| event.event == "menu_bar_capture_clicked")
         );
         assert!(diagnostics.iter().all(|event| event.request_id.is_some()));
         assert!(diagnostics.iter().any(|event| {
@@ -1347,7 +1517,7 @@ mod tests {
     fn capture_request_diagnostics_are_bounded() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
 
         for _ in 0..150 {
             let request = engine.create_capture_request("menu-bar")?;
@@ -1360,15 +1530,119 @@ mod tests {
     }
 
     #[test]
+    fn last_capture_trace_groups_request_events_and_runtime_identity() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
+        engine.record_extension_hello(
+            Some("Chrome".into()),
+            Some("0.1.0".into()),
+            Some("codex/youtube-capture-diagnostic-harness@b965131".into()),
+            true,
+        )?;
+        let request = engine.create_capture_request("menu-bar")?;
+        engine.take_capture_request()?;
+        engine.record_capture_diagnostic_event(CaptureDiagnosticEvent {
+            timestamp: Utc::now().to_rfc3339(),
+            component: "youtube_extractor".into(),
+            event: "youtube_segments_extracted".into(),
+            request_id: Some(request.id.clone()),
+            status: Some("unavailable".into()),
+            source: Some("menu-bar".into()),
+            browser: Some("Chrome".into()),
+            message: Some("No rendered transcript segments found.".into()),
+            page: Some(CaptureRequestPageMetadata {
+                title: Some("Fixture video".into()),
+                url: Some("https://www.youtube.com/watch?v=abc123".into()),
+                domain: Some("youtube.com".into()),
+            }),
+            safe_metadata: BTreeMap::from([("segment_count".into(), "0".into())]),
+        })?;
+        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_FAILED, None, None)?;
+
+        let trace = engine.last_capture_trace()?;
+        assert_eq!(trace.trace_version, 1);
+        assert_eq!(trace.request_id.as_deref(), Some(request.id.as_str()));
+        assert_eq!(
+            trace.terminal_status.as_deref(),
+            Some(CAPTURE_STATUS_FAILED)
+        );
+        assert_eq!(trace.runtime.starlee_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(trace.runtime.browser.as_deref(), Some("Chrome"));
+        assert_eq!(
+            trace.runtime.extension_build.as_deref(),
+            Some("codex/youtube-capture-diagnostic-harness@b965131")
+        );
+        assert!(
+            trace
+                .events
+                .iter()
+                .all(|event| { event.request_id.as_deref() == Some(request.id.as_str()) })
+        );
+        assert!(trace.events.iter().any(|event| {
+            event.event == "youtube_segments_extracted"
+                && event.safe_metadata.get("segment_count").map(String::as_str) == Some("0")
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_event_intake_sanitizes_metadata_and_forbidden_content() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
+        let stored = engine.record_capture_diagnostic_event(CaptureDiagnosticEvent {
+            timestamp: "not-a-date".into(),
+            component: "extension".into(),
+            event: "youtube_segments_extracted".into(),
+            request_id: Some("request-fingerprint".into()),
+            status: Some("unavailable".into()),
+            source: Some("menu-bar".into()),
+            browser: Some("Chrome".into()),
+            message: Some("No rendered transcript segments found.".repeat(20)),
+            page: Some(CaptureRequestPageMetadata {
+                title: Some("Video".into()),
+                url: Some("https://www.youtube.com/watch?v=abc123".into()),
+                domain: Some("youtube.com".into()),
+            }),
+            safe_metadata: BTreeMap::from([
+                ("segment_count".into(), "0".into()),
+                ("bad key".into(), "should be dropped".into()),
+                (
+                    "transcript_text".into(),
+                    "never store transcript text here".into(),
+                ),
+            ]),
+        })?;
+
+        assert_eq!(stored.component, "extension");
+        assert!(parse_rfc3339_utc(&stored.timestamp).is_some());
+        assert!(stored.message.as_deref().unwrap_or("").len() <= 240);
+        assert!(stored.safe_metadata.contains_key("segment_count"));
+        assert!(!stored.safe_metadata.contains_key("bad key"));
+        let serialized = serde_json::to_string(&engine.capture_diagnostics(10)?)?;
+        assert!(!serialized.contains("capture_token"));
+        assert!(!serialized.contains("Bearer "));
+        assert!(!serialized.contains("OAuth"));
+        assert!(!serialized.contains("<html"));
+        assert!(!serialized.contains("never store transcript text here"));
+        Ok(())
+    }
+
+    #[test]
     fn capture_request_failure_states_are_terminal() -> Result<()> {
         for status in [
             CAPTURE_STATUS_FAILED,
             CAPTURE_STATUS_PERMISSION_DENIED,
             CAPTURE_STATUS_UNSUPPORTED_PAGE,
+            CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE,
         ] {
             let temp = tempfile::tempdir()?;
             let engine = Engine::new(temp.path().to_owned());
-            engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+            engine.record_extension_hello(
+                Some("Chrome".into()),
+                Some("0.1.0".into()),
+                None,
+                true,
+            )?;
             let request = engine.create_capture_request("test")?;
             let failed = engine
                 .record_capture_request_result(&request.id, status, None, None)?
@@ -1384,10 +1658,41 @@ mod tests {
     }
 
     #[test]
+    fn bridge_health_recommends_reload_when_content_script_is_unreachable() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar")?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE,
+            Some("Private page body should not be reflected".into()),
+            None,
+        )?;
+
+        let health = engine.bridge_health()?;
+
+        assert_eq!(
+            health.last_request_status.as_deref(),
+            Some(CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE)
+        );
+        assert_eq!(
+            health.last_failure_message.as_deref(),
+            Some("Safari extension could not reach the page content script.")
+        );
+        assert_eq!(
+            health.recommended_next_action,
+            "Open Safari, enable the Starlee Safari extension, allow it on youtube.com, reload the YouTube tab, then try capture again."
+        );
+        Ok(())
+    }
+
+    #[test]
     fn stale_capture_request_times_out_and_is_not_served() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("test")?;
 
         age_capture_request(temp.path(), 30)?;
@@ -1410,7 +1715,7 @@ mod tests {
     fn stale_capture_result_with_wrong_id_persists_timeout() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("test")?;
         age_capture_request(temp.path(), 30)?;
 
@@ -1431,7 +1736,7 @@ mod tests {
     fn status_lookup_persists_pending_cleanup_for_terminal_request() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("test")?;
 
         let store = ConfigStore::new(temp.path());
@@ -1460,7 +1765,7 @@ mod tests {
     fn page_metadata_is_trimmed_limited_and_body_free() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("test")?;
         let long_title = format!("  {}  ", "A".repeat(300));
         let long_url = format!("https://example.com/{}", "b".repeat(2100));
@@ -1488,7 +1793,7 @@ mod tests {
     fn wrong_request_id_and_duplicate_pickup_do_not_progress_request() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("test")?;
 
         assert!(
@@ -1521,7 +1826,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
 
         let health = engine.bridge_health()?;
 
@@ -1551,7 +1856,7 @@ mod tests {
                 .contains("Load or reload the Starlee browser extension")
         );
 
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         age_extension_hello(temp.path(), 10 * 60)?;
         let stale = engine.bridge_health()?;
         assert!(!stale.ok);
@@ -1569,7 +1874,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("menu-bar")?;
         engine.record_capture_request_result(
             &request.id,
@@ -1614,7 +1919,7 @@ mod tests {
         let engine = Engine::new(temp.path().to_owned());
         let store = ConfigStore::new(temp.path());
         let config = store.load_or_create()?;
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("menu-bar")?;
         engine.record_capture_request_result(
             &request.id,
@@ -1676,7 +1981,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("menu-bar")?;
         assert_eq!(request.status, CAPTURE_STATUS_QUEUED);
 

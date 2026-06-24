@@ -1,20 +1,38 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 
-test("manifest stays Manifest V3 and local-only for network host permissions", async () => {
+test("manifest stays Manifest V3 and requests all-site Safari access plus local bridge access", async () => {
   const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"));
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.name, "Starlee");
   assert.equal(manifest.background.service_worker, "background.js");
-  assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*"]);
+  assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*", "http://*/*", "https://*/*"]);
   assert.ok(manifest.permissions.includes("storage"));
   assert.ok(manifest.permissions.includes("activeTab"));
   assert.ok(manifest.permissions.includes("alarms"));
+  assert.ok(manifest.content_scripts[0].matches.includes("https://www.youtube.com/*"));
+  assert.ok(manifest.content_scripts[0].matches.includes("https://youtube.com/*"));
+  assert.ok(manifest.content_scripts[0].matches.includes("https://m.youtube.com/*"));
+  assert.ok(manifest.content_scripts[0].matches.includes("https://music.youtube.com/*"));
   assert.ok(manifest.content_scripts[0].matches.includes("https://*/*"));
+  assert.deepEqual(manifest.content_scripts[0].js, ["content.js"]);
   assert.equal(manifest.icons["128"], "assets/icon-128.png");
   assert.equal(manifest.action.default_title, "Starlee");
   assert.equal(manifest.action.default_icon["16"], "assets/icon-16.png");
+});
+
+test("built dist manifest includes YouTube matches and content script file", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../dist/extension/manifest.json", import.meta.url), "utf8"));
+  const matches = manifest.content_scripts[0].matches;
+
+  assert.ok(matches.includes("https://www.youtube.com/*"));
+  assert.ok(matches.includes("https://youtube.com/*"));
+  assert.ok(matches.includes("https://m.youtube.com/*"));
+  assert.ok(matches.includes("https://music.youtube.com/*"));
+  assert.deepEqual(manifest.content_scripts[0].js, ["content.js"]);
+  await access(new URL("../dist/extension/content.js", import.meta.url));
+  await access(new URL("../dist/extension/background.js", import.meta.url));
 });
 
 test("manifest icon assets exist at declared PNG dimensions", async () => {

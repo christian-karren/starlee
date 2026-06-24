@@ -121,7 +121,9 @@ Bridge health never includes capture tokens, request IDs, article bodies,
 transcripts, selected text, page metadata, or restricted content. Use
 `starlee diagnostics --limit N` for the longer local rolling history, including
 request IDs and sanitized page metadata for correlating one menu-bar click
-across lifecycle events.
+across lifecycle events. Use `starlee diagnostics --last-capture` for a
+chronological trace of the newest request, runtime identity, terminal status,
+and recommended next action.
 
 ## Extension handshake
 
@@ -257,3 +259,41 @@ Default recovery messages are intentionally concise:
   page.
 - `unsupported_page`: the active page is not an article or YouTube watch page.
 - `timed_out`: the browser did not pick up the request in time.
+
+## Diagnostic events
+
+The extension may post request-correlated, redacted events to:
+
+```http
+POST http://127.0.0.1:47291/capture-diagnostics/event
+Authorization: Bearer <local token>
+Content-Type: application/json
+```
+
+```json
+{
+  "timestamp": "2026-06-23T05:00:01Z",
+  "component": "youtube_extractor",
+  "event": "youtube_segments_extracted",
+  "request_id": "<request id fingerprint>",
+  "status": "unavailable",
+  "browser": "Chrome",
+  "message": "No rendered transcript segments found.",
+  "page": {
+    "title": "Video title",
+    "url": "https://www.youtube.com/watch?v=example",
+    "domain": "youtube.com"
+  },
+  "safe_metadata": {
+    "segment_count": "0",
+    "transcript_reason": "transcript_discovery_unavailable_or_timed_out"
+  }
+}
+```
+
+The endpoint requires the bearer token, stores events in the bounded local
+diagnostic buffer, truncates oversized strings, and accepts only the redacted
+event shape. `safe_metadata` is for structured counts, booleans, version strings,
+and reason codes. It must not contain article bodies, transcript text, selected
+text, capture tokens, OAuth tokens, cookies, raw HTML, embeddings, or private
+file bodies.
