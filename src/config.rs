@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -44,6 +45,8 @@ pub struct ExtensionState {
     pub browser: Option<String>,
     #[serde(default)]
     pub extension_version: Option<String>,
+    #[serde(default)]
+    pub extension_build: Option<String>,
     #[serde(default)]
     pub can_capture_active_tab: bool,
     #[serde(default)]
@@ -104,6 +107,8 @@ pub struct CaptureDiagnosticEvent {
     pub message: Option<String>,
     #[serde(default)]
     pub page: Option<CaptureRequestPageMetadata>,
+    #[serde(default)]
+    pub safe_metadata: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,5 +5,6 @@
 *.db-wal
 /sensor/node_modules
 /sensor/dist/**/*.map
+/sensor/dist/extension/build-info.json
 /release
 .DS_Store

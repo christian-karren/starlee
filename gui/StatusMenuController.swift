@@ -41,6 +41,7 @@ final class StatusMenuController: NSObject {
         menu.addItem(.separator())
         menu.addItem(item("Browser Setup…", #selector(browserSetup)))
         menu.addItem(item("Run Setup Diagnostics…", #selector(showDoctor)))
+        menu.addItem(item("Show Last Capture Trace…", #selector(showLastCaptureTrace)))
         menu.addItem(item("Open Vault", #selector(openVault)))
         menu.addItem(item("Start Capture Endpoint", #selector(startEngine)))
         menu.addItem(item("Stop Capture Endpoint", #selector(stopEngine)))
@@ -77,6 +78,16 @@ final class StatusMenuController: NSObject {
             let bridgeItem = NSMenuItem(title: "Browser bridge: \(action)", action: nil, keyEquivalent: "")
             bridgeItem.isEnabled = false
             menu.addItem(bridgeItem)
+        }
+        if
+            let trace = client.runJSON(["diagnostics", "--last-capture"]),
+            let terminal = trace["terminal_status"] as? String,
+            terminal != "capture_saved"
+        {
+            let action = trace["recommended_next_action"] as? String ?? "Run the last capture trace."
+            let failureItem = NSMenuItem(title: "Last capture: \(terminal) · \(action)", action: nil, keyEquivalent: "")
+            failureItem.isEnabled = false
+            menu.addItem(failureItem)
         }
     }
 
@@ -308,6 +319,10 @@ final class StatusMenuController: NSObject {
 
     @objc private func showDoctor() {
         DialogPresenter.show(title: "Starlee Diagnostics", message: client.run(["doctor"]))
+    }
+
+    @objc private func showLastCaptureTrace() {
+        DialogPresenter.show(title: "Last Capture Trace", message: client.run(["diagnostics", "--last-capture"]))
     }
 
     @objc private func openVault() {
