@@ -60,6 +60,95 @@ test("filters malformed and duplicate transcript segments", async () => {
   assert.deepEqual(result.segments, [{ t: 12, text: "Keep me" }]);
 });
 
+test("captures transcript invisibly from the caption track (primary path)", async () => {
+  const playerResponse = {
+    captions: {
+      playerCaptionsTracklistRenderer: {
+        captionTracks: [
+          { baseUrl: "https://www.youtube.com/api/timedtext?v=cap123&lang=es", languageCode: "es", kind: "asr" },
+          { baseUrl: "https://www.youtube.com/api/timedtext?v=cap123&lang=en", languageCode: "en" }
+        ]
+      }
+    }
+  };
+  const events = [];
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="Caption track demo">
+    <script>var ytInitialPlayerResponse = ${JSON.stringify(playerResponse)};</script>`, {
+    url: "https://www.youtube.com/watch?v=cap123",
+    pretendToBeVisual: true
+  });
+  const fetched = [];
+  dom.window.fetch = async (url) => {
+    fetched.push(url);
+    return {
+      ok: true,
+      json: async () => ({
+        events: [
+          { tStartMs: 0, segs: [{ utf8: "Hello " }, { utf8: "world" }] },
+          { tStartMs: 4000, segs: [{ utf8: "second line" }] },
+          { tStartMs: 8000, segs: [{ utf8: "\n" }] }
+        ]
+      })
+    };
+  };
+
+  const result = await extractYouTubeResult(dom.window.document, {
+    discoverTranscript: true,
+    transcriptDiscoveryTimeoutMs: 2000,
+    onDiagnostic: (event) => events.push(event)
+  });
+
+  assert.equal(result.transcript_status, "full");
+  assert.equal(result.transcript_source, "caption_track");
+  assert.equal(result.transcript_reason, "caption_track_fetched");
+  assert.deepEqual(result.segments, [
+    { t: 0, text: "Hello world" },
+    { t: 4, text: "second line" }
+  ]);
+  // Preferred the English track and requested machine-readable json3.
+  assert.equal(fetched.length, 1);
+  assert.ok(fetched[0].includes("lang=en"));
+  assert.ok(fetched[0].includes("fmt=json3"));
+  // Fully invisible: no transcript panel interaction at all.
+  assert.ok(!events.some((event) => event.event.startsWith("transcript_button")));
+  assert.ok(events.some((event) => event.event === "youtube_timedtext_fetch_succeeded"));
+});
+
+test("falls back to rendered-DOM scrape when the caption track yields nothing", async () => {
+  const playerResponse = { captions: { playerCaptionsTracklistRenderer: { captionTracks: [] } } };
+  const events = [];
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="Fallback demo">
+    <script>var ytInitialPlayerResponse = ${JSON.stringify(playerResponse)};</script>
+    <button id="transcript">Show transcript</button>`, {
+    url: "https://www.youtube.com/watch?v=fallback123",
+    pretendToBeVisual: true
+  });
+  dom.window.fetch = async () => ({ ok: false, json: async () => ({}) });
+  dom.window.document.getElementById("transcript").addEventListener("click", () => {
+    dom.window.document.body.insertAdjacentHTML("beforeend", `
+      <ytd-transcript-renderer>
+        <ytd-transcript-segment-renderer>
+          <span class="segment-timestamp">0:05</span>
+          <yt-formatted-string class="segment-text">DOM fallback line</yt-formatted-string>
+        </ytd-transcript-segment-renderer>
+      </ytd-transcript-renderer>`);
+  });
+
+  const result = await extractYouTubeResult(dom.window.document, {
+    discoverTranscript: true,
+    transcriptDiscoveryTimeoutMs: 1500,
+    onDiagnostic: (event) => events.push(event)
+  });
+
+  assert.equal(result.transcript_status, "full");
+  assert.equal(result.transcript_source, "rendered_dom");
+  assert.deepEqual(result.segments, [{ t: 5, text: "DOM fallback line" }]);
+  assert.ok(events.some((event) => event.event === "youtube_caption_tracks_found"));
+  assert.ok(events.some((event) => event.event === "youtube_transcript_discovery_started"));
+});
+
 test("opens transcript controls when discovery is enabled", async () => {
   const dom = new JSDOM(`<title>Video</title>
     <meta property="og:title" content="Discovery demo">

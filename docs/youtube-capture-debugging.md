@@ -74,6 +74,25 @@ cookies, embeddings, or private file bodies.
 - `capture_failed` after `capture_payload_posted`: the backend rejected the payload or failed while writing/indexing.
 - `vault` or `index` failures in `starlee doctor`: the local vault or disposable index needs repair.
 
+## How The Transcript Is Captured
+
+Transcript capture has two paths, tried in order:
+
+1. **Caption track (primary, invisible).** The extension reads the page's player
+   response, picks the best caption track (preferring manual English, then
+   auto-generated), and fetches the `timedtext` endpoint as `fmt=json3`. This needs
+   no transcript-panel UI, captures auto-generated captions, and does not move or
+   change anything on screen. Diagnostic events: `youtube_caption_tracks_found`,
+   `youtube_timedtext_fetch_started`, `youtube_timedtext_fetch_succeeded` /
+   `youtube_timedtext_fetch_failed`. On success `transcript_source = caption_track`.
+2. **Rendered DOM (fallback).** Only if the caption track yields nothing, the
+   extension opens the transcript panel once (no scrolling), waits for the rows to
+   render, scrapes them, and closes the panel again. On success
+   `transcript_source = rendered_dom`.
+
+Capture still saves the canonical video record even when both paths fail, but the
+trace's `recommended_next_action` will name the failing step.
+
 ## Reason Code Decision Tree
 
 `starlee diagnostics --last-capture` reports a single `recommended_next_action`.

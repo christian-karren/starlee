@@ -82,46 +82,62 @@ export async function extractYouTubeResult(document, options = {}) {
     }
   });
   const initialSegments = extractRenderedTranscriptSegments(document);
-  const discoveryAttempted = Boolean(options.discoverTranscript) && initialSegments.length === 0;
-  let discovery = {
-    reason: initialSegments.length > 0 ? "rendered_transcript_segments_found" : "transcript_panel_not_rendered",
-    panelOpened: transcriptPanelOpen(document),
-    rowCount: transcriptRows(document).length
-  };
-  if (discoveryAttempted) {
-    emitDiagnostic(options, "youtube_transcript_discovery_started", {
-      status: "started",
-      safe_metadata: {
-        initial_segment_count: String(initialSegments.length),
-        initial_row_count: String(discovery.rowCount),
-        panel_open: String(discovery.panelOpened)
-      }
-    });
-    discovery = await discoverTranscript(document, options);
-  }
-  const segments = discoveryAttempted
-    ? (discovery.segments?.length ? discovery.segments : extractRenderedTranscriptSegments(document))
-    : initialSegments;
-  const transcriptStatus = segments.length > 0 ? "full" : "unavailable";
-  const transcriptSource = segments.length > 0 ? "rendered_dom" : "unavailable";
-  const transcriptReason = segments.length > 0
+  let segments = initialSegments;
+  let transcriptSource = segments.length > 0 ? "rendered_dom" : "unavailable";
+  let transcriptReason = segments.length > 0
     ? "rendered_transcript_segments_found"
-    : discoveryAttempted
-      ? discovery.reason
-      : "transcript_panel_not_rendered";
-  if (discoveryAttempted) {
-    emitDiagnostic(options, "youtube_transcript_discovery_finished", {
-      status: segments.length > 0 ? "ok" : "unavailable",
-      message: segments.length > 0 ? "Rendered transcript segments appeared." : "No rendered transcript segments found.",
-      safe_metadata: {
-        segment_count: String(segments.length),
-        row_count: String(discovery.rowCount),
-        panel_open: String(discovery.panelOpened),
-        elapsed_ms: String(Date.now() - startedAt),
-        reason: transcriptReason
+    : "transcript_panel_not_rendered";
+  const discoveryEnabled = Boolean(options.discoverTranscript);
+
+  if (segments.length === 0 && discoveryEnabled) {
+    // PRIMARY: pull the transcript straight from the caption track in the page's
+    // player response. This needs no transcript-panel UI, captures auto-generated
+    // captions too, and is invisible to the viewer — so it does not depend on
+    // fragile DOM selectors or the panel rendering in time.
+    const caption = await extractTranscriptViaCaptionTrack(document, options);
+    if (caption.segments.length > 0) {
+      segments = caption.segments;
+      transcriptSource = "caption_track";
+      transcriptReason = "caption_track_fetched";
+    } else {
+      // FALLBACK: open and scrape the rendered transcript panel (non-disruptive).
+      const rowCount0 = transcriptRows(document).length;
+      emitDiagnostic(options, "youtube_transcript_discovery_started", {
+        status: "started",
+        safe_metadata: {
+          initial_segment_count: "0",
+          initial_row_count: String(rowCount0),
+          panel_open: String(transcriptPanelOpen(document)),
+          caption_track_reason: caption.reason
+        }
+      });
+      const discovery = await discoverTranscript(document, options);
+      const domSegments = discovery.segments?.length
+        ? discovery.segments
+        : extractRenderedTranscriptSegments(document);
+      emitDiagnostic(options, "youtube_transcript_discovery_finished", {
+        status: domSegments.length > 0 ? "ok" : "unavailable",
+        message: domSegments.length > 0 ? "Rendered transcript segments appeared." : "No rendered transcript segments found.",
+        safe_metadata: {
+          segment_count: String(domSegments.length),
+          row_count: String(discovery.rowCount),
+          panel_open: String(discovery.panelOpened),
+          elapsed_ms: String(Date.now() - startedAt),
+          reason: domSegments.length > 0 ? "rendered_transcript_segments_found" : discovery.reason
+        }
+      });
+      if (domSegments.length > 0) {
+        segments = domSegments;
+        transcriptSource = "rendered_dom";
+        transcriptReason = "rendered_transcript_segments_found";
+      } else {
+        transcriptSource = "unavailable";
+        transcriptReason = discovery.reason;
       }
-    });
+    }
   }
+
+  const transcriptStatus = segments.length > 0 ? "full" : "unavailable";
   emitDiagnostic(options, "youtube_segments_extracted", {
     status: segments.length > 0 ? "ok" : "unavailable",
     message: segments.length > 0 ? "Rendered transcript segments found." : "No rendered transcript segments found.",
@@ -158,6 +174,153 @@ function emitDiagnostic(options, event, detail = {}) {
     message: detail.message,
     safe_metadata: detail.safe_metadata || {}
   });
+}
+
+// Pull the transcript from the page's caption track (the timedtext endpoint
+// referenced by the player response). This is the reliable, invisible path: it
+// covers auto-generated captions, needs no UI interaction, and does not depend on
+// the transcript panel rendering. Returns { segments, reason }; never throws.
+async function extractTranscriptViaCaptionTrack(document, options) {
+  const playerResponse = parsePlayerResponse(document);
+  if (!playerResponse) {
+    emitDiagnostic(options, "youtube_caption_tracks_found", {
+      status: "unavailable",
+      message: "No player response found in page.",
+      safe_metadata: { track_count: "0" }
+    });
+    return { segments: [], reason: "player_response_unavailable" };
+  }
+  const tracks = captionTracksFromPlayerResponse(playerResponse);
+  emitDiagnostic(options, "youtube_caption_tracks_found", {
+    status: tracks.length > 0 ? "ok" : "unavailable",
+    message: tracks.length > 0 ? "Caption tracks present in player response." : "No caption tracks in player response.",
+    safe_metadata: {
+      track_count: String(tracks.length),
+      languages: tracks.map((track) => track.languageCode).filter(Boolean).slice(0, 8).join(",")
+    }
+  });
+  const track = pickCaptionTrack(tracks);
+  if (!track) {
+    return { segments: [], reason: "caption_track_unavailable" };
+  }
+  emitDiagnostic(options, "youtube_timedtext_fetch_started", {
+    status: "started",
+    safe_metadata: { language: track.languageCode || "", kind: track.kind || "manual" }
+  });
+  const segments = await fetchTimedText(track, document);
+  emitDiagnostic(options, segments.length > 0 ? "youtube_timedtext_fetch_succeeded" : "youtube_timedtext_fetch_failed", {
+    status: segments.length > 0 ? "ok" : "unavailable",
+    message: segments.length > 0 ? "Fetched caption-track transcript." : "Caption-track fetch returned no segments.",
+    safe_metadata: {
+      segment_count: String(segments.length),
+      language: track.languageCode || "",
+      kind: track.kind || "manual"
+    }
+  });
+  return {
+    segments,
+    reason: segments.length > 0 ? "caption_track_fetched" : "caption_track_empty"
+  };
+}
+
+function parsePlayerResponse(document) {
+  for (const script of document.querySelectorAll("script")) {
+    const content = script.textContent || "";
+    const marker = content.indexOf("ytInitialPlayerResponse");
+    if (marker === -1) continue;
+    const braceStart = content.indexOf("{", marker);
+    if (braceStart === -1) continue;
+    const json = balancedJsonAt(content, braceStart);
+    if (!json) continue;
+    try {
+      return JSON.parse(json);
+    } catch {
+      // keep scanning other scripts
+    }
+  }
+  return null;
+}
+
+function balancedJsonAt(text, start) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === "\"") inString = false;
+      continue;
+    }
+    if (character === "\"") inString = true;
+    else if (character === "{") depth += 1;
+    else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return null;
+}
+
+function captionTracksFromPlayerResponse(playerResponse) {
+  const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  return Array.isArray(tracks) ? tracks.filter((track) => track && track.baseUrl) : [];
+}
+
+function pickCaptionTrack(tracks) {
+  if (!tracks.length) return null;
+  // Prefer a manual English track, then auto English, then any manual, then any.
+  const score = (track) => {
+    const language = String(track.languageCode || "").toLowerCase();
+    const isEnglish = language === "en" || language.startsWith("en");
+    const isAuto = track.kind === "asr";
+    return (isEnglish ? 0 : 2) + (isAuto ? 1 : 0);
+  };
+  return [...tracks].sort((left, right) => score(left) - score(right))[0];
+}
+
+async function fetchTimedText(track, document) {
+  const view = document.defaultView;
+  const fetchFn = view?.fetch || (typeof fetch === "function" ? fetch : null);
+  if (!fetchFn || !track?.baseUrl) return [];
+  let response;
+  try {
+    response = await fetchFn(timedTextJson3Url(track.baseUrl), { credentials: "include" });
+  } catch {
+    return [];
+  }
+  if (!response?.ok) return [];
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    return [];
+  }
+  return parseJson3Transcript(data);
+}
+
+function timedTextJson3Url(baseUrl) {
+  if (/[?&]fmt=/.test(baseUrl)) return baseUrl;
+  return `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}fmt=json3`;
+}
+
+function parseJson3Transcript(data) {
+  const events = Array.isArray(data?.events) ? data.events : [];
+  const seen = new Set();
+  const segments = [];
+  for (const event of events) {
+    if (!Array.isArray(event.segs)) continue;
+    const segmentText = cleanText(event.segs.map((seg) => seg.utf8 || "").join(""));
+    if (!segmentText) continue;
+    const t = Number(event.tStartMs) / 1000;
+    if (!Number.isFinite(t)) continue;
+    const key = `${Math.floor(t * 1000)}:${segmentText}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    segments.push({ t, text: segmentText });
+  }
+  return segments;
 }
 
 export function parseTimestamp(value = "") {
