@@ -110,13 +110,22 @@ struct FluidBackgroundSettings: Equatable {
         )
     }
 
+    // The out-of-the-box look for a fresh install: a calm, static halftone
+    // dither in the brand navy/cream palette.
     static let `default` = FluidBackgroundSettings(
-        pixelColor: defaultPixelColor,
-        backgroundColor: defaultBackgroundColor,
+        pixelColor: "#13284B",
+        backgroundColor: "#F2E3B6",
         pixelSize: 6,
         threshold: 0.31,
-        speed: 0.02,
-        zoom: 4.8
+        speed: 0,
+        zoom: 4.8,
+        kind: "dither",
+        black: "#000000",
+        white: "#FFFFFF",
+        flowSeed: 0.5,
+        ditherDotSize: 3,
+        ditherContrast: 1.3,
+        ditherNavyBuffer: 1.4
     )
 
     var isFlow: Bool { kind == "flow" }
@@ -251,11 +260,11 @@ enum FluidBackgroundLooks {
                 backgroundColor: cream,
                 pixelSize: 6,
                 threshold: 0.31,
-                speed: 0.005,
+                speed: 0,
                 zoom: 4.8,
                 kind: "dither",
                 flowSeed: 0.5,
-                ditherDotSize: 6,
+                ditherDotSize: 3,
                 ditherContrast: 1.3,
                 ditherNavyBuffer: 1.4
             )

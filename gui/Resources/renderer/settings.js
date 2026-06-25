@@ -37,7 +37,7 @@
     { name: "Navy Cream ·366", s: { kind: "pixel-dither", pixelColor: "#062F64", backgroundColor: "#F9E4B6", threshold: 0.366, speed: 0.02, zoom: 4.8 } },
     { name: "Ribbon", s: { kind: "flow", pixelColor: "#102A57", backgroundColor: "#F2E0AE", threshold: 0.31, speed: 0.018, zoom: 4.6, flowFinish: "sharp", flowSeed: 0.42 } },
     { name: "Aurora", s: { kind: "aurora", pixelColor: NAVY, backgroundColor: CREAM, speed: 0.7, zoom: 4.8, auroraIntensity: 0.55 } },
-    { name: "Dither", s: { kind: "dither", pixelColor: NAVY, backgroundColor: CREAM, speed: 0.005, ditherDotSize: 6, ditherContrast: 1.3, ditherNavyBuffer: 1.4 } },
+    { name: "Dither", s: { kind: "dither", pixelColor: NAVY, backgroundColor: CREAM, speed: 0, ditherDotSize: 3, ditherContrast: 1.3, ditherNavyBuffer: 1.4 } },
     { name: "Glass", s: { kind: "glass", pixelColor: NAVY, backgroundColor: CREAM, speed: 0.004, glassMode: "panes", glassPanes: 18, glassSoftness: 14, glassBrightness: 1.0, glassRefraction: 0.02 } },
   ];
 

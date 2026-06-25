@@ -22,7 +22,21 @@ Starlee includes:
   menu-bar capture icon that can request capture from a browser extension after
   the user has loaded or installed that extension.
 
-## Install
+## Download
+
+**[⬇ Download the latest Starlee for macOS](https://github.com/christian-karren/starlee/releases/latest)**
+
+1. Open the downloaded `Starlee-*.dmg` and drag **Starlee** into **Applications**.
+2. Launch Starlee — its icon appears in the macOS menu bar.
+
+> First launch only: this build is not yet notarized by Apple, so macOS shows a
+> "cannot check it for malicious software" prompt. Right-click the app →
+> **Open** once to trust it (or run
+> `xattr -dr com.apple.quarantine /Applications/Starlee.app`).
+
+Your Markdown vault, search index, and config live in `~/Starlee`.
+
+## Install from source
 
 Build and install the full local experience:
 
@@ -56,6 +70,14 @@ The generated extension folder includes the local-only capture configuration,
 so the “Save article to Starlee” page button and the Starlee menu-bar capture
 action work without pasting the capture token by hand. If you regenerate setup,
 reload the unpacked extension in Chrome.
+
+The extension has a single source of truth. Edit only `sensor/src/*.js`; `npm run
+build` bundles them into `sensor/dist/extension/`, the CLI embeds that build at
+compile time, and `starlee setup` writes it to `~/Starlee/sensor-extension`. Never
+hand-edit `~/Starlee/sensor-extension` — it is generated. `starlee doctor` runs an
+`extension_up_to_date` check that fails when the loaded extension drifts from the
+build embedded in your installed binary; re-run `starlee setup` and reload the
+unpacked extension if it does.
 
 Open the menu-bar app:
 

@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sensor/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release app
+        run: make release
+
+      - name: Package drag-to-install DMG
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          APP="target/release/Starlee.app"
+          STAGE="$(mktemp -d)/Starlee"
+          mkdir -p "$STAGE"
+          cp -R "$APP" "$STAGE/Starlee.app"
+          ln -s /Applications "$STAGE/Applications"
+          DMG="Starlee-${VERSION}.dmg"
+          hdiutil create -volname "Starlee" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          echo "DMG=$DMG" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          NOTES=$(cat <<'EOF'
+          ## Install
+          1. Download **Starlee-*.dmg** below and open it.
+          2. Drag **Starlee** into the **Applications** folder.
+          3. Launch Starlee from Applications. The Starlee icon appears in the macOS menu bar.
+
+          > First launch: because this build is not yet notarized by Apple, macOS shows a
+          > "cannot check it for malicious software" dialog. **Right-click the app → Open**
+          > once to trust it (or run `xattr -dr com.apple.quarantine /Applications/Starlee.app`).
+
+          Markdown vault, search index, and config live in `~/Starlee`.
+          EOF
+          )
+          gh release create "$GITHUB_REF_NAME" "$DMG" \
+            --title "Starlee $GITHUB_REF_NAME" \
+            --notes "$NOTES" \
+          || gh release upload "$GITHUB_REF_NAME" "$DMG" --clobber
