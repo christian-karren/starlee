@@ -235,7 +235,11 @@ async function discoverTranscript(document, options = {}) {
       }
     }
 
-    const unavailable = transcriptUnavailableReason(document);
+    // Only trust an "unavailable" verdict once the transcript panel is actually
+    // open. Checking before that let stray page text (e.g. an audio-track menu
+    // matching /no language/) abort discovery before "Show transcript" was ever
+    // clicked, producing a false `transcript_language_unavailable` in ~8ms.
+    const unavailable = panelOpened ? transcriptUnavailableReason(document) : null;
     if (unavailable) {
       emitTranscriptDiagnostic(options, unavailable.event, {
         status: "unavailable",
@@ -577,13 +581,22 @@ function transcriptRows(document) {
 }
 
 function transcriptUnavailableReason(document) {
+  // Scan only the transcript panel itself. Scanning generic menus/dialogs/all
+  // engagement panels matched unrelated UI (audio-track menus, settings popups)
+  // and aborted discovery with a false "unavailable" verdict.
   const text = cleanText([
-    ...document.querySelectorAll("ytd-transcript-renderer, ytd-engagement-panel-section-list-renderer, ytd-menu-popup-renderer, tp-yt-paper-dialog, [role='dialog']")
+    ...document.querySelectorAll([
+      "ytd-transcript-renderer",
+      "ytd-transcript-search-panel-renderer",
+      "ytd-engagement-panel-section-list-renderer[target-id*='transcript']"
+    ].join(", "))
   ].map((node) => node.textContent || "").join(" "));
+  if (!text) return null;
   if (/transcript (is )?not available|no transcript|transcript unavailable|captions unavailable/i.test(text)) {
     return { event: "transcript_disabled_by_video", reason: "transcript_disabled_by_video" };
   }
-  if (/language.*not available|no.*language|audio track.*not available/i.test(text)) {
+  // Keep this tied to the transcript wording so it cannot match an audio-track list.
+  if (/transcript[^.]*language[^.]*not available|language[^.]*not available[^.]*transcript/i.test(text)) {
     return { event: "transcript_language_unavailable", reason: "transcript_language_unavailable" };
   }
   return null;

@@ -85,6 +85,58 @@ test("opens transcript controls when discovery is enabled", async () => {
   assert.equal(payload.transcript_reason, "rendered_transcript_segments_found");
 });
 
+test("does not abort on unrelated 'no language' page text before opening the panel", async () => {
+  // Regression: an audio-track menu containing "No language available" used to
+  // match the unavailability scan on the first loop and abort discovery in ~8ms
+  // with a false transcript_language_unavailable, before "Show transcript" ran.
+  const events = [];
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="False negative demo">
+    <ytd-menu-popup-renderer>Audio track: No language available</ytd-menu-popup-renderer>
+    <button id="transcript">Show transcript</button>`, {
+    url: "https://www.youtube.com/watch?v=falseneg123",
+    pretendToBeVisual: true
+  });
+  dom.window.document.getElementById("transcript").addEventListener("click", () => {
+    dom.window.document.body.insertAdjacentHTML("beforeend", `
+      <ytd-transcript-renderer>
+        <ytd-transcript-segment-renderer>
+          <span class="segment-timestamp">0:09</span>
+          <yt-formatted-string class="segment-text">Real transcript line</yt-formatted-string>
+        </ytd-transcript-segment-renderer>
+      </ytd-transcript-renderer>`);
+  });
+
+  const result = await extractYouTubeResult(dom.window.document, {
+    discoverTranscript: true,
+    transcriptDiscoveryTimeoutMs: 700,
+    onDiagnostic: (event) => events.push(event)
+  });
+
+  assert.equal(result.transcript_status, "full");
+  assert.equal(result.transcript_reason, "rendered_transcript_segments_found");
+  assert.ok(!events.some((event) => event.event === "transcript_language_unavailable"));
+});
+
+test("still reports language-unavailable when the open transcript panel says so", async () => {
+  const events = [];
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="Genuinely unavailable">
+    <ytd-transcript-renderer>Transcript language is not available for this video.</ytd-transcript-renderer>`, {
+    url: "https://www.youtube.com/watch?v=nolang123",
+    pretendToBeVisual: true
+  });
+
+  const result = await extractYouTubeResult(dom.window.document, {
+    discoverTranscript: true,
+    transcriptDiscoveryTimeoutMs: 200,
+    onDiagnostic: (event) => events.push(event)
+  });
+
+  assert.equal(result.transcript_status, "unavailable");
+  assert.equal(result.transcript_reason, "transcript_language_unavailable");
+});
+
 test("clicks actionable button ancestor for nested transcript label", async () => {
   const events = [];
   const dom = new JSDOM(`<title>Video</title>
