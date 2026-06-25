@@ -13,7 +13,7 @@ const elements = {
   background: document.querySelector("#pixel-dither-background"),
 };
 
-const pixelBackground = window.createStarleePixelDitherBackground(
+const pixelBackground = window.createStarleeBackground(
   elements.background,
   state.backgroundSettings
 );

@@ -3,26 +3,21 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Starlee Library</title>
+    <title>Starlee Settings</title>
     <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./settings.css">
   </head>
   <body>
     <div id="root" class="root">
       <canvas id="pixel-dither-background" aria-hidden="true"></canvas>
-      <main class="library-shell" aria-label="Starlee Library">
-        <section class="library-header" aria-label="Library tools">
+      <main class="settings-shell" aria-label="Starlee Settings">
+        <section class="library-header" aria-label="Settings header">
           <div class="title-box">
-            <h1>Library</h1>
+            <h1>Settings</h1>
           </div>
-          <label class="search-shell">
-            <span aria-hidden="true">/</span>
-            <input id="search-input" type="search" placeholder="Search saved articles, videos, notes">
-          </label>
         </section>
-
-        <section class="shelf-section">
-          <div id="card-row" class="card-row" aria-live="polite"></div>
-          <p id="empty-state" class="empty-state" hidden>No captures match this search.</p>
+        <section class="settings-scroll">
+          <div id="settings-content" class="settings-content"></div>
         </section>
       </main>
     </div>
@@ -32,6 +27,6 @@
     <script src="./dither-background.js"></script>
     <script src="./glass-background.js"></script>
     <script src="./background-suite.js"></script>
-    <script src="./main.js"></script>
+    <script src="./settings.js"></script>
   </body>
 </html>

@@ -28,8 +28,13 @@
   <body>
     <canvas id="pixel-dither-background" aria-hidden="true"></canvas>
     <script src="./pixel-dither-background.js"></script>
+    <script src="./flow-background.js"></script>
+    <script src="./aurora-background.js"></script>
+    <script src="./dither-background.js"></script>
+    <script src="./glass-background.js"></script>
+    <script src="./background-suite.js"></script>
     <script>
-      var background = window.createStarleePixelDitherBackground(
+      var background = window.createStarleeBackground(
         document.getElementById("pixel-dither-background"),
         window.starleeDefaultPixelDitherSettings
       );

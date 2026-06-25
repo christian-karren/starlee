@@ -80,6 +80,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private var selectedMonthID: String?
     private lazy var fluidBackground = fluidBackgroundStore.load()
 
+    private let sidebarBackground = SidebarHoleBackgroundView()
     private let libraryButton = SidebarBoxButton(title: "Library")
     private let settingsButton = SidebarBoxButton(title: "Settings")
     private let monthStack = NSStackView()
@@ -88,6 +89,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private weak var rootSplitView: NSSplitView?
     private weak var pixelColorWell: NSColorWell?
     private weak var backgroundColorWell: NSColorWell?
+    private weak var blackColorWell: NSColorWell?
+    private weak var whiteColorWell: NSColorWell?
     private weak var pixelSizeSlider: NSSlider?
     private weak var thresholdSlider: NSSlider?
     private weak var fluidSpeedSlider: NSSlider?
@@ -105,6 +108,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private var libraryWebView: WKWebView?
     private var libraryWebViewLoaded = false
     private var pendingLibraryPayload: String?
+    private var settingsWebView: WKWebView?
+    private var settingsWebViewLoaded = false
+    private var pendingSettingsPayload: String?
     private var automaticRefreshTimer: Timer?
     private var isReloading = false
     private let openButton = NSButton(title: "Open Original", target: nil, action: nil)
@@ -205,10 +211,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 
     private func makeSidebar() -> NSView {
-        let sidebar = NSView()
+        // Solid-black sidebar that knocks out button-shaped holes so the
+        // full-window app background WebView (behind the split view) shows
+        // through the three nav plaques only — the black field elsewhere stays
+        // intact. See SidebarHoleBackgroundView.
+        let sidebar = sidebarBackground
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         sidebar.wantsLayer = true
-        sidebar.layer?.backgroundColor = NSColor.black.cgColor
 
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -254,7 +263,17 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             stack.topAnchor.constraint(equalTo: sidebar.topAnchor),
             stack.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor)
         ])
+        refreshSidebarHoles()
         return sidebar
+    }
+
+    /// Tells the sidebar which button plaques to cut background-revealing holes
+    /// behind. Called after the nav buttons exist and whenever the month
+    /// buttons are rebuilt.
+    private func refreshSidebarHoles() {
+        var buttons: [SidebarBoxButton] = [libraryButton, settingsButton]
+        buttons.append(contentsOf: monthButtons.values.compactMap { $0 as? SidebarBoxButton })
+        sidebarBackground.knockoutButtons = buttons
     }
 
     private func makeMainPane() -> NSView {
@@ -348,11 +367,11 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private func render() {
         removeContent(afterHeader: true)
         updateSidebarSelection()
-        headerView?.isHidden = primaryView == .library
-        contentStack.spacing = primaryView == .library ? 0 : 14
-        contentStack.edgeInsets = primaryView == .library
-            ? NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-            : NSEdgeInsets(top: 22, left: 24, bottom: 20, right: 24)
+        // Both Library and Settings render full-bleed in their own WebView, so
+        // the native header stays hidden and the content fills the pane.
+        headerView?.isHidden = true
+        contentStack.spacing = 0
+        contentStack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         renderReadiness()
         switch primaryView {
         case .library:
@@ -423,80 +442,102 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 
     private func renderSettings() {
-        titleLabel.stringValue = "Settings"
-        titleLabel.textColor = Self.starleeBlack
-        subtitleLabel.stringValue = "Setup, diagnostics, vault, import/export, and repair."
-        readinessLabel.textColor = Self.starleeWhite
+        let webView = settingsWebView ?? makeSettingsWebView()
+        settingsWebView = webView
+        contentStack.addArrangedSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: contentStack.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: contentStack.bottomAnchor)
+        ])
+        if webView.url == nil {
+            loadSettingsRenderer(webView)
+        }
+        renderSettingsPayload()
+    }
+
+    private func makeSettingsWebView() -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(self, name: "starlee")
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = self
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.allowsMagnification = false
+        webView.setValue(false, forKey: "drawsBackground")
+        return webView
+    }
+
+    private func loadSettingsRenderer(_ webView: WKWebView) {
+        guard let rendererURL = Bundle.main.url(forResource: "settings", withExtension: "html", subdirectory: "renderer") else {
+            return
+        }
+        webView.loadFileURL(rendererURL, allowingReadAccessTo: rendererURL.deletingLastPathComponent())
+    }
+
+    private func renderSettingsPayload() {
+        let payload = settingsPayloadJSON()
+        guard settingsWebViewLoaded, let webView = settingsWebView else {
+            pendingSettingsPayload = payload
+            return
+        }
+        webView.evaluateJavaScript("window.__starleeSettingsPayload = \(payload); if (window.renderStarleeSettings) { window.renderStarleeSettings(window.__starleeSettingsPayload); }", completionHandler: nil)
+    }
+
+    private func settingsPayloadJSON() -> String {
         let checks = checksByName()
         let bridge = (status()["bridge_health"] as? [String: Any]) ?? [:]
         let chromeSetup = bridge["chrome_setup"] as? [String: Any] ?? [:]
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let bridgeOK = (bridge["ok"] as? Bool) ?? false
+        let codexOK = checks["codex_plugin_source"]?.ok == true
+        let diagOK = doctor?["ok"] as? Bool == true
+        let vaultOK = checks["vault"]?.ok == true
 
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 500).isActive = true
-
-        let settingsStack = NSStackView()
-        settingsStack.orientation = .vertical
-        settingsStack.alignment = .width
-        settingsStack.spacing = 18
-        settingsStack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 24, right: 10)
-        settingsStack.translatesAutoresizingMaskIntoConstraints = false
-        scroll.documentView = settingsStack
-
-        settingsStack.addArrangedSubview(appearancePanel())
-        settingsStack.addArrangedSubview(settingsCard(
-            title: "Browser Extensions",
-            status: browserSetupStatus(chromeSetup, bridge: bridge),
-            detail: browserSetupDetail(chromeSetup, bridge: bridge),
-            actionTitle: "Open Setup",
-            action: #selector(openBrowserSetup)
-        ))
-        settingsStack.addArrangedSubview(settingsCard(
-            title: "Codex Plugin",
-            status: checks["codex_plugin_source"]?.ok == true ? "Installed" : "Needs setup",
-            detail: checks["codex_plugin_source"]?.detail ?? "Install or repair the local Starlee Codex plugin.",
-            actionTitle: "Guide",
-            action: #selector(showCodexGuide)
-        ))
-        settingsStack.addArrangedSubview(settingsCard(
-            title: "Diagnostics",
-            status: doctor?["ok"] as? Bool == true ? "Ready" : "Needs attention",
-            detail: ((doctor?["next_actions"] as? [String]) ?? []).first ?? "Endpoint, bridge, and vault checks are healthy.",
-            actionTitle: "Copy Redacted",
-            action: #selector(copySupportBundle)
-        ))
-        settingsStack.addArrangedSubview(settingsCard(
-            title: "Vault",
-            status: checks["vault"]?.ok == true ? "Local" : "Missing",
-            detail: statusString("vault"),
-            actionTitle: "Open",
-            action: #selector(openVault)
-        ))
-        settingsStack.addArrangedSubview(settingsCard(
-            title: "Import / Export",
-            status: "Local",
-            detail: "Import plain text or Markdown into the vault. Export remains available through the audited CLI bundle flow.",
-            actionTitle: "Import",
-            action: #selector(importDocument)
-        ))
-        settingsStack.addArrangedSubview(settingsCard(
-            title: "App Version",
-            status: version,
-            detail: "Starlee desktop app and menu-bar capture surface.",
-            actionTitle: nil,
-            action: nil
-        ))
-
-        NSLayoutConstraint.activate([
-            settingsStack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            settingsStack.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
-            settingsStack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            settingsStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
-        ])
-        contentStack.addArrangedSubview(scroll)
+        let sections: [[String: Any]] = [
+            [
+                "id": "browser", "title": "Browser extension",
+                "status": browserSetupStatus(chromeSetup, bridge: bridge), "ok": bridgeOK,
+                "action": "openBrowserSetup", "actionLabel": "Open setup"
+            ],
+            [
+                "id": "codex", "title": "Codex plugin",
+                "status": codexOK ? "Installed" : "Needs setup", "ok": codexOK,
+                "action": "codexGuide", "actionLabel": "Guide"
+            ],
+            [
+                "id": "diagnostics", "title": "Diagnostics",
+                "status": diagOK ? "Ready" : "Needs attention", "ok": diagOK,
+                "action": "copyDiagnostics", "actionLabel": "Copy redacted"
+            ],
+            [
+                "id": "vault", "title": "Vault",
+                "status": vaultOK ? "Local" : "Missing", "ok": vaultOK,
+                "detail": statusString("vault"),
+                "action": "openVault", "actionLabel": "Open"
+            ],
+            [
+                "id": "import", "title": "Import / Export",
+                "status": "Local", "ok": true,
+                "action": "import", "actionLabel": "Import"
+            ],
+            [
+                "id": "about", "title": "App version",
+                "status": version, "ok": true
+            ]
+        ]
+        let payload: [String: Any] = [
+            "background": fluidBackground.webPayload,
+            "sections": sections
+        ]
+        guard
+            JSONSerialization.isValidJSONObject(payload),
+            let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+            let json = String(data: data, encoding: .utf8)
+        else {
+            return #"{"background":{},"sections":[]}"#
+        }
+        return json
     }
 
     private func appearancePanel() -> NSView {
@@ -522,31 +563,180 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         stack.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(stack)
 
+        let kind = fluidBackground.kind
+        let usesPalette = kind == "aurora" || kind == "dither" || kind == "glass"
+
         let titleStack = NSStackView()
         titleStack.orientation = .vertical
         titleStack.spacing = 4
         let title = NSTextField(labelWithString: "Background")
         title.font = .systemFont(ofSize: 24, weight: .heavy)
         title.textColor = Self.starleeWhite
-        let subtitle = NSTextField(labelWithString: "Fluid pixel-dither background · saved instantly")
+        let subtitle = NSTextField(labelWithString: subtitleText(for: kind))
         subtitle.font = .systemFont(ofSize: 13, weight: .semibold)
         subtitle.textColor = Self.starleeCream
         titleStack.addArrangedSubview(title)
         titleStack.addArrangedSubview(subtitle)
         stack.addArrangedSubview(titleStack)
 
-        let colorRow = NSStackView()
-        colorRow.orientation = .horizontal
-        colorRow.alignment = .centerY
-        colorRow.spacing = 18
-        let pixelColor = colorControl(title: "Pixel color", hex: fluidBackground.pixelColor, action: #selector(changePixelColor(_:)))
-        pixelColorWell = pixelColor.well
-        let backgroundColor = colorControl(title: "Background color", hex: fluidBackground.backgroundColor, action: #selector(changeBackgroundColor(_:)))
-        backgroundColorWell = backgroundColor.well
-        colorRow.addArrangedSubview(pixelColor.view)
-        colorRow.addArrangedSubview(backgroundColor.view)
-        stack.addArrangedSubview(colorRow)
+        // Background suite: a gallery of looks spanning all engines.
+        stack.addArrangedSubview(captionLabel("Style"))
+        stack.addArrangedSubview(lookGallery())
 
+        // Colors. The aurora/dither/glass engines use the full four-color
+        // palette; pixel-dither and flow use just the two-color pair.
+        if usesPalette {
+            stack.addArrangedSubview(paletteRow())
+        } else {
+            let colorRow = NSStackView()
+            colorRow.orientation = .horizontal
+            colorRow.alignment = .centerY
+            colorRow.spacing = 18
+            let isFlow = kind == "flow"
+            let pixelColor = colorControl(title: isFlow ? "Navy" : "Pixel color", hex: fluidBackground.pixelColor, action: #selector(changePixelColor(_:)))
+            pixelColorWell = pixelColor.well
+            let backgroundColor = colorControl(title: isFlow ? "Cream" : "Background color", hex: fluidBackground.backgroundColor, action: #selector(changeBackgroundColor(_:)))
+            backgroundColorWell = backgroundColor.well
+            colorRow.addArrangedSubview(pixelColor.view)
+            colorRow.addArrangedSubview(backgroundColor.view)
+            stack.addArrangedSubview(colorRow)
+        }
+
+        // Engine-specific controls.
+        switch kind {
+        case "flow": stack.addArrangedSubview(flowControls())
+        case "aurora": stack.addArrangedSubview(auroraControls())
+        case "dither": stack.addArrangedSubview(ditherControls())
+        case "glass": stack.addArrangedSubview(glassControls())
+        default: stack.addArrangedSubview(pixelControls())
+        }
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: box.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: box.bottomAnchor)
+        ])
+
+        updateFluidBackgroundControls()
+        return box
+    }
+
+    private func captionLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text.uppercased())
+        label.font = .systemFont(ofSize: 11, weight: .heavy)
+        label.textColor = Self.starleeCream
+        return label
+    }
+
+    private func lookGallery() -> NSView {
+        let column = NSStackView()
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 8
+        var row: NSStackView?
+        for (index, look) in FluidBackgroundLooks.all.enumerated() {
+            if index % 4 == 0 {
+                let newRow = NSStackView()
+                newRow.orientation = .horizontal
+                newRow.alignment = .centerY
+                newRow.spacing = 8
+                column.addArrangedSubview(newRow)
+                row = newRow
+            }
+            row?.addArrangedSubview(makeLookTile(look))
+        }
+        return column
+    }
+
+    private func makeLookTile(_ look: FluidBackgroundLook) -> NSButton {
+        let button = NSButton(title: look.name, target: self, action: #selector(selectFluidLook(_:)))
+        styleSettingsActionButton(button)
+        button.identifier = NSUserInterfaceItemIdentifier(look.name)
+        if lookMatchesCurrent(look) {
+            // Active look reads as selected: navy fill + white label.
+            button.layer?.backgroundColor = Self.starleeNavy.withAlphaComponent(0.95).cgColor
+            button.layer?.borderColor = Self.starleeWhite.cgColor
+            button.attributedTitle = NSAttributedString(
+                string: look.name,
+                attributes: [
+                    .foregroundColor: Self.starleeWhite,
+                    .font: NSFont.systemFont(ofSize: 12, weight: .heavy)
+                ]
+            )
+        } else {
+            button.attributedTitle = NSAttributedString(
+                string: look.name,
+                attributes: [
+                    .foregroundColor: Self.starleeBlack,
+                    .font: NSFont.systemFont(ofSize: 12, weight: .bold)
+                ]
+            )
+        }
+        return button
+    }
+
+    private func lookMatchesCurrent(_ look: FluidBackgroundLook) -> Bool {
+        guard look.settings.kind == fluidBackground.kind else { return false }
+        // Two pixel-dither looks share a palette and differ only by threshold;
+        // each of the other engines has a single preset.
+        if look.settings.kind == "pixel-dither" {
+            return abs(fluidBackground.threshold - look.settings.threshold) < 0.001
+                && fluidBackground.pixelColor.uppercased() == look.settings.pixelColor.uppercased()
+        }
+        return true
+    }
+
+    private func flowFinishIndex(_ finish: String) -> Int {
+        switch finish {
+        case "sharp": return 0
+        case "glass": return 2
+        default: return 1
+        }
+    }
+
+    private func flowControls() -> NSView {
+        let controls = NSStackView()
+        controls.orientation = .vertical
+        controls.alignment = .leading
+        controls.spacing = 12
+
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+        let finishLabel = NSTextField(labelWithString: "Finish")
+        finishLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        finishLabel.textColor = Self.starleeWhite
+        finishLabel.widthAnchor.constraint(equalToConstant: 110).isActive = true
+        let segmented = NSSegmentedControl(
+            labels: ["Sharp", "Soft", "Glass"],
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(selectFlowFinish(_:))
+        )
+        segmented.selectedSegment = flowFinishIndex(fluidBackground.flowFinish)
+        let randomize = NSButton(title: "Randomize", target: self, action: #selector(randomizeSeed))
+        styleSettingsActionButton(randomize)
+        row.addArrangedSubview(finishLabel)
+        row.addArrangedSubview(segmented)
+        row.addArrangedSubview(randomize)
+        controls.addArrangedSubview(row)
+
+        let speedRow = sliderRow(
+            title: "Speed",
+            value: fluidBackground.speed,
+            min: 0.005,
+            max: 0.08,
+            action: #selector(changeFluidSpeed(_:))
+        )
+        fluidSpeedSlider = speedRow.slider
+        fluidSpeedValueLabel = speedRow.valueLabel
+        controls.addArrangedSubview(speedRow.view)
+        return controls
+    }
+
+    private func pixelControls() -> NSView {
         let controls = NSStackView()
         controls.orientation = .vertical
         controls.alignment = .leading
@@ -596,36 +786,151 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         controls.addArrangedSubview(thresholdRow.view)
         controls.addArrangedSubview(speedRow.view)
         controls.addArrangedSubview(zoomRow.view)
-        stack.addArrangedSubview(controls)
+        return controls
+    }
 
-        let looks = NSStackView()
-        looks.orientation = .horizontal
-        looks.alignment = .centerY
-        looks.spacing = 8
-        for look in FluidBackgroundLooks.all {
-            let button = NSButton(title: look.name, target: self, action: #selector(selectFluidLook(_:)))
-            styleSettingsActionButton(button)
-            button.attributedTitle = NSAttributedString(
-                string: look.name,
-                attributes: [
-                    .foregroundColor: Self.starleeBlack,
-                    .font: NSFont.systemFont(ofSize: 12, weight: .bold)
-                ]
-            )
-            button.identifier = NSUserInterfaceItemIdentifier(look.name)
-            looks.addArrangedSubview(button)
+    private func subtitleText(for kind: String) -> String {
+        switch kind {
+        case "flow": return "Flowing ribbon background · saved instantly"
+        case "aurora": return "Aurora gradient background · saved instantly"
+        case "dither": return "Animated halftone dither · saved instantly"
+        case "glass": return "Glass background · saved instantly"
+        default: return "Fluid pixel-dither background · saved instantly"
         }
-        stack.addArrangedSubview(looks)
+    }
 
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: box.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: box.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: box.bottomAnchor)
-        ])
+    /// Four-color palette row (navy / cream / black / white) for the aurora,
+    /// dither, and glass engines.
+    private func paletteRow() -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 18
+        let navy = paletteColor(title: "Navy", hex: fluidBackground.pixelColor, action: #selector(changePixelColor(_:)))
+        pixelColorWell = navy.well
+        let cream = paletteColor(title: "Cream", hex: fluidBackground.backgroundColor, action: #selector(changeBackgroundColor(_:)))
+        backgroundColorWell = cream.well
+        let black = paletteColor(title: "Black", hex: fluidBackground.black, action: #selector(changeBlackColor(_:)))
+        blackColorWell = black.well
+        let white = paletteColor(title: "White", hex: fluidBackground.white, action: #selector(changeWhiteColor(_:)))
+        whiteColorWell = white.well
+        row.addArrangedSubview(navy.view)
+        row.addArrangedSubview(cream.view)
+        row.addArrangedSubview(black.view)
+        row.addArrangedSubview(white.view)
+        return row
+    }
 
-        updateFluidBackgroundControls()
-        return box
+    private func paletteColor(title: String, hex: String, action: Selector) -> (view: NSView, well: NSColorWell) {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 6
+        let well = NSColorWell()
+        well.color = FluidBackgroundSettings.color(from: hex)
+        well.target = self
+        well.action = action
+        well.widthAnchor.constraint(equalToConstant: 38).isActive = true
+        well.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.textColor = Self.starleeCream
+        row.addArrangedSubview(well)
+        row.addArrangedSubview(label)
+        return (row, well)
+    }
+
+    private func auroraControls() -> NSView {
+        let controls = NSStackView()
+        controls.orientation = .vertical
+        controls.alignment = .leading
+        controls.spacing = 10
+
+        let intensityRow = sliderRow(title: "Intensity", value: fluidBackground.auroraIntensity, min: 0.2, max: 0.85, action: #selector(changeAuroraIntensity(_:)))
+        controls.addArrangedSubview(intensityRow.view)
+
+        let speedRow = sliderRow(title: "Speed", value: fluidBackground.speed, min: 0, max: 1.6, action: #selector(changeFluidSpeed(_:)))
+        fluidSpeedSlider = speedRow.slider
+        fluidSpeedValueLabel = speedRow.valueLabel
+        controls.addArrangedSubview(speedRow.view)
+
+        controls.addArrangedSubview(randomizeButton())
+        return controls
+    }
+
+    private func ditherControls() -> NSView {
+        let controls = NSStackView()
+        controls.orientation = .vertical
+        controls.alignment = .leading
+        controls.spacing = 9
+
+        let dotRow = sliderRow(title: "Dot size", value: fluidBackground.ditherDotSize, min: 3, max: 12, action: #selector(changeDitherDotSize(_:)))
+        controls.addArrangedSubview(dotRow.view)
+        let contrastRow = sliderRow(title: "Contrast", value: fluidBackground.ditherContrast, min: 0.7, max: 2.2, action: #selector(changeDitherContrast(_:)))
+        controls.addArrangedSubview(contrastRow.view)
+        let navyRow = sliderRow(title: "Navy buffer", value: fluidBackground.ditherNavyBuffer, min: 0.5, max: 2.5, action: #selector(changeDitherNavyBuffer(_:)))
+        controls.addArrangedSubview(navyRow.view)
+        let speedRow = sliderRow(title: "Speed", value: fluidBackground.speed, min: 0, max: 0.01, action: #selector(changeFluidSpeed(_:)))
+        fluidSpeedSlider = speedRow.slider
+        fluidSpeedValueLabel = speedRow.valueLabel
+        controls.addArrangedSubview(speedRow.view)
+
+        controls.addArrangedSubview(randomizeButton())
+        return controls
+    }
+
+    private func glassControls() -> NSView {
+        let controls = NSStackView()
+        controls.orientation = .vertical
+        controls.alignment = .leading
+        controls.spacing = 9
+
+        let modeRow = NSStackView()
+        modeRow.orientation = .horizontal
+        modeRow.alignment = .centerY
+        modeRow.spacing = 12
+        let modeLabel = NSTextField(labelWithString: "Mode")
+        modeLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        modeLabel.textColor = Self.starleeWhite
+        modeLabel.widthAnchor.constraint(equalToConstant: 110).isActive = true
+        let segmented = NSSegmentedControl(labels: ["Panes", "Blur only"], trackingMode: .selectOne, target: self, action: #selector(selectGlassMode(_:)))
+        segmented.selectedSegment = fluidBackground.glassMode == "blur" ? 1 : 0
+        modeRow.addArrangedSubview(modeLabel)
+        modeRow.addArrangedSubview(segmented)
+        controls.addArrangedSubview(modeRow)
+
+        let speedRow = sliderRow(title: "Speed", value: fluidBackground.speed, min: 0, max: 0.01, action: #selector(changeFluidSpeed(_:)))
+        fluidSpeedSlider = speedRow.slider
+        fluidSpeedValueLabel = speedRow.valueLabel
+        controls.addArrangedSubview(speedRow.view)
+
+        let softRow = sliderRow(title: "Softness", value: fluidBackground.glassSoftness, min: 0, max: 40, action: #selector(changeGlassSoftness(_:)))
+        controls.addArrangedSubview(softRow.view)
+        let brightRow = sliderRow(title: "Brightness", value: fluidBackground.glassBrightness, min: 0.6, max: 1.6, action: #selector(changeGlassBrightness(_:)))
+        controls.addArrangedSubview(brightRow.view)
+
+        if fluidBackground.glassMode != "blur" {
+            let panesRow = sliderRow(title: "Panes", value: fluidBackground.glassPanes, min: 8, max: 32, action: #selector(changeGlassPanes(_:)))
+            controls.addArrangedSubview(panesRow.view)
+            let refrRow = sliderRow(title: "Refraction", value: fluidBackground.glassRefraction, min: 0, max: 0.05, action: #selector(changeGlassRefraction(_:)))
+            controls.addArrangedSubview(refrRow.view)
+        }
+
+        controls.addArrangedSubview(randomizeButton())
+        return controls
+    }
+
+    private func randomizeButton() -> NSView {
+        let button = NSButton(title: "Randomize", target: self, action: #selector(randomizeSeed))
+        styleSettingsActionButton(button)
+        return button
+    }
+
+    /// Updates the value label of a slider built by `sliderRow` (it is the last
+    /// arranged subview of the slider's parent stack).
+    private func setRowValueLabel(_ slider: NSSlider, _ text: String) {
+        guard let row = slider.superview as? NSStackView else { return }
+        (row.arrangedSubviews.last as? NSTextField)?.stringValue = text
     }
 
     private func colorControl(title: String, hex: String, action: Selector) -> (view: NSView, well: NSColorWell) {
@@ -833,6 +1138,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             empty.font = SidebarBoxButton.labelFont
             empty.textColor = .white
             monthStack.addArrangedSubview(empty)
+            refreshSidebarHoles()
             return
         }
         for group in groups {
@@ -843,6 +1149,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             monthButtons[group.id] = button
             monthStack.addArrangedSubview(button)
         }
+        refreshSidebarHoles()
     }
 
     private func updateSidebarSelection() {
@@ -961,6 +1268,14 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             updateFluidBackgroundRenderers()
             return
         }
+        if webView == settingsWebView {
+            settingsWebViewLoaded = true
+            let payload = pendingSettingsPayload ?? settingsPayloadJSON()
+            pendingSettingsPayload = nil
+            webView.evaluateJavaScript("window.__starleeSettingsPayload = \(payload); if (window.renderStarleeSettings) { window.renderStarleeSettings(window.__starleeSettingsPayload); }", completionHandler: nil)
+            updateFluidBackgroundRenderers()
+            return
+        }
         libraryWebViewLoaded = true
         let payload = pendingLibraryPayload ?? libraryPayloadJSON()
         pendingLibraryPayload = nil
@@ -972,9 +1287,29 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         guard
             message.name == "starlee",
             let body = message.body as? [String: Any],
-            body["action"] as? String == "refresh"
+            let action = body["action"] as? String
         else { return }
-        refresh()
+        switch action {
+        case "refresh":
+            refresh()
+        case "setBackground":
+            if let settings = body["settings"] as? [String: Any] {
+                fluidBackground = FluidBackgroundSettings(payload: settings)
+                saveAndApplyFluidBackground()
+            }
+        case "openVault":
+            menuController?.openVault()
+        case "openBrowserSetup":
+            menuController?.browserSetup()
+        case "codexGuide":
+            showCodexGuide()
+        case "copyDiagnostics":
+            copySupportBundle()
+        case "import":
+            importDocument()
+        default:
+            break
+        }
     }
 
     private func updateActionButtons() {
@@ -1144,11 +1479,14 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let script = "if (window.applyStarleeBackgroundSettings) { window.applyStarleeBackgroundSettings(\(fluidBackground.webPayloadJSON)); }"
         appBackgroundWebView?.evaluateJavaScript(script, completionHandler: nil)
         libraryWebView?.evaluateJavaScript(script, completionHandler: nil)
+        settingsWebView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
     private func updateFluidBackgroundControls() {
         pixelColorWell?.color = FluidBackgroundSettings.color(from: fluidBackground.pixelColor)
         backgroundColorWell?.color = FluidBackgroundSettings.color(from: fluidBackground.backgroundColor)
+        blackColorWell?.color = FluidBackgroundSettings.color(from: fluidBackground.black)
+        whiteColorWell?.color = FluidBackgroundSettings.color(from: fluidBackground.white)
         pixelSizeSlider?.doubleValue = fluidBackground.pixelSize
         thresholdSlider?.doubleValue = fluidBackground.threshold
         fluidSpeedSlider?.doubleValue = fluidBackground.speed
@@ -1215,6 +1553,95 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             let look = FluidBackgroundLooks.all.first(where: { $0.name == name })
         else { return }
         fluidBackground = look.settings
+        // Procedural engines get a fresh seed so the field looks new every pick.
+        if fluidBackground.kind != "pixel-dither" {
+            fluidBackground.flowSeed = Double.random(in: 0...1)
+        }
+        saveAndApplyFluidBackground()
+        // Switching engines swaps which fine-tuning controls apply; rebuild the
+        // panel so it matches. Same-engine picks also refresh the selection.
+        if primaryView == .settings {
+            render()
+        }
+    }
+
+    @objc private func selectFlowFinish(_ sender: NSSegmentedControl) {
+        let finishes = ["sharp", "soft", "glass"]
+        let index = max(0, min(finishes.count - 1, sender.selectedSegment))
+        fluidBackground.flowFinish = finishes[index]
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func randomizeSeed() {
+        fluidBackground.flowSeed = Double.random(in: 0...1)
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func changeBlackColor(_ sender: NSColorWell) {
+        fluidBackground.black = FluidBackgroundSettings.hex(from: sender.color)
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func changeWhiteColor(_ sender: NSColorWell) {
+        fluidBackground.white = FluidBackgroundSettings.hex(from: sender.color)
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func changeAuroraIntensity(_ sender: NSSlider) {
+        fluidBackground.auroraIntensity = sender.doubleValue
+        setRowValueLabel(sender, formattedFluidValue(sender.doubleValue))
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func changeDitherDotSize(_ sender: NSSlider) {
+        let v = sender.doubleValue.rounded()
+        fluidBackground.ditherDotSize = v
+        setRowValueLabel(sender, formattedFluidValue(v))
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func changeDitherContrast(_ sender: NSSlider) {
+        fluidBackground.ditherContrast = sender.doubleValue
+        setRowValueLabel(sender, formattedFluidValue(sender.doubleValue))
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func changeDitherNavyBuffer(_ sender: NSSlider) {
+        fluidBackground.ditherNavyBuffer = sender.doubleValue
+        setRowValueLabel(sender, formattedFluidValue(sender.doubleValue))
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func selectGlassMode(_ sender: NSSegmentedControl) {
+        fluidBackground.glassMode = sender.selectedSegment == 1 ? "blur" : "panes"
+        saveAndApplyFluidBackground()
+        // Panes/Refraction controls only apply in panes mode; rebuild to match.
+        if primaryView == .settings { render() }
+    }
+
+    @objc private func changeGlassPanes(_ sender: NSSlider) {
+        let v = sender.doubleValue.rounded()
+        fluidBackground.glassPanes = v
+        setRowValueLabel(sender, formattedFluidValue(v))
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func changeGlassSoftness(_ sender: NSSlider) {
+        let v = sender.doubleValue.rounded()
+        fluidBackground.glassSoftness = v
+        setRowValueLabel(sender, formattedFluidValue(v))
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func changeGlassBrightness(_ sender: NSSlider) {
+        fluidBackground.glassBrightness = sender.doubleValue
+        setRowValueLabel(sender, formattedFluidValue(sender.doubleValue))
+        saveAndApplyFluidBackground()
+    }
+
+    @objc private func changeGlassRefraction(_ sender: NSSlider) {
+        fluidBackground.glassRefraction = sender.doubleValue
+        setRowValueLabel(sender, formattedFluidValue(sender.doubleValue))
         saveAndApplyFluidBackground()
     }
 
@@ -1274,6 +1701,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 }
 
+/// Sidebar nav plaque. Shares the Library article card surface system
+/// (`.capture-card` in renderer/styles.css, mirrored natively in
+/// `settingsCard`/`appearancePanel`): translucent navy fill so the solid-black
+/// sidebar shows through ~15% for subtle depth, a light card border that
+/// brightens on hover/selection, an 8pt corner radius, and a card-style drop
+/// shadow — formatted as a bold, outlined nav button. It does not bake any
+/// background image into the surface.
 private final class SidebarBoxButton: NSButton {
     static var labelFont: NSFont {
         NSFont(name: "Avenir Next Condensed Heavy", size: 26)
@@ -1282,19 +1716,32 @@ private final class SidebarBoxButton: NSButton {
             ?? .systemFont(ofSize: 24, weight: .heavy)
     }
 
-    private static let navy = NSColor(calibratedRed: 0.075, green: 0.157, blue: 0.294, alpha: 1)
-    private static let navyTop = NSColor(calibratedRed: 0.125, green: 0.260, blue: 0.440, alpha: 1)
-    private static let navyBottom = NSColor(calibratedRed: 0.018, green: 0.057, blue: 0.112, alpha: 1)
-    private static let navyHoverTop = NSColor(calibratedRed: 0.168, green: 0.328, blue: 0.520, alpha: 1)
-    private static let navyHoverBottom = NSColor(calibratedRed: 0.032, green: 0.088, blue: 0.170, alpha: 1)
-    private static let cream = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 1)
+    // Surface tokens mirror the Library article cards (.capture-card):
+    // navy #13284B (rgba(19,40,75,…)), light border, 8pt radius, card shadow.
+    // Exact card token: CSS `rgba(19, 40, 75, …)` in sRGB. The article cards are
+    // rendered by WebKit in sRGB, so the fill must use sRGB here too —
+    // calibratedRGB with the same numbers displays as a noticeably different tint.
+    private static let navy = NSColor(srgbRed: 19.0 / 255.0, green: 40.0 / 255.0, blue: 75.0 / 255.0, alpha: 1)
+    private static let cream = NSColor(srgbRed: 0.949, green: 0.890, blue: 0.714, alpha: 1)
+    static let cornerRadius: CGFloat = 8
+    private static let buttonHeight: CGFloat = 84
+    private static let plaqueInsetX: CGFloat = 6
+    private static let plaqueInsetY: CGFloat = 8
+
+    /// The plaque rectangle within the button's bounds. The sidebar cuts a hole
+    /// of exactly this shape so the app background shows through the translucent
+    /// navy fill; the plaque does not shift on hover/press so it stays aligned
+    /// with that hole.
+    var restingPlaqueRect: NSRect {
+        bounds.insetBy(dx: Self.plaqueInsetX, dy: Self.plaqueInsetY)
+    }
+
     private var trackingAreaRef: NSTrackingArea?
     private var isHovering = false
     private var isPressed = false
-    private let referenceImage: NSImage?
+    private var isSelected = false
 
     init(title: String) {
-        referenceImage = Self.referenceImage(for: title)
         super.init(frame: .zero)
         self.title = title
         isBordered = false
@@ -1305,7 +1752,7 @@ private final class SidebarBoxButton: NSButton {
         contentTintColor = .white
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 260).isActive = true
-        heightAnchor.constraint(equalToConstant: Self.height(for: referenceImage)).isActive = true
+        heightAnchor.constraint(equalToConstant: Self.buttonHeight).isActive = true
         updateAttributedTitle()
     }
 
@@ -1373,7 +1820,9 @@ private final class SidebarBoxButton: NSButton {
         return super.resignFirstResponder()
     }
 
-    func setSelected(_: Bool) {
+    func setSelected(_ selected: Bool) {
+        guard isSelected != selected else { return }
+        isSelected = selected
         needsDisplay = true
     }
 
@@ -1389,87 +1838,68 @@ private final class SidebarBoxButton: NSButton {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if let referenceImage {
-            drawReferenceImage(referenceImage)
-            return
-        }
+        let active = isSelected
+        // The plaque stays at its resting rect so it aligns with the hole the
+        // sidebar cuts behind it; hover/press are expressed through fill, border,
+        // and shadow only — never movement.
+        let plaque = restingPlaqueRect
+        let plaquePath = NSBezierPath(roundedRect: plaque, xRadius: Self.cornerRadius, yRadius: Self.cornerRadius)
 
-        let pressOffset: CGFloat = isPressed ? -1 : 0
-        let buttonRect = bounds.insetBy(dx: 8, dy: 10).offsetBy(dx: 0, dy: pressOffset)
-        let buttonPath = NSBezierPath(roundedRect: buttonRect, xRadius: 14, yRadius: 14)
-        let creamRect = buttonRect.insetBy(dx: 6, dy: 6)
-        let creamPath = NSBezierPath(roundedRect: creamRect, xRadius: 10, yRadius: 10)
-
+        // Card-style drop shadow + translucent navy fill (the card token,
+        // navy @ ~0.85). The button-shaped hole behind lets the live app
+        // background show through the remaining ~15%, matching the article cards.
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(isPressed ? 0.48 : 0.75)
-        shadow.shadowBlurRadius = isPressed ? 6 : 18
+        shadow.shadowColor = NSColor.black.withAlphaComponent(isPressed ? 0.22 : (isHovering ? 0.40 : 0.32))
+        shadow.shadowBlurRadius = isPressed ? 8 : (isHovering ? 22 : 16)
         shadow.shadowOffset = NSSize(width: 0, height: isPressed ? -3 : -8)
         shadow.set()
-        NSColor.black.setFill()
-        buttonPath.fill()
+        let fillAlpha: CGFloat = isPressed ? 0.90 : ((isHovering || active) ? 0.92 : 0.85)
+        Self.navy.withAlphaComponent(fillAlpha).setFill()
+        plaquePath.fill()
         NSGraphicsContext.restoreGraphicsState()
 
-        NSGraphicsContext.saveGraphicsState()
-        buttonPath.addClip()
-        let top = isPressed ? Self.navy : (isHovering ? Self.navyHoverTop : Self.navyTop)
-        let middle = isPressed ? Self.navyBottom : Self.navy
-        let bottom = isPressed ? NSColor.black : (isHovering ? Self.navyHoverBottom : Self.navyBottom)
-        NSGradient(colors: [top, middle, bottom])?.draw(in: buttonRect, angle: -90)
+        // Inner cream hairline = the retro double-border plaque treatment.
+        let innerRect = plaque.insetBy(dx: 5, dy: 5)
+        let innerRadius = max(Self.cornerRadius - 3, 2)
+        let innerPath = NSBezierPath(roundedRect: innerRect, xRadius: innerRadius, yRadius: innerRadius)
+        Self.cream.withAlphaComponent((isHovering || active) ? 0.92 : 0.78).setStroke()
+        innerPath.lineWidth = 1
+        innerPath.stroke()
 
-        let glossRect = NSRect(
-            x: buttonRect.minX,
-            y: buttonRect.midY + 1,
-            width: buttonRect.width,
-            height: buttonRect.height * 0.48
-        )
-        let glossPath = NSBezierPath()
-        glossPath.move(to: NSPoint(x: buttonRect.minX, y: glossRect.maxY))
-        glossPath.line(to: NSPoint(x: buttonRect.maxX, y: glossRect.maxY))
-        glossPath.line(to: NSPoint(x: buttonRect.maxX, y: glossRect.minY + 8))
-        glossPath.curve(
-            to: NSPoint(x: buttonRect.minX, y: glossRect.minY + 18),
-            controlPoint1: NSPoint(x: buttonRect.maxX * 0.72 + buttonRect.minX * 0.28, y: glossRect.minY - 10),
-            controlPoint2: NSPoint(x: buttonRect.maxX * 0.25 + buttonRect.minX * 0.75, y: glossRect.minY + 1)
-        )
-        glossPath.close()
-        glossPath.addClip()
-        NSGradient(colors: [
-            NSColor.white.withAlphaComponent(isPressed ? 0.08 : (isHovering ? 0.18 : 0.14)),
-            NSColor.white.withAlphaComponent(0.05)
-        ])?.draw(in: glossRect, angle: -90)
-        NSGraphicsContext.restoreGraphicsState()
+        // Outer border mirrors the card border exactly: white @ 0.42, full white
+        // on hover/selection.
+        let borderAlpha: CGFloat = (isHovering || active) ? 1.0 : 0.42
+        NSColor.white.withAlphaComponent(borderAlpha).setStroke()
+        plaquePath.lineWidth = 2
+        plaquePath.stroke()
 
-        NSColor.white.withAlphaComponent(isHovering ? 0.20 : 0.12).setStroke()
-        let topInset = NSBezierPath()
-        topInset.move(to: NSPoint(x: creamRect.minX + 7, y: creamRect.maxY - 2))
-        topInset.line(to: NSPoint(x: creamRect.maxX - 7, y: creamRect.maxY - 2))
-        topInset.lineWidth = 1
-        topInset.stroke()
+        // Selected: subtle outer glow ring so the active item reads as selected
+        // without becoming a different component.
+        if active {
+            NSColor.white.withAlphaComponent(0.30).setStroke()
+            let glow = NSBezierPath(
+                roundedRect: plaque.insetBy(dx: -3, dy: -3),
+                xRadius: Self.cornerRadius + 3,
+                yRadius: Self.cornerRadius + 3
+            )
+            glow.lineWidth = 2
+            glow.stroke()
+        }
 
-        NSColor.black.withAlphaComponent(isPressed ? 0.56 : 0.30).setStroke()
-        let bottomInset = NSBezierPath()
-        bottomInset.move(to: NSPoint(x: creamRect.minX + 7, y: creamRect.minY + 2))
-        bottomInset.line(to: NSPoint(x: creamRect.maxX - 7, y: creamRect.minY + 2))
-        bottomInset.lineWidth = isPressed ? 2 : 1
-        bottomInset.stroke()
-
-        NSColor.white.setStroke()
-        buttonPath.lineWidth = 3
-        buttonPath.stroke()
-
-        Self.cream.withAlphaComponent(0.82).setStroke()
-        creamPath.lineWidth = 1
-        creamPath.stroke()
-
-        if isHovering || window?.firstResponder === self {
-            NSColor.white.withAlphaComponent(isHovering ? 0.34 : 0.48).setStroke()
-            let focusPath = NSBezierPath(roundedRect: buttonRect.insetBy(dx: -3, dy: -3), xRadius: 17, yRadius: 17)
-            focusPath.lineWidth = isHovering ? 2 : 3
+        // Keyboard focus ring.
+        if window?.firstResponder === self {
+            Self.cream.withAlphaComponent(0.80).setStroke()
+            let focusPath = NSBezierPath(
+                roundedRect: plaque.insetBy(dx: -3, dy: -3),
+                xRadius: Self.cornerRadius + 3,
+                yRadius: Self.cornerRadius + 3
+            )
+            focusPath.lineWidth = 2
             focusPath.stroke()
         }
 
-        drawCenteredTitle(in: buttonRect)
+        drawCenteredTitle(in: plaque)
     }
 
     private func drawCenteredTitle(in rect: NSRect) {
@@ -1498,65 +1928,45 @@ private final class SidebarBoxButton: NSButton {
         shadow.shadowOffset = NSSize(width: 0, height: -1)
         return shadow
     }
+}
 
-    private static func referenceImage(for title: String) -> NSImage? {
-        let resourceName: String
-        switch title {
-        case "Library":
-            resourceName = "StarleeButtonLibrary"
-        case "Settings":
-            resourceName = "StarleeButtonSettings"
-        case "June 2026":
-            resourceName = "StarleeButtonJune2026"
-        default:
-            return nil
-        }
-        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "png") else {
-            return nil
-        }
-        return NSImage(contentsOf: url)
+/// A solid-black sidebar background that cuts button-shaped holes so the
+/// app background WebView behind the split view shows through the nav plaques
+/// only. The black field everywhere else stays fully opaque — the sidebar
+/// container is never made transparent as a whole. Each button then draws its
+/// translucent navy plaque over its hole, so the live, Settings-reactive
+/// background faintly shows through at ~15%, matching the article cards.
+private final class SidebarHoleBackgroundView: NSView {
+    var knockoutButtons: [SidebarBoxButton] = [] {
+        didSet { needsDisplay = true }
     }
 
-    private static func height(for image: NSImage?) -> CGFloat {
-        guard let image, image.size.width > 0 else { return 96 }
-        return 260 * image.size.height / image.size.width
+    override var isFlipped: Bool { false }
+
+    // Holes depend on the button frames, which Auto Layout resolves during the
+    // layout pass; redraw whenever that geometry can have changed.
+    override func layout() {
+        super.layout()
+        needsDisplay = true
     }
 
-    private func drawReferenceImage(_ image: NSImage) {
-        let drawRect = bounds.offsetBy(dx: 0, dy: isPressed ? -1 : 0)
-        NSGraphicsContext.saveGraphicsState()
-        if let context = NSGraphicsContext.current?.cgContext {
-            context.translateBy(x: 0, y: bounds.height)
-            context.scaleBy(x: 1, y: -1)
-            let flippedRect = NSRect(
-                x: drawRect.minX,
-                y: bounds.height - drawRect.maxY,
-                width: drawRect.width,
-                height: drawRect.height
+    override func draw(_ dirtyRect: NSRect) {
+        // Fill the whole sidebar black, then subtract each plaque rect with the
+        // even-odd rule. Unpainted holes are transparent, revealing the
+        // background WebView that sits behind the split view.
+        let path = NSBezierPath(rect: bounds)
+        path.windingRule = .evenOdd
+        for button in knockoutButtons where button.window === window && button.superview != nil {
+            let rect = button.convert(button.restingPlaqueRect, to: self)
+            path.append(
+                NSBezierPath(
+                    roundedRect: rect,
+                    xRadius: SidebarBoxButton.cornerRadius,
+                    yRadius: SidebarBoxButton.cornerRadius
+                )
             )
-            image.draw(in: flippedRect, from: .zero, operation: .sourceOver, fraction: isEnabled ? 1 : 0.55)
         }
-        NSGraphicsContext.restoreGraphicsState()
-
-        if isHovering {
-            NSColor.white.withAlphaComponent(0.08).setFill()
-            NSBezierPath(roundedRect: drawRect.insetBy(dx: 8, dy: 8), xRadius: 14, yRadius: 14).fill()
-            NSColor.white.withAlphaComponent(0.22).setStroke()
-            let glowPath = NSBezierPath(roundedRect: drawRect.insetBy(dx: 5, dy: 5), xRadius: 17, yRadius: 17)
-            glowPath.lineWidth = 2
-            glowPath.stroke()
-        }
-
-        if window?.firstResponder === self {
-            Self.cream.withAlphaComponent(0.80).setStroke()
-            let focusPath = NSBezierPath(roundedRect: drawRect.insetBy(dx: 3, dy: 3), xRadius: 16, yRadius: 16)
-            focusPath.lineWidth = 3
-            focusPath.stroke()
-        }
-
-        if isPressed {
-            NSColor.black.withAlphaComponent(0.16).setFill()
-            NSBezierPath(roundedRect: drawRect.insetBy(dx: 8, dy: 8), xRadius: 14, yRadius: 14).fill()
-        }
+        NSColor.black.setFill()
+        path.fill()
     }
 }
