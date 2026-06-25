@@ -10,14 +10,10 @@
     <div id="root" class="root">
       <canvas id="pixel-dither-background" aria-hidden="true"></canvas>
       <main class="library-shell" aria-label="Starlee Library">
-        <section class="hero-strip">
-          <div>
+        <section class="library-header" aria-label="Library tools">
+          <div class="title-box">
             <h1>Library</h1>
           </div>
-          <div class="status-pill" id="status-pill">Starlee</div>
-        </section>
-
-        <section class="tool-row" aria-label="Library tools">
           <label class="search-shell">
             <span aria-hidden="true">/</span>
             <input id="search-input" type="search" placeholder="Search saved articles, videos, notes">
@@ -25,13 +21,6 @@
         </section>
 
         <section class="shelf-section">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Recent captures</p>
-              <h2 id="month-heading">This shelf</h2>
-            </div>
-            <p id="result-count" class="count-label">0 items</p>
-          </div>
           <div id="card-row" class="card-row" aria-live="polite"></div>
           <p id="empty-state" class="empty-state" hidden>No captures match this search.</p>
         </section>

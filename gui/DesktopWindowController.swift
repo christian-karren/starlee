@@ -112,6 +112,10 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private let importButton = NSButton(title: "Import", target: nil, action: nil)
     private let contentStack = NSStackView()
     private let progress = NSProgressIndicator()
+    private static let starleeBlack = NSColor(calibratedWhite: 0, alpha: 1)
+    private static let starleeWhite = NSColor(calibratedWhite: 1, alpha: 1)
+    private static let starleeCream = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 1)
+    private static let starleeNavy = NSColor(calibratedRed: 0.075, green: 0.157, blue: 0.294, alpha: 1)
 
     init(client: StarleeClient, menuController: StatusMenuController) {
         self.client = client
@@ -271,24 +275,41 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         header.alignment = .centerY
         header.spacing = 12
 
-        let headerText = NSStackView()
-        headerText.orientation = .vertical
-        headerText.spacing = 3
-        titleLabel.font = .systemFont(ofSize: 26, weight: .bold)
-        subtitleLabel.font = .systemFont(ofSize: 13)
-        subtitleLabel.textColor = .secondaryLabelColor
-        headerText.addArrangedSubview(titleLabel)
-        headerText.addArrangedSubview(subtitleLabel)
+        let titleBox = NSBox()
+        titleBox.boxType = .custom
+        titleBox.cornerRadius = 0
+        titleBox.borderWidth = 3
+        titleBox.borderColor = Self.starleeBlack
+        titleBox.fillColor = Self.starleeWhite
+        titleBox.translatesAutoresizingMaskIntoConstraints = false
+        titleBox.wantsLayer = true
+        titleBox.layer?.shadowColor = Self.starleeBlack.cgColor
+        titleBox.layer?.shadowOpacity = 0.72
+        titleBox.layer?.shadowRadius = 0
+        titleBox.layer?.shadowOffset = NSSize(width: 6, height: -6)
+
+        titleLabel.font = .systemFont(ofSize: 34, weight: .heavy)
+        titleLabel.textColor = Self.starleeBlack
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleBox.addSubview(titleLabel)
+        NSLayoutConstraint.activate([
+            titleBox.widthAnchor.constraint(greaterThanOrEqualToConstant: 320),
+            titleBox.heightAnchor.constraint(equalToConstant: 58),
+            titleLabel.leadingAnchor.constraint(equalTo: titleBox.leadingAnchor, constant: 24),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleBox.trailingAnchor, constant: -24),
+            titleLabel.centerYAnchor.constraint(equalTo: titleBox.centerYAnchor)
+        ])
 
         progress.style = .spinning
         progress.controlSize = .small
         progress.isDisplayedWhenStopped = false
 
-        header.addArrangedSubview(headerText)
+        header.addArrangedSubview(titleBox)
         header.addArrangedSubview(NSView())
         header.addArrangedSubview(progress)
         headerView = header
         contentStack.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
 
         readinessLabel.font = .systemFont(ofSize: 13)
         readinessLabel.textColor = .secondaryLabelColor
@@ -351,11 +372,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 
     private func renderReadiness() {
-        let ready = doctor?["ok"] as? Bool == true
-        readinessLabel.isHidden = ready || primaryView != .settings
-        guard !readinessLabel.isHidden else { return }
-        let action = ((doctor?["next_actions"] as? [String]) ?? []).first ?? "Run setup or open Settings to repair Starlee."
-        readinessLabel.stringValue = "Setup needs attention: \(action)"
+        readinessLabel.isHidden = true
+        readinessLabel.stringValue = ""
     }
 
     private func renderLibrary() {
@@ -406,10 +424,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 
     private func renderSettings() {
         titleLabel.stringValue = "Settings"
-        titleLabel.textColor = NSColor(calibratedWhite: 0.08, alpha: 0.94)
+        titleLabel.textColor = Self.starleeBlack
         subtitleLabel.stringValue = "Setup, diagnostics, vault, import/export, and repair."
-        subtitleLabel.textColor = NSColor(calibratedWhite: 0.10, alpha: 0.68)
-        readinessLabel.textColor = NSColor(calibratedWhite: 0.10, alpha: 0.68)
+        readinessLabel.textColor = Self.starleeWhite
         let checks = checksByName()
         let bridge = (status()["bridge_health"] as? [String: Any]) ?? [:]
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
@@ -422,9 +439,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 
         let settingsStack = NSStackView()
         settingsStack.orientation = .vertical
-        settingsStack.alignment = .leading
-        settingsStack.spacing = 12
-        settingsStack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 12, right: 12)
+        settingsStack.alignment = .width
+        settingsStack.spacing = 18
+        settingsStack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 24, right: 10)
         settingsStack.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = settingsStack
 
@@ -484,17 +501,23 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private func appearancePanel() -> NSView {
         let box = NSBox()
         box.boxType = .custom
-        box.cornerRadius = 12
-        box.borderColor = NSColor(calibratedWhite: 1.0, alpha: 0.16)
-        box.fillColor = NSColor(calibratedWhite: 0.06, alpha: 0.86)
+        box.cornerRadius = 8
+        box.borderWidth = 2
+        box.borderColor = Self.starleeWhite.withAlphaComponent(0.48)
+        box.fillColor = Self.starleeNavy.withAlphaComponent(0.85)
         box.translatesAutoresizingMaskIntoConstraints = false
+        box.wantsLayer = true
+        box.layer?.shadowColor = Self.starleeBlack.cgColor
+        box.layer?.shadowOpacity = 0.32
+        box.layer?.shadowRadius = 16
+        box.layer?.shadowOffset = NSSize(width: 0, height: -8)
         box.widthAnchor.constraint(greaterThanOrEqualToConstant: 620).isActive = true
 
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 14
-        stack.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+        stack.spacing = 18
+        stack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
         stack.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(stack)
 
@@ -502,11 +525,11 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         titleStack.orientation = .vertical
         titleStack.spacing = 4
         let title = NSTextField(labelWithString: "Background")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
-        title.textColor = NSColor(calibratedWhite: 0.96, alpha: 0.95)
+        title.font = .systemFont(ofSize: 24, weight: .heavy)
+        title.textColor = Self.starleeWhite
         let subtitle = NSTextField(labelWithString: "Fluid pixel-dither background · saved instantly")
-        subtitle.font = .systemFont(ofSize: 12)
-        subtitle.textColor = NSColor(calibratedWhite: 0.92, alpha: 0.62)
+        subtitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        subtitle.textColor = Self.starleeCream
         titleStack.addArrangedSubview(title)
         titleStack.addArrangedSubview(subtitle)
         stack.addArrangedSubview(titleStack)
@@ -580,12 +603,12 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         looks.spacing = 8
         for look in FluidBackgroundLooks.all {
             let button = NSButton(title: look.name, target: self, action: #selector(selectFluidLook(_:)))
-            button.bezelStyle = .rounded
+            styleSettingsActionButton(button)
             button.attributedTitle = NSAttributedString(
                 string: look.name,
                 attributes: [
-                    .foregroundColor: NSColor(calibratedWhite: 0.94, alpha: 0.88),
-                    .font: NSFont.systemFont(ofSize: 12, weight: .medium)
+                    .foregroundColor: Self.starleeBlack,
+                    .font: NSFont.systemFont(ofSize: 12, weight: .bold)
                 ]
             )
             button.identifier = NSUserInterfaceItemIdentifier(look.name)
@@ -611,8 +634,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         row.spacing = 8
 
         let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textColor = NSColor(calibratedWhite: 0.92, alpha: 0.70)
+        label.font = .systemFont(ofSize: 12, weight: .bold)
+        label.textColor = Self.starleeWhite
         label.widthAnchor.constraint(equalToConstant: 110).isActive = true
 
         let well = NSColorWell()
@@ -638,16 +661,16 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         row.spacing = 8
 
         let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textColor = NSColor(calibratedWhite: 0.92, alpha: 0.70)
+        label.font = .systemFont(ofSize: 12, weight: .bold)
+        label.textColor = Self.starleeWhite
         label.widthAnchor.constraint(equalToConstant: 110).isActive = true
 
         let slider = NSSlider(value: value, minValue: min, maxValue: max, target: self, action: action)
         slider.widthAnchor.constraint(equalToConstant: 190).isActive = true
 
         let valueLabel = NSTextField(labelWithString: formattedFluidValue(value))
-        valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        valueLabel.textColor = NSColor(calibratedWhite: 0.92, alpha: 0.70)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .bold)
+        valueLabel.textColor = Self.starleeCream
         valueLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
 
         row.addArrangedSubview(label)
@@ -669,16 +692,22 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let box = NSBox()
         box.boxType = .custom
         box.cornerRadius = 8
-        box.borderColor = .separatorColor
-        box.fillColor = .controlBackgroundColor
+        box.borderWidth = 2
+        box.borderColor = Self.starleeWhite.withAlphaComponent(0.44)
+        box.fillColor = Self.starleeNavy.withAlphaComponent(0.85)
         box.translatesAutoresizingMaskIntoConstraints = false
+        box.wantsLayer = true
+        box.layer?.shadowColor = Self.starleeBlack.cgColor
+        box.layer?.shadowOpacity = 0.28
+        box.layer?.shadowRadius = 14
+        box.layer?.shadowOffset = NSSize(width: 0, height: -8)
         box.widthAnchor.constraint(greaterThanOrEqualToConstant: 560).isActive = true
 
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 14
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+        stack.spacing = 18
+        stack.edgeInsets = NSEdgeInsets(top: 18, left: 20, bottom: 18, right: 20)
         stack.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(stack)
 
@@ -686,15 +715,16 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         text.orientation = .vertical
         text.spacing = 4
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 18, weight: .heavy)
+        titleLabel.textColor = Self.starleeWhite
         let detailLabel = NSTextField(wrappingLabelWithString: detail.isEmpty ? "No detail available." : detail)
-        detailLabel.font = .systemFont(ofSize: 12)
-        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        detailLabel.textColor = Self.starleeCream
         text.addArrangedSubview(titleLabel)
         text.addArrangedSubview(detailLabel)
 
         let statusLabel = NSTextField(labelWithString: status)
-        statusLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        statusLabel.font = .systemFont(ofSize: 12, weight: .heavy)
         statusLabel.textColor = statusColor(status)
 
         stack.addArrangedSubview(text)
@@ -702,7 +732,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         stack.addArrangedSubview(statusLabel)
         if let actionTitle, let action {
             let button = NSButton(title: actionTitle, target: self, action: action)
-            button.bezelStyle = .rounded
+            styleSettingsActionButton(button)
             stack.addArrangedSubview(button)
         }
 
@@ -1028,12 +1058,33 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private func statusColor(_ status: String) -> NSColor {
         let lower = status.lowercased()
         if lower.contains("ready") || lower.contains("installed") || lower.contains("local") {
-            return .systemGreen
+            return Self.starleeWhite
         }
         if lower.contains("needs") || lower.contains("missing") {
-            return .systemOrange
+            return Self.starleeCream
         }
-        return .secondaryLabelColor
+        return Self.starleeCream
+    }
+
+    private func styleSettingsActionButton(_ button: NSButton) {
+        button.isBordered = false
+        button.bezelStyle = .regularSquare
+        button.wantsLayer = true
+        button.layer?.backgroundColor = Self.starleeWhite.cgColor
+        button.layer?.borderColor = Self.starleeBlack.cgColor
+        button.layer?.borderWidth = 2
+        button.layer?.cornerRadius = 0
+        button.contentTintColor = Self.starleeBlack
+        button.font = .systemFont(ofSize: 12, weight: .bold)
+        button.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 74).isActive = true
+        button.attributedTitle = NSAttributedString(
+            string: button.title,
+            attributes: [
+                .foregroundColor: Self.starleeBlack,
+                .font: NSFont.systemFont(ofSize: 12, weight: .bold)
+            ]
+        )
     }
 
     private func applyFluidBackground() {
