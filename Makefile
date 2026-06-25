@@ -11,7 +11,7 @@ test:
 	cargo clippy --all-targets -- -D warnings
 
 release:
-	cd sensor && npm install && npm test && npm run build
+	cd sensor && npm install && npm run build && npm test
 	cargo build --release --locked
 	./scripts/build-gui.sh
 
