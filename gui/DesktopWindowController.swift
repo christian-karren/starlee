@@ -233,7 +233,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 
         let divider = NSView()
         divider.wantsLayer = true
-        divider.layer?.backgroundColor = NSColor.white.cgColor
+        divider.layer?.backgroundColor = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 0.86).cgColor
         divider.translatesAutoresizingMaskIntoConstraints = false
         divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
         stack.addArrangedSubview(divider)
@@ -1186,13 +1186,18 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 
 private final class SidebarBoxButton: NSButton {
     static var labelFont: NSFont {
-        NSFont(name: "Avenir Next Demi Bold", size: 16)
+        NSFont(name: "Avenir Next Heavy", size: 15)
+            ?? NSFont(name: "Avenir Next Demi Bold", size: 15)
             ?? NSFont(name: "Helvetica Neue", size: 16)
             ?? .systemFont(ofSize: 16, weight: .bold)
     }
 
-    private static let normalColor = NSColor.white
-    private static let hoverColor = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 1)
+    private static let navy = NSColor(calibratedRed: 0.075, green: 0.157, blue: 0.294, alpha: 1)
+    private static let navyTop = NSColor(calibratedRed: 0.125, green: 0.260, blue: 0.440, alpha: 1)
+    private static let navyBottom = NSColor(calibratedRed: 0.018, green: 0.057, blue: 0.112, alpha: 1)
+    private static let navyHoverTop = NSColor(calibratedRed: 0.168, green: 0.328, blue: 0.520, alpha: 1)
+    private static let navyHoverBottom = NSColor(calibratedRed: 0.032, green: 0.088, blue: 0.170, alpha: 1)
+    private static let cream = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 1)
     private var trackingAreaRef: NSTrackingArea?
     private var isHovering = false
 
@@ -1204,19 +1209,10 @@ private final class SidebarBoxButton: NSButton {
         setButtonType(.momentaryChange)
         alignment = .center
         font = Self.labelFont
-        contentTintColor = .black
-        wantsLayer = true
+        contentTintColor = .white
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 188).isActive = true
-        heightAnchor.constraint(equalToConstant: 52).isActive = true
-        layer?.backgroundColor = Self.normalColor.cgColor
-        layer?.cornerRadius = 3
-        layer?.borderColor = NSColor.black.cgColor
-        layer?.borderWidth = 2
-        layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOpacity = 0.28
-        layer?.shadowOffset = CGSize(width: 3, height: -3)
-        layer?.shadowRadius = 0
+        heightAnchor.constraint(equalToConstant: 58).isActive = true
         updateAttributedTitle()
     }
 
@@ -1254,41 +1250,106 @@ private final class SidebarBoxButton: NSButton {
 
     override func mouseEntered(with event: NSEvent) {
         isHovering = true
-        applyFill(animated: true)
+        needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovering = false
-        applyFill(animated: true)
+        needsDisplay = true
     }
 
     func setSelected(_: Bool) {
-        applyFill(animated: false)
+        needsDisplay = true
     }
 
     private func updateAttributedTitle() {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
         attributedTitle = NSAttributedString(
             string: title,
             attributes: [
                 .font: Self.labelFont,
-                .foregroundColor: NSColor.black,
-                .paragraphStyle: paragraph
+                .foregroundColor: NSColor.white
             ]
         )
+        needsDisplay = true
     }
 
-    private func applyFill(animated: Bool) {
-        let color = isHovering ? Self.hoverColor : Self.normalColor
-        guard animated else {
-            layer?.backgroundColor = color.cgColor
-            return
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            animator().layer?.backgroundColor = color.cgColor
-        }
+    override func draw(_ dirtyRect: NSRect) {
+        let buttonRect = bounds.insetBy(dx: 5, dy: 6)
+        let outerPath = NSBezierPath(roundedRect: buttonRect, xRadius: 9, yRadius: 9)
+        let innerRect = buttonRect.insetBy(dx: 5, dy: 5)
+        let innerPath = NSBezierPath(roundedRect: innerRect, xRadius: 5, yRadius: 5)
+
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.64)
+        shadow.shadowBlurRadius = 5
+        shadow.shadowOffset = NSSize(width: 0, height: -3)
+        shadow.set()
+        NSColor.black.setFill()
+        outerPath.fill()
+        NSGraphicsContext.restoreGraphicsState()
+
+        NSGraphicsContext.saveGraphicsState()
+        outerPath.addClip()
+        let top = isHovering ? Self.navyHoverTop : Self.navyTop
+        let bottom = isHovering ? Self.navyHoverBottom : Self.navyBottom
+        NSGradient(colors: [top, Self.navy, bottom])?.draw(in: buttonRect, angle: -90)
+
+        let glossRect = NSRect(
+            x: buttonRect.minX + 2,
+            y: buttonRect.midY,
+            width: buttonRect.width - 4,
+            height: buttonRect.height * 0.44
+        )
+        let glossPath = NSBezierPath(roundedRect: glossRect, xRadius: 7, yRadius: 7)
+        glossPath.addClip()
+        NSGradient(colors: [
+            NSColor.white.withAlphaComponent(isHovering ? 0.28 : 0.20),
+            NSColor.white.withAlphaComponent(0.03)
+        ])?.draw(in: glossRect, angle: -90)
+        NSGraphicsContext.restoreGraphicsState()
+
+        NSColor.white.setStroke()
+        outerPath.lineWidth = 2
+        outerPath.stroke()
+
+        Self.cream.withAlphaComponent(0.82).setStroke()
+        innerPath.lineWidth = 1
+        innerPath.stroke()
+
+        NSColor.black.withAlphaComponent(0.32).setStroke()
+        let bottomLine = NSBezierPath()
+        bottomLine.move(to: NSPoint(x: innerRect.minX + 5, y: innerRect.minY + 2))
+        bottomLine.line(to: NSPoint(x: innerRect.maxX - 5, y: innerRect.minY + 2))
+        bottomLine.lineWidth = 1
+        bottomLine.stroke()
+
+        drawCenteredTitle(in: buttonRect)
+    }
+
+    private func drawCenteredTitle(in rect: NSRect) {
+        let text = title.uppercased()
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: Self.labelFont,
+            .foregroundColor: NSColor.white,
+            .shadow: textShadow
+        ]
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        let textSize = attributed.size()
+        let textRect = NSRect(
+            x: rect.midX - textSize.width / 2,
+            y: rect.midY - textSize.height / 2 + 1,
+            width: textSize.width,
+            height: textSize.height
+        )
+        attributed.draw(in: textRect)
+    }
+
+    private var textShadow: NSShadow {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.46)
+        shadow.shadowBlurRadius = 2
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        return shadow
     }
 }
