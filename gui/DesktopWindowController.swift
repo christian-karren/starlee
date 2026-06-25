@@ -208,7 +208,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let sidebar = NSView()
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         sidebar.wantsLayer = true
-        sidebar.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.88).cgColor
+        sidebar.layer?.backgroundColor = NSColor.black.cgColor
 
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -1092,6 +1092,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         rootSplitView?.layer?.backgroundColor = NSColor.clear.cgColor
         tableView.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.72)
         tableView.enclosingScrollView?.backgroundColor = tableView.backgroundColor
+        SidebarBoxButton.backgroundSettings = fluidBackground
+        [libraryButton, settingsButton].forEach { $0.needsDisplay = true }
+        monthButtons.values.forEach { $0.needsDisplay = true }
         updateFluidBackgroundControls()
         updateFluidBackgroundRenderers()
     }
@@ -1236,6 +1239,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 }
 
 private final class SidebarBoxButton: NSButton {
+    static var backgroundSettings: FluidBackgroundSettings = .default
+
     static var labelFont: NSFont {
         NSFont(name: "Avenir Next Condensed Heavy", size: 21)
             ?? NSFont(name: "Avenir Next Heavy", size: 20)
@@ -1243,7 +1248,7 @@ private final class SidebarBoxButton: NSButton {
             ?? .systemFont(ofSize: 20, weight: .heavy)
     }
 
-    private static let navy = NSColor(calibratedRed: 0.075, green: 0.157, blue: 0.294, alpha: 1)
+    private static let cardNavy = NSColor(calibratedRed: 19 / 255, green: 40 / 255, blue: 75 / 255, alpha: 1)
     private static let cream = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 1)
     private var trackingAreaRef: NSTrackingArea?
     private var isHovering = false
@@ -1350,29 +1355,24 @@ private final class SidebarBoxButton: NSButton {
         let buttonRect = bounds.insetBy(dx: 2, dy: 4).offsetBy(dx: 0, dy: pressOffset)
         let buttonPath = NSBezierPath(roundedRect: buttonRect, xRadius: 8, yRadius: 8)
         let selected = isSelected || state == .on
-        let fillAlpha: CGFloat = isPressed ? 0.66 : (selected ? 0.88 : (isHovering ? 0.80 : 0.70))
-        let borderAlpha: CGFloat = selected ? 0.92 : (isHovering ? 0.76 : 0.58)
+        let surfaceAlpha: CGFloat = isPressed ? 0.88 : (selected ? 0.94 : (isHovering ? 0.92 : 0.85))
+        let borderAlpha: CGFloat = selected ? 0.98 : (isHovering ? 0.86 : 0.42)
 
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(isPressed ? 0.24 : 0.42)
+        shadow.shadowColor = NSColor.black.withAlphaComponent(isPressed ? 0.22 : 0.32)
         shadow.shadowBlurRadius = isPressed ? 8 : 16
-        shadow.shadowOffset = NSSize(width: 0, height: isPressed ? -2 : -7)
+        shadow.shadowOffset = NSSize(width: 0, height: isPressed ? -2 : -8)
         shadow.set()
-        NSColor.black.withAlphaComponent(0.34).setFill()
+        NSColor.black.withAlphaComponent(0.30).setFill()
         buttonPath.fill()
         NSGraphicsContext.restoreGraphicsState()
 
         NSGraphicsContext.saveGraphicsState()
         buttonPath.addClip()
-        Self.navy.withAlphaComponent(fillAlpha).setFill()
+        drawActiveBackgroundInfluence(in: buttonRect)
+        Self.cardNavy.withAlphaComponent(surfaceAlpha).setFill()
         buttonPath.fill()
-
-        NSGradient(colors: [
-            NSColor.white.withAlphaComponent(isHovering ? 0.16 : 0.11),
-            NSColor.white.withAlphaComponent(0.02),
-            NSColor.black.withAlphaComponent(isPressed ? 0.24 : 0.10)
-        ])?.draw(in: buttonRect, angle: -90)
 
         let glossRect = NSRect(
             x: buttonRect.minX,
@@ -1392,19 +1392,26 @@ private final class SidebarBoxButton: NSButton {
         glossPath.close()
         glossPath.addClip()
         NSGradient(colors: [
-            NSColor.white.withAlphaComponent(isPressed ? 0.05 : (isHovering ? 0.15 : 0.10)),
-            NSColor.white.withAlphaComponent(0.02)
+            NSColor.white.withAlphaComponent(isPressed ? 0.018 : (isHovering ? 0.055 : 0.030)),
+            NSColor.white.withAlphaComponent(0.006)
         ])?.draw(in: glossRect, angle: -90)
         NSGraphicsContext.restoreGraphicsState()
 
         NSColor.white.withAlphaComponent(borderAlpha).setStroke()
-        buttonPath.lineWidth = selected ? 2.2 : 1.6
+        buttonPath.lineWidth = selected ? 2.6 : 2
         buttonPath.stroke()
 
-        NSColor.white.withAlphaComponent(isHovering ? 0.20 : 0.10).setStroke()
+        Self.cream.withAlphaComponent(isHovering || selected ? 0.78 : 0.58).setStroke()
         let innerPath = NSBezierPath(roundedRect: buttonRect.insetBy(dx: 4, dy: 4), xRadius: 5, yRadius: 5)
         innerPath.lineWidth = 1
         innerPath.stroke()
+
+        NSColor.black.withAlphaComponent(0.42).setStroke()
+        let lowerInset = NSBezierPath()
+        lowerInset.move(to: NSPoint(x: buttonRect.minX + 9, y: buttonRect.minY + 6))
+        lowerInset.line(to: NSPoint(x: buttonRect.maxX - 9, y: buttonRect.minY + 6))
+        lowerInset.lineWidth = 1
+        lowerInset.stroke()
 
         if selected || isHovering || window?.firstResponder === self {
             NSColor.white.withAlphaComponent(selected ? 0.34 : (isHovering ? 0.26 : 0.44)).setStroke()
@@ -1414,6 +1421,33 @@ private final class SidebarBoxButton: NSButton {
         }
 
         drawIconAndTitle(in: buttonRect)
+    }
+
+    private func drawActiveBackgroundInfluence(in rect: NSRect) {
+        let settings = Self.backgroundSettings
+        let paper = FluidBackgroundSettings.color(from: settings.backgroundColor)
+        let pixel = FluidBackgroundSettings.color(from: settings.pixelColor)
+        paper.withAlphaComponent(0.34).setFill()
+        NSBezierPath(rect: rect).fill()
+
+        let block = max(3, CGFloat(settings.pixelSize))
+        let columns = Int(rect.width / block) + 1
+        let rows = Int(rect.height / block) + 1
+        let threshold = UInt32(max(68, min(94, Int(settings.threshold * 160 + 35))))
+        let seed: UInt32 = title == "Library" ? 137 : (title == "Settings" ? 251 : 389)
+        for row in 0..<rows {
+            for column in 0..<columns {
+                let value = (UInt32(row * 37 + column * 53) &* seed) % 100
+                guard value > threshold else { continue }
+                pixel.withAlphaComponent(value > 94 ? 0.32 : 0.20).setFill()
+                NSBezierPath(rect: NSRect(
+                    x: rect.minX + CGFloat(column) * block,
+                    y: rect.minY + CGFloat(row) * block,
+                    width: min(block, rect.maxX - (rect.minX + CGFloat(column) * block)),
+                    height: min(block, rect.maxY - (rect.minY + CGFloat(row) * block))
+                )).fill()
+            }
+        }
     }
 
     private func drawIconAndTitle(in rect: NSRect) {
@@ -1445,6 +1479,7 @@ private final class SidebarBoxButton: NSButton {
 
         switch title {
         case "Library":
+            Self.cream.setFill()
             let book = NSBezierPath(roundedRect: rect.insetBy(dx: 3, dy: 1), xRadius: 2, yRadius: 2)
             book.fill()
             NSColor.black.withAlphaComponent(0.55).setFill()
