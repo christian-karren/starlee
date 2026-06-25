@@ -1201,8 +1201,10 @@ private final class SidebarBoxButton: NSButton {
     private var trackingAreaRef: NSTrackingArea?
     private var isHovering = false
     private var isPressed = false
+    private let referenceImage: NSImage?
 
     init(title: String) {
+        referenceImage = Self.referenceImage(for: title)
         super.init(frame: .zero)
         self.title = title
         isBordered = false
@@ -1213,7 +1215,7 @@ private final class SidebarBoxButton: NSButton {
         contentTintColor = .white
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 260).isActive = true
-        heightAnchor.constraint(equalToConstant: 96).isActive = true
+        heightAnchor.constraint(equalToConstant: Self.height(for: referenceImage)).isActive = true
         updateAttributedTitle()
     }
 
@@ -1297,6 +1299,11 @@ private final class SidebarBoxButton: NSButton {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        if let referenceImage {
+            drawReferenceImage(referenceImage)
+            return
+        }
+
         let pressOffset: CGFloat = isPressed ? -1 : 0
         let buttonRect = bounds.insetBy(dx: 8, dy: 10).offsetBy(dx: 0, dy: pressOffset)
         let buttonPath = NSBezierPath(roundedRect: buttonRect, xRadius: 14, yRadius: 14)
@@ -1400,5 +1407,66 @@ private final class SidebarBoxButton: NSButton {
         shadow.shadowBlurRadius = 2.5
         shadow.shadowOffset = NSSize(width: 0, height: -1)
         return shadow
+    }
+
+    private static func referenceImage(for title: String) -> NSImage? {
+        let resourceName: String
+        switch title {
+        case "Library":
+            resourceName = "StarleeButtonLibrary"
+        case "Settings":
+            resourceName = "StarleeButtonSettings"
+        case "June 2026":
+            resourceName = "StarleeButtonJune2026"
+        default:
+            return nil
+        }
+        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "png") else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
+    }
+
+    private static func height(for image: NSImage?) -> CGFloat {
+        guard let image, image.size.width > 0 else { return 96 }
+        return 260 * image.size.height / image.size.width
+    }
+
+    private func drawReferenceImage(_ image: NSImage) {
+        let drawRect = bounds.offsetBy(dx: 0, dy: isPressed ? -1 : 0)
+        NSGraphicsContext.saveGraphicsState()
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.translateBy(x: 0, y: bounds.height)
+            context.scaleBy(x: 1, y: -1)
+            let flippedRect = NSRect(
+                x: drawRect.minX,
+                y: bounds.height - drawRect.maxY,
+                width: drawRect.width,
+                height: drawRect.height
+            )
+            image.draw(in: flippedRect, from: .zero, operation: .sourceOver, fraction: isEnabled ? 1 : 0.55)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+
+        if isHovering {
+            NSColor.white.withAlphaComponent(0.08).setFill()
+            NSBezierPath(roundedRect: drawRect.insetBy(dx: 8, dy: 8), xRadius: 14, yRadius: 14).fill()
+            NSColor.white.withAlphaComponent(0.22).setStroke()
+            let glowPath = NSBezierPath(roundedRect: drawRect.insetBy(dx: 5, dy: 5), xRadius: 17, yRadius: 17)
+            glowPath.lineWidth = 2
+            glowPath.stroke()
+        }
+
+        if window?.firstResponder === self {
+            Self.cream.withAlphaComponent(0.80).setStroke()
+            let focusPath = NSBezierPath(roundedRect: drawRect.insetBy(dx: 3, dy: 3), xRadius: 16, yRadius: 16)
+            focusPath.lineWidth = 3
+            focusPath.stroke()
+        }
+
+        if isPressed {
+            NSColor.black.withAlphaComponent(0.16).setFill()
+            NSBezierPath(roundedRect: drawRect.insetBy(dx: 8, dy: 8), xRadius: 14, yRadius: 14).fill()
+        }
     }
 }
