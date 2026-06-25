@@ -187,7 +187,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             split.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             split.topAnchor.constraint(equalTo: root.topAnchor),
             split.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 300)
+            sidebar.widthAnchor.constraint(equalToConstant: 240)
         ])
         return root
     }
@@ -208,13 +208,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let sidebar = NSView()
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         sidebar.wantsLayer = true
-        sidebar.layer?.backgroundColor = NSColor.black.cgColor
+        sidebar.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.88).cgColor
 
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .width
-        stack.spacing = 28
-        stack.edgeInsets = NSEdgeInsets(top: 30, left: 20, bottom: 20, right: 20)
+        stack.spacing = 22
+        stack.edgeInsets = NSEdgeInsets(top: 24, left: 16, bottom: 16, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
         sidebar.addSubview(stack)
 
@@ -223,7 +223,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             .flatMap(NSImage.init(contentsOf:))
         wordmark.imageScaling = .scaleProportionallyUpOrDown
         wordmark.translatesAutoresizingMaskIntoConstraints = false
-        wordmark.heightAnchor.constraint(equalToConstant: 106).isActive = true
+        wordmark.heightAnchor.constraint(equalToConstant: 85).isActive = true
         stack.addArrangedSubview(wordmark)
 
         configureSidebarButton(libraryButton, action: #selector(showLibrary))
@@ -232,7 +232,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let navStack = NSStackView(views: [libraryButton, settingsButton])
         navStack.orientation = .vertical
         navStack.alignment = .width
-        navStack.spacing = 22
+        navStack.spacing = 18
         stack.addArrangedSubview(navStack)
 
         let divider = NSView()
@@ -244,7 +244,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 
         monthStack.orientation = .vertical
         monthStack.alignment = .width
-        monthStack.spacing = 22
+        monthStack.spacing = 18
         stack.addArrangedSubview(monthStack)
         stack.addArrangedSubview(NSView())
 
@@ -1237,25 +1237,20 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 
 private final class SidebarBoxButton: NSButton {
     static var labelFont: NSFont {
-        NSFont(name: "Avenir Next Condensed Heavy", size: 26)
-            ?? NSFont(name: "Avenir Next Heavy", size: 24)
-            ?? NSFont(name: "Helvetica Neue Condensed Black", size: 24)
-            ?? .systemFont(ofSize: 24, weight: .heavy)
+        NSFont(name: "Avenir Next Condensed Heavy", size: 21)
+            ?? NSFont(name: "Avenir Next Heavy", size: 20)
+            ?? NSFont(name: "Helvetica Neue Condensed Black", size: 20)
+            ?? .systemFont(ofSize: 20, weight: .heavy)
     }
 
     private static let navy = NSColor(calibratedRed: 0.075, green: 0.157, blue: 0.294, alpha: 1)
-    private static let navyTop = NSColor(calibratedRed: 0.125, green: 0.260, blue: 0.440, alpha: 1)
-    private static let navyBottom = NSColor(calibratedRed: 0.018, green: 0.057, blue: 0.112, alpha: 1)
-    private static let navyHoverTop = NSColor(calibratedRed: 0.168, green: 0.328, blue: 0.520, alpha: 1)
-    private static let navyHoverBottom = NSColor(calibratedRed: 0.032, green: 0.088, blue: 0.170, alpha: 1)
     private static let cream = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 1)
     private var trackingAreaRef: NSTrackingArea?
     private var isHovering = false
     private var isPressed = false
-    private let referenceImage: NSImage?
+    private var isSelected = false
 
     init(title: String) {
-        referenceImage = Self.referenceImage(for: title)
         super.init(frame: .zero)
         self.title = title
         isBordered = false
@@ -1265,8 +1260,8 @@ private final class SidebarBoxButton: NSButton {
         font = Self.labelFont
         contentTintColor = .white
         translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(equalToConstant: 260).isActive = true
-        heightAnchor.constraint(equalToConstant: Self.height(for: referenceImage)).isActive = true
+        widthAnchor.constraint(equalToConstant: 208).isActive = true
+        heightAnchor.constraint(equalToConstant: 76).isActive = true
         updateAttributedTitle()
     }
 
@@ -1334,7 +1329,8 @@ private final class SidebarBoxButton: NSButton {
         return super.resignFirstResponder()
     }
 
-    func setSelected(_: Bool) {
+    func setSelected(_ selected: Bool) {
+        isSelected = selected
         needsDisplay = true
     }
 
@@ -1350,39 +1346,39 @@ private final class SidebarBoxButton: NSButton {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if let referenceImage {
-            drawReferenceImage(referenceImage)
-            return
-        }
-
         let pressOffset: CGFloat = isPressed ? -1 : 0
-        let buttonRect = bounds.insetBy(dx: 8, dy: 10).offsetBy(dx: 0, dy: pressOffset)
-        let buttonPath = NSBezierPath(roundedRect: buttonRect, xRadius: 14, yRadius: 14)
-        let creamRect = buttonRect.insetBy(dx: 6, dy: 6)
-        let creamPath = NSBezierPath(roundedRect: creamRect, xRadius: 10, yRadius: 10)
+        let buttonRect = bounds.insetBy(dx: 2, dy: 4).offsetBy(dx: 0, dy: pressOffset)
+        let buttonPath = NSBezierPath(roundedRect: buttonRect, xRadius: 8, yRadius: 8)
+        let selected = isSelected || state == .on
+        let fillAlpha: CGFloat = isPressed ? 0.66 : (selected ? 0.88 : (isHovering ? 0.80 : 0.70))
+        let borderAlpha: CGFloat = selected ? 0.92 : (isHovering ? 0.76 : 0.58)
 
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(isPressed ? 0.48 : 0.75)
-        shadow.shadowBlurRadius = isPressed ? 6 : 18
-        shadow.shadowOffset = NSSize(width: 0, height: isPressed ? -3 : -8)
+        shadow.shadowColor = NSColor.black.withAlphaComponent(isPressed ? 0.24 : 0.42)
+        shadow.shadowBlurRadius = isPressed ? 8 : 16
+        shadow.shadowOffset = NSSize(width: 0, height: isPressed ? -2 : -7)
         shadow.set()
-        NSColor.black.setFill()
+        NSColor.black.withAlphaComponent(0.34).setFill()
         buttonPath.fill()
         NSGraphicsContext.restoreGraphicsState()
 
         NSGraphicsContext.saveGraphicsState()
         buttonPath.addClip()
-        let top = isPressed ? Self.navy : (isHovering ? Self.navyHoverTop : Self.navyTop)
-        let middle = isPressed ? Self.navyBottom : Self.navy
-        let bottom = isPressed ? NSColor.black : (isHovering ? Self.navyHoverBottom : Self.navyBottom)
-        NSGradient(colors: [top, middle, bottom])?.draw(in: buttonRect, angle: -90)
+        Self.navy.withAlphaComponent(fillAlpha).setFill()
+        buttonPath.fill()
+
+        NSGradient(colors: [
+            NSColor.white.withAlphaComponent(isHovering ? 0.16 : 0.11),
+            NSColor.white.withAlphaComponent(0.02),
+            NSColor.black.withAlphaComponent(isPressed ? 0.24 : 0.10)
+        ])?.draw(in: buttonRect, angle: -90)
 
         let glossRect = NSRect(
             x: buttonRect.minX,
             y: buttonRect.midY + 1,
             width: buttonRect.width,
-            height: buttonRect.height * 0.48
+            height: buttonRect.height * 0.46
         )
         let glossPath = NSBezierPath()
         glossPath.move(to: NSPoint(x: buttonRect.minX, y: glossRect.maxY))
@@ -1396,60 +1392,93 @@ private final class SidebarBoxButton: NSButton {
         glossPath.close()
         glossPath.addClip()
         NSGradient(colors: [
-            NSColor.white.withAlphaComponent(isPressed ? 0.08 : (isHovering ? 0.18 : 0.14)),
-            NSColor.white.withAlphaComponent(0.05)
+            NSColor.white.withAlphaComponent(isPressed ? 0.05 : (isHovering ? 0.15 : 0.10)),
+            NSColor.white.withAlphaComponent(0.02)
         ])?.draw(in: glossRect, angle: -90)
         NSGraphicsContext.restoreGraphicsState()
 
-        NSColor.white.withAlphaComponent(isHovering ? 0.20 : 0.12).setStroke()
-        let topInset = NSBezierPath()
-        topInset.move(to: NSPoint(x: creamRect.minX + 7, y: creamRect.maxY - 2))
-        topInset.line(to: NSPoint(x: creamRect.maxX - 7, y: creamRect.maxY - 2))
-        topInset.lineWidth = 1
-        topInset.stroke()
-
-        NSColor.black.withAlphaComponent(isPressed ? 0.56 : 0.30).setStroke()
-        let bottomInset = NSBezierPath()
-        bottomInset.move(to: NSPoint(x: creamRect.minX + 7, y: creamRect.minY + 2))
-        bottomInset.line(to: NSPoint(x: creamRect.maxX - 7, y: creamRect.minY + 2))
-        bottomInset.lineWidth = isPressed ? 2 : 1
-        bottomInset.stroke()
-
-        NSColor.white.setStroke()
-        buttonPath.lineWidth = 3
+        NSColor.white.withAlphaComponent(borderAlpha).setStroke()
+        buttonPath.lineWidth = selected ? 2.2 : 1.6
         buttonPath.stroke()
 
-        Self.cream.withAlphaComponent(0.82).setStroke()
-        creamPath.lineWidth = 1
-        creamPath.stroke()
+        NSColor.white.withAlphaComponent(isHovering ? 0.20 : 0.10).setStroke()
+        let innerPath = NSBezierPath(roundedRect: buttonRect.insetBy(dx: 4, dy: 4), xRadius: 5, yRadius: 5)
+        innerPath.lineWidth = 1
+        innerPath.stroke()
 
-        if isHovering || window?.firstResponder === self {
-            NSColor.white.withAlphaComponent(isHovering ? 0.34 : 0.48).setStroke()
-            let focusPath = NSBezierPath(roundedRect: buttonRect.insetBy(dx: -3, dy: -3), xRadius: 17, yRadius: 17)
+        if selected || isHovering || window?.firstResponder === self {
+            NSColor.white.withAlphaComponent(selected ? 0.34 : (isHovering ? 0.26 : 0.44)).setStroke()
+            let focusPath = NSBezierPath(roundedRect: buttonRect.insetBy(dx: -2, dy: -2), xRadius: 10, yRadius: 10)
             focusPath.lineWidth = isHovering ? 2 : 3
             focusPath.stroke()
         }
 
-        drawCenteredTitle(in: buttonRect)
+        drawIconAndTitle(in: buttonRect)
     }
 
-    private func drawCenteredTitle(in rect: NSRect) {
+    private func drawIconAndTitle(in rect: NSRect) {
         let text = title.uppercased()
+        let iconRect = NSRect(x: rect.minX + 28, y: rect.midY - 12, width: 24, height: 24)
+        drawIcon(in: iconRect)
+
         let attributes: [NSAttributedString.Key: Any] = [
             .font: Self.labelFont,
             .foregroundColor: NSColor.white,
-            .kern: 2.4,
+            .kern: 1.8,
             .shadow: textShadow
         ]
         let attributed = NSAttributedString(string: text, attributes: attributes)
         let textSize = attributed.size()
         let textRect = NSRect(
-            x: rect.midX - textSize.width / 2,
-            y: rect.midY - textSize.height / 2 + 2,
-            width: textSize.width,
+            x: rect.minX + 74,
+            y: rect.midY - textSize.height / 2 + 1,
+            width: max(0, rect.maxX - rect.minX - 86),
             height: textSize.height
         )
         attributed.draw(in: textRect)
+    }
+
+    private func drawIcon(in rect: NSRect) {
+        NSGraphicsContext.saveGraphicsState()
+        NSColor.white.setFill()
+        NSColor.white.setStroke()
+
+        switch title {
+        case "Library":
+            let book = NSBezierPath(roundedRect: rect.insetBy(dx: 3, dy: 1), xRadius: 2, yRadius: 2)
+            book.fill()
+            NSColor.black.withAlphaComponent(0.55).setFill()
+            NSBezierPath(rect: NSRect(x: rect.minX + 8, y: rect.minY + 5, width: 2, height: rect.height - 10)).fill()
+            NSColor.black.withAlphaComponent(0.35).setStroke()
+            let pageLine = NSBezierPath()
+            pageLine.move(to: NSPoint(x: rect.minX + 10, y: rect.maxY - 6))
+            pageLine.line(to: NSPoint(x: rect.maxX - 5, y: rect.maxY - 6))
+            pageLine.lineWidth = 1.2
+            pageLine.stroke()
+        case "Settings":
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            for index in 0..<8 {
+                let angle = CGFloat(index) * .pi / 4
+                let toothCenter = NSPoint(
+                    x: center.x + cos(angle) * 8,
+                    y: center.y + sin(angle) * 8
+                )
+                NSBezierPath(ovalIn: NSRect(x: toothCenter.x - 2.6, y: toothCenter.y - 2.6, width: 5.2, height: 5.2)).fill()
+            }
+            NSBezierPath(ovalIn: rect.insetBy(dx: 5, dy: 5)).fill()
+            NSColor.black.withAlphaComponent(0.58).setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 10, dy: 10)).fill()
+        default:
+            let calendar = NSBezierPath(roundedRect: rect.insetBy(dx: 2, dy: 3), xRadius: 2, yRadius: 2)
+            calendar.lineWidth = 2
+            calendar.stroke()
+            NSBezierPath(rect: NSRect(x: rect.minX + 4, y: rect.maxY - 8, width: rect.width - 8, height: 2)).fill()
+            NSBezierPath(roundedRect: NSRect(x: rect.minX + 7, y: rect.maxY - 4, width: 3, height: 6), xRadius: 1, yRadius: 1).fill()
+            NSBezierPath(roundedRect: NSRect(x: rect.maxX - 10, y: rect.maxY - 4, width: 3, height: 6), xRadius: 1, yRadius: 1).fill()
+            NSBezierPath(rect: NSRect(x: rect.minX + 8, y: rect.minY + 8, width: 3, height: 3)).fill()
+            NSBezierPath(rect: NSRect(x: rect.minX + 14, y: rect.minY + 8, width: 3, height: 3)).fill()
+        }
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private var textShadow: NSShadow {
@@ -1458,66 +1487,5 @@ private final class SidebarBoxButton: NSButton {
         shadow.shadowBlurRadius = 2.5
         shadow.shadowOffset = NSSize(width: 0, height: -1)
         return shadow
-    }
-
-    private static func referenceImage(for title: String) -> NSImage? {
-        let resourceName: String
-        switch title {
-        case "Library":
-            resourceName = "StarleeButtonLibrary"
-        case "Settings":
-            resourceName = "StarleeButtonSettings"
-        case "June 2026":
-            resourceName = "StarleeButtonJune2026"
-        default:
-            return nil
-        }
-        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "png") else {
-            return nil
-        }
-        return NSImage(contentsOf: url)
-    }
-
-    private static func height(for image: NSImage?) -> CGFloat {
-        guard let image, image.size.width > 0 else { return 96 }
-        return 260 * image.size.height / image.size.width
-    }
-
-    private func drawReferenceImage(_ image: NSImage) {
-        let drawRect = bounds.offsetBy(dx: 0, dy: isPressed ? -1 : 0)
-        NSGraphicsContext.saveGraphicsState()
-        if let context = NSGraphicsContext.current?.cgContext {
-            context.translateBy(x: 0, y: bounds.height)
-            context.scaleBy(x: 1, y: -1)
-            let flippedRect = NSRect(
-                x: drawRect.minX,
-                y: bounds.height - drawRect.maxY,
-                width: drawRect.width,
-                height: drawRect.height
-            )
-            image.draw(in: flippedRect, from: .zero, operation: .sourceOver, fraction: isEnabled ? 1 : 0.55)
-        }
-        NSGraphicsContext.restoreGraphicsState()
-
-        if isHovering {
-            NSColor.white.withAlphaComponent(0.08).setFill()
-            NSBezierPath(roundedRect: drawRect.insetBy(dx: 8, dy: 8), xRadius: 14, yRadius: 14).fill()
-            NSColor.white.withAlphaComponent(0.22).setStroke()
-            let glowPath = NSBezierPath(roundedRect: drawRect.insetBy(dx: 5, dy: 5), xRadius: 17, yRadius: 17)
-            glowPath.lineWidth = 2
-            glowPath.stroke()
-        }
-
-        if window?.firstResponder === self {
-            Self.cream.withAlphaComponent(0.80).setStroke()
-            let focusPath = NSBezierPath(roundedRect: drawRect.insetBy(dx: 3, dy: 3), xRadius: 16, yRadius: 16)
-            focusPath.lineWidth = 3
-            focusPath.stroke()
-        }
-
-        if isPressed {
-            NSColor.black.withAlphaComponent(0.16).setFill()
-            NSBezierPath(roundedRect: drawRect.insetBy(dx: 8, dy: 8), xRadius: 14, yRadius: 14).fill()
-        }
     }
 }
