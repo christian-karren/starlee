@@ -278,11 +278,13 @@ pub struct Status {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BridgeHealth {
     pub ok: bool,
+    pub chrome_setup: ChromeSetupStatus,
     pub extension_setup_present: bool,
     pub extension_config_present: bool,
     pub checked_in_recently: bool,
     pub browser: Option<String>,
     pub extension_version: Option<String>,
+    pub extension_build: Option<String>,
     pub can_capture_active_tab: bool,
     pub last_hello_at: Option<String>,
     pub last_request_status: Option<String>,
@@ -291,6 +293,18 @@ pub struct BridgeHealth {
     pub recommended_next_action: String,
     #[serde(default)]
     pub recent_diagnostics: Vec<CaptureDiagnosticEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChromeSetupStatus {
+    pub installed: bool,
+    pub checked_in_recently: bool,
+    pub permission_needed: bool,
+    pub capture_test_passed: bool,
+    pub capture_test_passed_at: Option<String>,
+    pub state: String,
+    pub detail: String,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

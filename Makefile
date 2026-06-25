@@ -5,7 +5,7 @@ build:
 	cargo build
 
 test:
-	cd sensor && npm install && npm test && npm run build
+	cd sensor && npm install && npm run build && npm test
 	cargo fmt --check
 	cargo test
 	cargo clippy --all-targets -- -D warnings

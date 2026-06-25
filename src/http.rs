@@ -489,6 +489,66 @@ mod tests {
     }
 
     #[test]
+    fn bridge_health_reports_chrome_setup_product_states() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = test_engine(temp.path());
+        let missing = engine.bridge_health()?;
+        assert_eq!(missing.chrome_setup.state, "install_needed");
+        assert!(!missing.chrome_setup.installed);
+
+        write_extension_assets(temp.path(), true)?;
+        engine.record_extension_hello(
+            Some("Chrome".into()),
+            Some("0.1.0".into()),
+            Some("main@abc123".into()),
+            true,
+        )?;
+        let connected = engine.bridge_health()?;
+        assert_eq!(connected.chrome_setup.state, "capture_test_needed");
+        assert!(connected.chrome_setup.installed);
+        assert!(connected.chrome_setup.checked_in_recently);
+        assert_eq!(connected.extension_build.as_deref(), Some("main@abc123"));
+        assert!(!connected.chrome_setup.capture_test_passed);
+
+        let request = engine.create_capture_request("desktop-setup-test")?;
+        engine.take_capture_request()?;
+        engine.record_capture_request_result(
+            &request.id,
+            crate::engine::CAPTURE_STATUS_SAVED,
+            Some("Saved to Starlee.".into()),
+            None,
+        )?;
+        let passed = engine.bridge_health()?;
+        assert_eq!(passed.chrome_setup.state, "capture_test_passed");
+        assert!(passed.chrome_setup.capture_test_passed);
+        assert!(passed.chrome_setup.capture_test_passed_at.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_health_reports_permission_needed_state() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = test_engine(temp.path());
+        write_extension_assets(temp.path(), true)?;
+        engine.record_extension_hello(
+            Some("Chrome".into()),
+            Some("0.1.0".into()),
+            Some("main@abc123".into()),
+            false,
+        )?;
+        let health = engine.bridge_health()?;
+        assert_eq!(health.chrome_setup.state, "permission_needed");
+        assert!(health.chrome_setup.permission_needed);
+        assert!(
+            health
+                .chrome_setup
+                .next_action
+                .contains("Grant Starlee site access")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn capture_request_result_rejects_wrong_id_and_records_failure_state() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = test_engine(temp.path());
@@ -691,6 +751,16 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response)?;
         Ok(response)
+    }
+
+    fn write_extension_assets(home: &std::path::Path, include_config: bool) -> Result<()> {
+        let extension = home.join("sensor-extension");
+        fs::create_dir_all(&extension)?;
+        fs::write(extension.join("manifest.json"), "{}")?;
+        if include_config {
+            fs::write(extension.join("starlee-config.json"), "{}")?;
+        }
+        Ok(())
     }
 
     fn markdown_files(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {

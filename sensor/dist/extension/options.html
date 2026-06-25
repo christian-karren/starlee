@@ -14,7 +14,7 @@
   .secondary { background: #eceaf5; color: #17152b; }
 </style>
 <h1>Starlee Capture</h1>
-<p>Starlee reads only pages you choose to save and sends captures only to your local Starlee app on <code>127.0.0.1</code>. Your capture token is stored in Chrome’s local extension storage and is never shown here after saving.</p>
+<p>Starlee reads pages for local capture and sends captures only to your local Starlee app on <code>127.0.0.1</code>. The desktop app owns onboarding, diagnostics, and your library; this extension owns page access. Your capture token is stored in Chrome’s local extension storage and is never shown here after saving.</p>
 <h2>Connection</h2>
 <p id="connection" role="status">Checking local Starlee…</p>
 <button id="test-connection" class="secondary" type="button">Test connection</button>
@@ -26,6 +26,6 @@
   <button type="submit">Save settings</button><span id="status" role="status"></span>
 </form>
 <h2>How capture works</h2>
-<p>Click the Starlee toolbar icon, the page button, or the Starlee Mac menu-bar item. The extension extracts readable text and metadata from the active tab, then posts it to the local Starlee service.</p>
+<p>Click the Starlee toolbar icon, the page button, or the Starlee Mac menu-bar item. The extension extracts readable text and metadata from the active tab, then posts it to the local Starlee service. Setup and capture-test status are shown here without page bodies, transcripts, selected text, cookies, or tokens.</p>
 <script type="module" src="options.js"></script>
 </html>

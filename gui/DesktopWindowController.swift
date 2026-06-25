@@ -429,6 +429,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         readinessLabel.textColor = Self.starleeWhite
         let checks = checksByName()
         let bridge = (status()["bridge_health"] as? [String: Any]) ?? [:]
+        let chromeSetup = bridge["chrome_setup"] as? [String: Any] ?? [:]
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
 
         let scroll = NSScrollView()
@@ -448,8 +449,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         settingsStack.addArrangedSubview(appearancePanel())
         settingsStack.addArrangedSubview(settingsCard(
             title: "Browser Extensions",
-            status: (bridge["ok"] as? Bool) == true ? "Ready" : "Needs attention",
-            detail: bridge["recommended_next_action"] as? String ?? "Chrome uses the local extension folder. Safari uses the Starlee Capture extension wrapper.",
+            status: browserSetupStatus(chromeSetup, bridge: bridge),
+            detail: browserSetupDetail(chromeSetup, bridge: bridge),
             actionTitle: "Open Setup",
             action: #selector(openBrowserSetup)
         ))
@@ -1015,6 +1016,44 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         if let string = value as? String { return string }
         if let number = value as? NSNumber { return number.stringValue }
         return "unknown"
+    }
+
+    private func browserSetupStatus(_ setup: [String: Any], bridge: [String: Any]) -> String {
+        switch setup["state"] as? String {
+        case "capture_test_passed":
+            return "Capture test passed"
+        case "capture_test_needed":
+            return "Test needed"
+        case "permission_needed":
+            return "Permission needed"
+        case "check_in_needed":
+            return "Reload extension"
+        case "install_needed":
+            return "Install needed"
+        default:
+            return (bridge["ok"] as? Bool) == true ? "Ready" : "Needs attention"
+        }
+    }
+
+    private func browserSetupDetail(_ setup: [String: Any], bridge: [String: Any]) -> String {
+        var lines: [String] = []
+        if let detail = setup["detail"] as? String {
+            lines.append(detail)
+        }
+        if let next = setup["next_action"] as? String ?? bridge["recommended_next_action"] as? String {
+            lines.append("Next: \(next)")
+        }
+        if let version = bridge["extension_version"] as? String {
+            let build = bridge["extension_build"] as? String ?? "unknown"
+            lines.append("Chrome extension \(version) (\(build))")
+        }
+        if let passedAt = setup["capture_test_passed_at"] as? String {
+            lines.append("Capture test: \(passedAt)")
+        }
+        if lines.isEmpty {
+            return "Chrome uses the local extension folder. Safari uses the Starlee Capture extension wrapper."
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func checksByName() -> [String: (ok: Bool, detail: String)] {

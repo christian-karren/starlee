@@ -371,7 +371,7 @@ async function takeCaptureRequest() {
 }
 
 async function localSettings() {
-  const { captureToken = "", capturePort = DEFAULT_PORT } = await chrome.storage.local.get(["captureToken", "capturePort"]);
+  const { captureToken = "", capturePort = 0 } = await chrome.storage.local.get(["captureToken", "capturePort"]);
   const bundled = await bundledConfig();
   return {
     token: captureToken || bundled.captureToken || "",
@@ -423,6 +423,7 @@ async function status() {
     hasToken: Boolean(settings.token),
     port: settings.port,
     extensionVersion: chrome.runtime.getManifest().version,
+    extensionBuild: await extensionBuildIdentity(),
     browser: browserName(),
     ...diagnostic
   };
