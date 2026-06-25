@@ -435,23 +435,36 @@ impl Engine {
                     })
                     .map(|event| event.timestamp.clone())
             });
+        let bridge_action = bridge_next_action(
+            self.home.join("sensor-extension/manifest.json").exists(),
+            self.home
+                .join("sensor-extension/starlee-config.json")
+                .exists(),
+            extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS),
+            config.extension.can_capture_active_tab,
+            terminal_status
+                .as_deref()
+                .or_else(|| request_status.as_ref().map(|status| status.status.as_str())),
+        );
+        // When extraction actually ran (the capture saved, or failed at/after the
+        // extractor), a transcript-specific reason is more actionable than generic
+        // bridge advice. Upstream failures (permission, unreachable, timed out)
+        // never emit YouTube events, so this naturally falls back to the bridge.
+        let recommended_next_action = youtube_transcript_next_action(&events)
+            .filter(|_| {
+                matches!(
+                    terminal_status.as_deref(),
+                    None | Some(CAPTURE_STATUS_SAVED) | Some(CAPTURE_STATUS_FAILED)
+                )
+            })
+            .unwrap_or(bridge_action);
         Ok(CaptureTraceReport {
             trace_version: 1,
             request_id,
             started_at,
             completed_at,
             terminal_status: terminal_status.clone(),
-            recommended_next_action: bridge_next_action(
-                self.home.join("sensor-extension/manifest.json").exists(),
-                self.home
-                    .join("sensor-extension/starlee-config.json")
-                    .exists(),
-                extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS),
-                config.extension.can_capture_active_tab,
-                terminal_status
-                    .as_deref()
-                    .or_else(|| request_status.as_ref().map(|status| status.status.as_str())),
-            ),
+            recommended_next_action,
             runtime: self.runtime_identity(&config),
             request_status,
             events,
@@ -538,6 +551,18 @@ impl Engine {
             });
         }
         let extension_seen = config.extension.last_handshake_at.is_some();
+        if extension_path.join("manifest.json").exists() {
+            let drift = crate::sensor_assets::installed_drift(&self.home);
+            checks.push(DoctorCheck {
+                name: "extension_up_to_date".into(),
+                ok: drift.is_empty(),
+                detail: if drift.is_empty() {
+                    "installed extension matches the build embedded in this binary".into()
+                } else {
+                    format!("stale files: {}", drift.join(", "))
+                },
+            });
+        }
         checks.push(DoctorCheck {
             name: "schema_version".into(),
             ok: status.schema_version >= crate::index::CURRENT_SCHEMA_VERSION,
@@ -664,6 +689,9 @@ impl Engine {
                 "chunks_stale" => "Run `starlee reindex --stale-embeddings-only` to refresh stale embeddings.",
                 "extension_handshake" => {
                     "Load or reload ~/Starlee/sensor-extension in your browser."
+                }
+                "extension_up_to_date" => {
+                    "Installed extension is stale. Run `starlee setup`, then reload ~/Starlee/sensor-extension in your browser."
                 }
                 "browser_bridge" => status.bridge_health.recommended_next_action.as_str(),
                 _ => "Run `starlee setup` and then `starlee doctor` again.",
@@ -1639,7 +1667,13 @@ mod tests {
                 url: Some("https://www.youtube.com/watch?v=abc123".into()),
                 domain: Some("youtube.com".into()),
             }),
-            safe_metadata: BTreeMap::from([("segment_count".into(), "0".into())]),
+            safe_metadata: BTreeMap::from([
+                ("segment_count".into(), "0".into()),
+                (
+                    "transcript_reason".into(),
+                    "transcript_button_not_found".into(),
+                ),
+            ]),
         })?;
         engine.record_capture_request_result(&request.id, CAPTURE_STATUS_FAILED, None, None)?;
 
@@ -1666,7 +1700,73 @@ mod tests {
             event.event == "youtube_segments_extracted"
                 && event.safe_metadata.get("segment_count").map(String::as_str) == Some("0")
         }));
+        // The trace must explain the transcript failure, not give generic bridge advice.
+        assert_eq!(
+            trace.recommended_next_action,
+            youtube_reason_action("transcript_button_not_found")
+        );
         Ok(())
+    }
+
+    #[test]
+    fn last_capture_trace_recommends_transcript_action_when_saved_without_transcript() -> Result<()>
+    {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar")?;
+        engine.take_capture_request()?;
+        engine.record_capture_diagnostic_event(CaptureDiagnosticEvent {
+            timestamp: Utc::now().to_rfc3339(),
+            component: "youtube_extractor".into(),
+            event: "youtube_segments_extracted".into(),
+            request_id: Some(request.id.clone()),
+            status: Some("unavailable".into()),
+            source: Some("menu-bar".into()),
+            browser: Some("Chrome".into()),
+            message: Some("No rendered transcript segments found.".into()),
+            page: None,
+            safe_metadata: BTreeMap::from([
+                ("segment_count".into(), "0".into()),
+                (
+                    "transcript_reason".into(),
+                    "transcript_disabled_by_video".into(),
+                ),
+            ]),
+        })?;
+        // The capture itself saved (metadata-only record); the transcript is the failure.
+        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?;
+
+        let trace = engine.last_capture_trace()?;
+        assert_eq!(trace.terminal_status.as_deref(), Some(CAPTURE_STATUS_SAVED));
+        assert_eq!(
+            trace.recommended_next_action,
+            youtube_reason_action("transcript_disabled_by_video")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn youtube_transcript_next_action_yields_none_when_segments_found() {
+        let event = CaptureDiagnosticEvent {
+            timestamp: Utc::now().to_rfc3339(),
+            component: "youtube_extractor".into(),
+            event: "youtube_segments_extracted".into(),
+            request_id: Some("req".into()),
+            status: Some("ok".into()),
+            source: Some("menu-bar".into()),
+            browser: Some("Chrome".into()),
+            message: None,
+            page: None,
+            safe_metadata: BTreeMap::from([
+                ("segment_count".into(), "42".into()),
+                (
+                    "transcript_reason".into(),
+                    "rendered_transcript_segments_found".into(),
+                ),
+            ]),
+        };
+        assert!(youtube_transcript_next_action(&[event]).is_none());
     }
 
     #[test]

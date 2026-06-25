@@ -74,6 +74,48 @@ cookies, embeddings, or private file bodies.
 - `capture_failed` after `capture_payload_posted`: the backend rejected the payload or failed while writing/indexing.
 - `vault` or `index` failures in `starlee doctor`: the local vault or disposable index needs repair.
 
+## Reason Code Decision Tree
+
+`starlee diagnostics --last-capture` reports a single `recommended_next_action`.
+For a YouTube capture that ran but came back without a transcript, that action is
+derived from the `transcript_reason` recorded on the final
+`youtube_segments_extracted` event (the table below), instead of generic bridge
+advice. Upstream failures (permission, unreachable, timed out) never reach the
+extractor, so they keep the bridge-level recommendation.
+
+| `transcript_reason` | What happened | Next action |
+| --- | --- | --- |
+| `rendered_transcript_segments_found` | Transcript captured. | None — success. |
+| `transcript_disabled_by_video` | The video has no transcript/captions. | Metadata-only save is expected; nothing to fix. |
+| `transcript_language_unavailable` | No transcript in a supported language. | Metadata-only save is expected; nothing to fix. |
+| `transcript_rows_empty` | Panel opened but rendered zero lines. | Reload the tab, open the transcript once, capture again. |
+| `transcript_panel_not_opened` | Control found, panel never opened. | Open the transcript once manually, then capture again. |
+| `transcript_button_not_found` | No "Show transcript" control on the page. | Expand the description to reveal it, or open the transcript manually, then capture again. |
+| `transcript_discovery_timed_out` | Lines did not render before the bounded timeout. | Reload the tab; capture again once fully loaded. |
+| `transcript_panel_not_rendered` | Content script ran before the transcript hydrated. | Reload the tab so the content script runs after load, then capture again. |
+| `youtube_metadata_unavailable` | Watch page had no usable video id/title yet. | Reload the tab and capture again. |
+| `extractor_failure` | Extraction threw before reading the page. | Reload the tab and capture again. |
+
+The same reason codes appear as discrete diagnostic events
+(`transcript_button_not_found`, `transcript_panel_not_opened`,
+`transcript_rows_empty`, `transcript_disabled_by_video`, …) earlier in the trace,
+so you can see every discovery strategy that was attempted and why it stopped.
+
+## One Extension, One Source Of Truth
+
+The extension has exactly one source of truth and one installed copy:
+
+1. Edit only `sensor/src/*.js` (modular ES modules).
+2. `npm run build` (esbuild) bundles them into `sensor/dist/extension/`.
+3. The CLI embeds `sensor/dist/extension/*` at compile time (`src/sensor_assets.rs`).
+4. `starlee setup` writes those bytes to `~/Starlee/sensor-extension/` — the only
+   folder Chrome should load.
+
+Never hand-edit `~/Starlee/sensor-extension`; it is generated. `starlee doctor`
+includes an `extension_up_to_date` check that fails when the installed copy no
+longer matches the build embedded in the running binary — re-run `starlee setup`
+and reload the unpacked extension when it does.
+
 ## Share-Safe Output
 
 Share `starlee diagnostics --last-capture`, `starlee doctor`, browser name,

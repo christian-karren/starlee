@@ -222,6 +222,80 @@ pub(crate) fn bridge_next_action(
     }
 }
 
+/// Derives a transcript-specific next action from a request's diagnostic trace.
+///
+/// `bridge_next_action` only knows about install/heartbeat/permission state, so a
+/// YouTube capture that reached the page but came back without a transcript would
+/// otherwise be told "Bridge is ready." This inspects the YouTube extractor events
+/// and maps the recorded reason code to the precise recovery step. Returns `None`
+/// when the transcript was captured, when extraction never ran, or when the trace
+/// has no YouTube extractor events (a non-YouTube capture).
+pub(crate) fn youtube_transcript_next_action(events: &[CaptureDiagnosticEvent]) -> Option<String> {
+    let segments = events
+        .iter()
+        .rev()
+        .find(|event| event.event == "youtube_segments_extracted");
+    if let Some(event) = segments {
+        if event.status.as_deref() == Some("ok") {
+            return None;
+        }
+        let reason = event
+            .safe_metadata
+            .get("transcript_reason")
+            .map(String::as_str)
+            .unwrap_or("");
+        return Some(youtube_reason_action(reason).into());
+    }
+    // Metadata failed before transcript discovery ever started.
+    let metadata_failed = events.iter().rev().any(|event| {
+        event.event == "youtube_metadata_extracted" && event.status.as_deref() == Some("failed")
+    });
+    if metadata_failed {
+        return Some(youtube_reason_action("youtube_metadata_unavailable").into());
+    }
+    None
+}
+
+/// Maps a YouTube transcript reason code to a single, safe recovery instruction.
+/// Unknown reasons fall through to a generic transcript-retry action.
+pub(crate) fn youtube_reason_action(reason: &str) -> &'static str {
+    match reason {
+        "rendered_transcript_segments_found" => {
+            "Transcript captured. Open an article or YouTube watch page and capture again."
+        }
+        "transcript_disabled_by_video" => {
+            "This video does not provide a transcript (captions are disabled). Starlee saved the video metadata only."
+        }
+        "transcript_language_unavailable" => {
+            "No transcript is available in a supported language for this video. Starlee saved the video metadata only."
+        }
+        "transcript_rows_empty" => {
+            "The transcript panel opened but rendered no lines. Reload the YouTube tab, open the transcript once, then capture again."
+        }
+        "transcript_panel_not_opened" => {
+            "Starlee found the transcript control but the panel did not open. Open the transcript once manually, then capture again."
+        }
+        "transcript_button_not_found" => {
+            "No \"Show transcript\" control was found. Expand the video description to reveal it, or open the transcript once manually, then capture again."
+        }
+        "transcript_discovery_timed_out" => {
+            "Transcript discovery timed out before lines rendered. Reload the YouTube tab and capture again once the page has fully loaded."
+        }
+        "transcript_panel_not_rendered" => {
+            "The transcript had not rendered when capture ran. Reload the YouTube tab so the content script runs after the page loads, then capture again."
+        }
+        "youtube_metadata_unavailable" => {
+            "The YouTube watch page had not finished loading (video metadata was unavailable). Reload the tab and capture again."
+        }
+        "extractor_failure" => {
+            "YouTube extraction failed before reading the page. Reload the YouTube tab and capture again."
+        }
+        _ => {
+            "Starlee could not capture this video's transcript. Reload the YouTube tab, open the transcript once, then capture again."
+        }
+    }
+}
+
 pub(crate) fn sanitize_page_metadata(
     page: CaptureRequestPageMetadata,
 ) -> CaptureRequestPageMetadata {

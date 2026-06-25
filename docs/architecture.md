@@ -111,7 +111,17 @@ returning chunks to agents.
   content-script, payload-builder, and YouTube extractor milestones. The
   `starlee diagnostics --last-capture` trace groups the newest request
   chronologically with runtime identity, terminal status, and a recommended
-  next action.
+  next action. When a YouTube capture reaches the extractor but returns no
+  transcript, the recommended action is derived from the transcript reason code
+  (panel not opened, control not found, captions disabled, discovery timed out,
+  …) rather than generic bridge advice. See
+  `docs/youtube-capture-debugging.md` for the reason-code decision tree.
+- The extension has one source of truth: `sensor/src/*.js` → `npm run build`
+  (esbuild) → `sensor/dist/extension/` → embedded into the CLI at compile time via
+  `include_bytes!` (`src/sensor_assets.rs`) → written to `~/Starlee/sensor-extension`
+  by `starlee setup`. `~/Starlee/sensor-extension` is generated and must not be
+  hand-edited. `starlee doctor`'s `extension_up_to_date` check fails when the
+  installed copy drifts from the build embedded in the running binary.
 - Bridge health is stricter than request status: it does not expose request IDs
   or page metadata, and it replaces failure messages for known browser failure
   states with concise user-facing recovery text.
