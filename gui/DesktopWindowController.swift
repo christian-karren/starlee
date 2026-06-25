@@ -1200,6 +1200,7 @@ private final class SidebarBoxButton: NSButton {
     private static let cream = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 1)
     private var trackingAreaRef: NSTrackingArea?
     private var isHovering = false
+    private var isPressed = false
 
     init(title: String) {
         super.init(frame: .zero)
@@ -1212,7 +1213,7 @@ private final class SidebarBoxButton: NSButton {
         contentTintColor = .white
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 260).isActive = true
-        heightAnchor.constraint(equalToConstant: 98).isActive = true
+        heightAnchor.constraint(equalToConstant: 96).isActive = true
         updateAttributedTitle()
     }
 
@@ -1231,6 +1232,10 @@ private final class SidebarBoxButton: NSButton {
             alphaValue = 1
             updateAttributedTitle()
         }
+    }
+
+    override var acceptsFirstResponder: Bool {
+        true
     }
 
     override func updateTrackingAreas() {
@@ -1258,6 +1263,24 @@ private final class SidebarBoxButton: NSButton {
         needsDisplay = true
     }
 
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        needsDisplay = true
+        super.mouseDown(with: event)
+        isPressed = false
+        needsDisplay = true
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        needsDisplay = true
+        return super.becomeFirstResponder()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        needsDisplay = true
+        return super.resignFirstResponder()
+    }
+
     func setSelected(_: Bool) {
         needsDisplay = true
     }
@@ -1274,78 +1297,80 @@ private final class SidebarBoxButton: NSButton {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let buttonRect = bounds.insetBy(dx: 8, dy: 11)
-        let outerPath = NSBezierPath(roundedRect: buttonRect, xRadius: 14, yRadius: 14)
-        let navyRect = buttonRect.insetBy(dx: 7, dy: 7)
-        let navyPath = NSBezierPath(roundedRect: navyRect, xRadius: 9, yRadius: 9)
-        let creamRect = navyRect.insetBy(dx: 3, dy: 3)
-        let creamPath = NSBezierPath(roundedRect: creamRect, xRadius: 7, yRadius: 7)
+        let pressOffset: CGFloat = isPressed ? -1 : 0
+        let buttonRect = bounds.insetBy(dx: 8, dy: 10).offsetBy(dx: 0, dy: pressOffset)
+        let buttonPath = NSBezierPath(roundedRect: buttonRect, xRadius: 14, yRadius: 14)
+        let creamRect = buttonRect.insetBy(dx: 6, dy: 6)
+        let creamPath = NSBezierPath(roundedRect: creamRect, xRadius: 10, yRadius: 10)
 
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.74)
-        shadow.shadowBlurRadius = 8
-        shadow.shadowOffset = NSSize(width: 0, height: -5)
+        shadow.shadowColor = NSColor.black.withAlphaComponent(isPressed ? 0.48 : 0.75)
+        shadow.shadowBlurRadius = isPressed ? 6 : 18
+        shadow.shadowOffset = NSSize(width: 0, height: isPressed ? -3 : -8)
         shadow.set()
         NSColor.black.setFill()
-        outerPath.fill()
+        buttonPath.fill()
         NSGraphicsContext.restoreGraphicsState()
 
-        NSColor(calibratedWhite: 0.90, alpha: 1).setFill()
-        outerPath.fill()
-
         NSGraphicsContext.saveGraphicsState()
-        navyPath.addClip()
-        let top = isHovering ? Self.navyHoverTop : Self.navyTop
-        let bottom = isHovering ? Self.navyHoverBottom : Self.navyBottom
-        NSGradient(colors: [top, Self.navy, bottom])?.draw(in: navyRect, angle: -90)
+        buttonPath.addClip()
+        let top = isPressed ? Self.navy : (isHovering ? Self.navyHoverTop : Self.navyTop)
+        let middle = isPressed ? Self.navyBottom : Self.navy
+        let bottom = isPressed ? NSColor.black : (isHovering ? Self.navyHoverBottom : Self.navyBottom)
+        NSGradient(colors: [top, middle, bottom])?.draw(in: buttonRect, angle: -90)
 
         let glossRect = NSRect(
-            x: navyRect.minX,
-            y: navyRect.midY + 2,
-            width: navyRect.width,
-            height: navyRect.height * 0.46
+            x: buttonRect.minX,
+            y: buttonRect.midY + 1,
+            width: buttonRect.width,
+            height: buttonRect.height * 0.48
         )
         let glossPath = NSBezierPath()
-        glossPath.move(to: NSPoint(x: navyRect.minX, y: glossRect.maxY))
-        glossPath.line(to: NSPoint(x: navyRect.maxX, y: glossRect.maxY))
-        glossPath.line(to: NSPoint(x: navyRect.maxX, y: glossRect.minY + 8))
+        glossPath.move(to: NSPoint(x: buttonRect.minX, y: glossRect.maxY))
+        glossPath.line(to: NSPoint(x: buttonRect.maxX, y: glossRect.maxY))
+        glossPath.line(to: NSPoint(x: buttonRect.maxX, y: glossRect.minY + 8))
         glossPath.curve(
-            to: NSPoint(x: navyRect.minX, y: glossRect.minY + 18),
-            controlPoint1: NSPoint(x: navyRect.maxX * 0.72 + navyRect.minX * 0.28, y: glossRect.minY - 10),
-            controlPoint2: NSPoint(x: navyRect.maxX * 0.25 + navyRect.minX * 0.75, y: glossRect.minY + 1)
+            to: NSPoint(x: buttonRect.minX, y: glossRect.minY + 18),
+            controlPoint1: NSPoint(x: buttonRect.maxX * 0.72 + buttonRect.minX * 0.28, y: glossRect.minY - 10),
+            controlPoint2: NSPoint(x: buttonRect.maxX * 0.25 + buttonRect.minX * 0.75, y: glossRect.minY + 1)
         )
         glossPath.close()
         glossPath.addClip()
         NSGradient(colors: [
-            NSColor.white.withAlphaComponent(isHovering ? 0.30 : 0.22),
+            NSColor.white.withAlphaComponent(isPressed ? 0.08 : (isHovering ? 0.18 : 0.14)),
             NSColor.white.withAlphaComponent(0.05)
         ])?.draw(in: glossRect, angle: -90)
         NSGraphicsContext.restoreGraphicsState()
 
-        NSColor.black.withAlphaComponent(0.82).setStroke()
-        outerPath.lineWidth = 1.5
-        outerPath.stroke()
+        NSColor.white.withAlphaComponent(isHovering ? 0.20 : 0.12).setStroke()
+        let topInset = NSBezierPath()
+        topInset.move(to: NSPoint(x: creamRect.minX + 7, y: creamRect.maxY - 2))
+        topInset.line(to: NSPoint(x: creamRect.maxX - 7, y: creamRect.maxY - 2))
+        topInset.lineWidth = 1
+        topInset.stroke()
+
+        NSColor.black.withAlphaComponent(isPressed ? 0.56 : 0.30).setStroke()
+        let bottomInset = NSBezierPath()
+        bottomInset.move(to: NSPoint(x: creamRect.minX + 7, y: creamRect.minY + 2))
+        bottomInset.line(to: NSPoint(x: creamRect.maxX - 7, y: creamRect.minY + 2))
+        bottomInset.lineWidth = isPressed ? 2 : 1
+        bottomInset.stroke()
 
         NSColor.white.setStroke()
-        let whitePath = NSBezierPath(roundedRect: buttonRect.insetBy(dx: 2, dy: 2), xRadius: 12, yRadius: 12)
-        whitePath.lineWidth = 3
-        whitePath.stroke()
+        buttonPath.lineWidth = 3
+        buttonPath.stroke()
 
-        NSColor.white.withAlphaComponent(0.94).setStroke()
-        navyPath.lineWidth = 1.5
-        navyPath.stroke()
-
-        Self.cream.withAlphaComponent(0.78).setStroke()
+        Self.cream.withAlphaComponent(0.82).setStroke()
         creamPath.lineWidth = 1
         creamPath.stroke()
 
-        NSColor.black.withAlphaComponent(0.32).setStroke()
-        let bottomLine = NSBezierPath()
-        bottomLine.move(to: NSPoint(x: creamRect.minX + 6, y: creamRect.minY + 3))
-        bottomLine.line(to: NSPoint(x: creamRect.maxX - 6, y: creamRect.minY + 3))
-        bottomLine.lineWidth = 1
-        bottomLine.stroke()
+        if isHovering || window?.firstResponder === self {
+            NSColor.white.withAlphaComponent(isHovering ? 0.34 : 0.48).setStroke()
+            let focusPath = NSBezierPath(roundedRect: buttonRect.insetBy(dx: -3, dy: -3), xRadius: 17, yRadius: 17)
+            focusPath.lineWidth = isHovering ? 2 : 3
+            focusPath.stroke()
+        }
 
         drawCenteredTitle(in: buttonRect)
     }
