@@ -155,7 +155,7 @@ pub(crate) fn default_capture_status_message(status: &str) -> Option<String> {
             "Load or reload the Starlee browser extension, then try again."
         }
         CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE => {
-            "Safari extension could not reach the page content script."
+            "The Starlee content script was not running in the page."
         }
         CAPTURE_STATUS_TIMED_OUT => "The browser did not pick up the request in time.",
         _ => return None,
@@ -213,7 +213,7 @@ pub(crate) fn bridge_next_action(
             "Load or reload the Starlee browser extension, then try again.".into()
         }
         Some(CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE) => {
-            "Open Safari, enable the Starlee Safari extension, allow it on youtube.com, reload the YouTube tab, then try capture again.".into()
+            "Reload the page so the Starlee content script loads (it does not inject into tabs opened before the extension was enabled), confirm the extension is enabled and allowed on this site, then try capture again.".into()
         }
         Some(CAPTURE_STATUS_FAILED) => {
             "Retry capture from the active tab; run `starlee doctor` if it fails again.".into()

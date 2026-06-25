@@ -1882,11 +1882,11 @@ mod tests {
         );
         assert_eq!(
             health.last_failure_message.as_deref(),
-            Some("Safari extension could not reach the page content script.")
+            Some("The Starlee content script was not running in the page.")
         );
         assert_eq!(
             health.recommended_next_action,
-            "Open Safari, enable the Starlee Safari extension, allow it on youtube.com, reload the YouTube tab, then try capture again."
+            "Reload the page so the Starlee content script loads (it does not inject into tabs opened before the extension was enabled), confirm the extension is enabled and allowed on this site, then try capture again."
         );
         Ok(())
     }
