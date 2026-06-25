@@ -1,0 +1,240 @@
+/* Starlee Settings — shares the Library design system (styles.css). The shell,
+   header and card surface intentionally match the Library page exactly. */
+
+.settings-shell {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 24px;
+  height: 100%;
+  min-height: 0;
+  padding: 38px 42px 36px;
+}
+
+.settings-scroll {
+  min-height: 0;
+  overflow: hidden auto;
+  padding: 2px 4px 26px 2px;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Card surface — identical token to .capture-card. */
+.panel {
+  border: 2px solid rgba(255, 255, 255, 0.42);
+  background: rgba(19, 40, 75, 0.85);
+  border-radius: 8px;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
+  color: var(--white);
+  padding: 22px 24px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.panel-title {
+  font-size: 20px;
+  line-height: 1.1;
+  font-weight: 800;
+  color: var(--white);
+}
+
+.panel-sub {
+  margin-top: 3px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cream);
+}
+
+.caption {
+  margin: 14px 0 9px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cream);
+}
+
+/* Utility cards laid out two-up. */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 18px;
+}
+
+.util-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 4px 14px;
+  border: 2px solid rgba(255, 255, 255, 0.42);
+  background: rgba(19, 40, 75, 0.85);
+  border-radius: 8px;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
+  color: var(--white);
+  padding: 18px 20px;
+}
+
+.util-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--white);
+}
+
+.util-detail {
+  grid-column: 1 / 2;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(242, 227, 182, 0.82);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.chip {
+  justify-self: start;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+}
+.chip.ok { color: var(--cream); }
+.chip.warn { color: #FFD7A6; }
+
+.util-action {
+  grid-row: 1 / 3;
+  grid-column: 2 / 3;
+}
+
+/* Buttons. */
+.btn {
+  font: 700 12px var(--sans);
+  color: var(--black);
+  background: var(--white);
+  border: 2px solid var(--black);
+  border-radius: 0;
+  padding: 7px 14px;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.55);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.btn:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.6); }
+.btn:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55); }
+
+/* Background suite: style tiles. */
+.tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+.tile {
+  font: 700 13px var(--sans);
+  color: var(--black);
+  background: var(--white);
+  border: 2px solid var(--black);
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+.tile:hover { transform: translateY(-1px); }
+.tile[aria-pressed="true"] {
+  color: var(--white);
+  background: rgba(19, 40, 75, 0.96);
+  border-color: var(--white);
+}
+
+/* Control rows. */
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 11px 26px;
+  margin-top: 4px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.row > label {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  min-width: 86px;
+}
+.row .val {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cream);
+  min-width: 46px;
+  text-align: right;
+}
+.row input[type="range"] {
+  flex: 1;
+  accent-color: var(--cream);
+  cursor: pointer;
+}
+
+/* Palette swatches. */
+.palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 4px;
+}
+.swatch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+}
+.swatch input[type="color"] {
+  width: 34px;
+  height: 26px;
+  padding: 2px;
+  border: 1.5px solid rgba(255, 255, 255, 0.5);
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* Segmented control (finish / glass mode). */
+.seg {
+  display: inline-flex;
+  gap: 6px;
+}
+.seg button {
+  font: 700 12px var(--sans);
+  color: var(--black);
+  background: var(--white);
+  border: 2px solid var(--black);
+  border-radius: 5px;
+  padding: 6px 13px;
+  cursor: pointer;
+}
+.seg button[aria-pressed="true"] {
+  color: var(--white);
+  background: rgba(19, 40, 75, 0.96);
+  border-color: var(--white);
+}
+
+.controls-block { margin-top: 6px; }
+.btn-row { margin-top: 14px; }

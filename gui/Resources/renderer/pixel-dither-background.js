@@ -83,8 +83,11 @@
       this.paper = parseHex(this.settings.backgroundColor, [249, 228, 182, 255]);
       this.lastPaint = 0;
       this.start = performance.now();
+      this.destroyed = false;
       this.resizeObserver = new ResizeObserver(() => this.resize(true));
       this.resizeObserver.observe(document.documentElement);
+      this.canvas.style.filter = "none";
+      this.canvas.style.imageRendering = "pixelated";
       this.resize(true);
       requestAnimationFrame((time) => this.frame(time));
     }
@@ -95,6 +98,14 @@
       this.paper = parseHex(this.settings.backgroundColor, this.paper);
       document.body.style.backgroundColor = this.settings.backgroundColor;
       this.resize(true);
+    }
+
+    destroy() {
+      this.destroyed = true;
+      if (this.resizeObserver) {
+        this.resizeObserver.disconnect();
+        this.resizeObserver = null;
+      }
     }
 
     resize(force) {
@@ -146,6 +157,7 @@
     }
 
     frame(time) {
+      if (this.destroyed) return;
       const frameGap = 120;
       if (time - this.lastPaint > frameGap) {
         this.lastPaint = time;
