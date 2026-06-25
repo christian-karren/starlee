@@ -101,6 +101,14 @@ final class StarleeClient {
     }
 
     func requestCurrentArticleCapture(completion: @escaping (CaptureRequestPostResult) -> Void) {
+        requestCapture(source: "menu-bar", completion: completion)
+    }
+
+    func requestChromeSetupCaptureTest(completion: @escaping (CaptureRequestPostResult) -> Void) {
+        requestCapture(source: "desktop-setup-test", completion: completion)
+    }
+
+    private func requestCapture(source: String, completion: @escaping (CaptureRequestPostResult) -> Void) {
         startEngine()
         guard let config = localConfig(), let token = config["capture_token"] as? String else {
             completion(CaptureRequestPostResult(ok: false, message: "Run Starlee setup, then reload the browser extension.", requestId: nil))
@@ -111,7 +119,7 @@ final class StarleeClient {
             completion(CaptureRequestPostResult(ok: false, message: "Invalid local Starlee capture endpoint.", requestId: nil))
             return
         }
-        postCaptureRequest(url: url, token: token, completion: completion)
+        postCaptureRequest(url: url, token: token, source: source, completion: completion)
     }
 
     func captureRequestStatus(id: String, completion: @escaping (CaptureRequestStatusResult) -> Void) {
@@ -156,6 +164,7 @@ final class StarleeClient {
     private func postCaptureRequest(
         url: URL,
         token: String,
+        source: String,
         completion: @escaping (CaptureRequestPostResult) -> Void
     ) {
         var request = URLRequest(url: url)
@@ -163,7 +172,7 @@ final class StarleeClient {
         request.timeoutInterval = 5
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["source": "menu-bar"])
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["source": source])
 
         URLSession.shared.dataTask(with: request) { data, response, error in
             let result: CaptureRequestPostResult

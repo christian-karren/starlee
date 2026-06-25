@@ -19,9 +19,9 @@ use crate::{
     embedding::{Embedder, FastEmbedder},
     index::Index,
     model::{
-        BridgeHealth, CaptureInput, CaptureTraceReport, CorpusOverview, DoctorCheck, DoctorReport,
-        GetResult, QueryResult, Record, RuntimeIdentity, SearchHit, SearchScope, SetupReport,
-        SourceType, SpotifySyncEvent, SpotifySyncLog, Status,
+        BridgeHealth, CaptureInput, CaptureTraceReport, ChromeSetupStatus, CorpusOverview,
+        DoctorCheck, DoctorReport, GetResult, QueryResult, Record, RuntimeIdentity, SearchHit,
+        SearchScope, SetupReport, SourceType, SpotifySyncEvent, SpotifySyncLog, Status,
     },
     public_fetch, sensor_assets, spotify,
     spotify::{SpotifyConfigureReport, SpotifySyncReport, SpotifySyncStatus},
@@ -715,6 +715,14 @@ impl Engine {
             .capture_request_status
             .as_ref()
             .map(|status| status.status.clone());
+        let capture_test_passed_at = config
+            .capture_request_status
+            .as_ref()
+            .filter(|status| {
+                status.source == "desktop-setup-test" && status.status == CAPTURE_STATUS_SAVED
+            })
+            .and_then(|status| status.completed_at.clone());
+        let capture_test_passed = capture_test_passed_at.is_some();
         let last_failure = config
             .capture_request_status
             .as_ref()
@@ -724,33 +732,109 @@ impl Engine {
         let last_failure_message = last_failure.and_then(|status| {
             safe_bridge_failure_message(&status.status, status.message.as_deref())
         });
+        let recommended_next_action = bridge_next_action(
+            extension_setup_present,
+            extension_config_present,
+            checked_in_recently,
+            config.extension.can_capture_active_tab,
+            config
+                .capture_request_status
+                .as_ref()
+                .map(|status| status.status.as_str()),
+        );
+        let chrome_setup = Self::chrome_setup_status(
+            extension_setup_present,
+            extension_config_present,
+            checked_in_recently,
+            config.extension.can_capture_active_tab,
+            capture_test_passed,
+            capture_test_passed_at,
+            last_request_status.as_deref(),
+            &recommended_next_action,
+        );
         let ok = extension_setup_present
             && extension_config_present
             && checked_in_recently
             && config.extension.can_capture_active_tab;
         BridgeHealth {
             ok,
+            chrome_setup,
             extension_setup_present,
             extension_config_present,
             checked_in_recently,
             browser: config.extension.browser.clone(),
             extension_version: config.extension.extension_version.clone(),
+            extension_build: config.extension.extension_build.clone(),
             can_capture_active_tab: config.extension.can_capture_active_tab,
             last_hello_at: config.extension.last_handshake_at.clone(),
             last_request_status,
             last_failure_reason,
             last_failure_message,
-            recommended_next_action: bridge_next_action(
-                extension_setup_present,
-                extension_config_present,
-                checked_in_recently,
-                config.extension.can_capture_active_tab,
-                config
-                    .capture_request_status
-                    .as_ref()
-                    .map(|status| status.status.as_str()),
-            ),
+            recommended_next_action,
             recent_diagnostics: recent_diagnostics(config, 8),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn chrome_setup_status(
+        extension_setup_present: bool,
+        extension_config_present: bool,
+        checked_in_recently: bool,
+        can_capture_active_tab: bool,
+        capture_test_passed: bool,
+        capture_test_passed_at: Option<String>,
+        last_request_status: Option<&str>,
+        recommended_next_action: &str,
+    ) -> ChromeSetupStatus {
+        let installed = extension_setup_present && extension_config_present;
+        let permission_needed = !can_capture_active_tab
+            || last_request_status == Some(CAPTURE_STATUS_PERMISSION_DENIED);
+        let (state, detail, next_action) = if !installed {
+            (
+                "install_needed",
+                "Chrome extension assets or local configuration are missing.",
+                "Run `starlee setup`, then load or reload ~/Starlee/sensor-extension in Chrome.",
+            )
+        } else if !checked_in_recently {
+            (
+                "check_in_needed",
+                "Chrome has not checked in with Starlee in the last 5 minutes.",
+                "Load or reload the Starlee Chrome extension, then refresh setup status.",
+            )
+        } else if permission_needed {
+            (
+                "permission_needed",
+                "Chrome needs Starlee site access before it can capture the active tab.",
+                "Grant Starlee site access in Chrome, reload the page, then run the capture test.",
+            )
+        } else if capture_test_passed {
+            (
+                "capture_test_passed",
+                "Chrome capture has completed a setup test through the local bridge.",
+                "Open an article or YouTube watch page and capture from Starlee.",
+            )
+        } else {
+            (
+                "capture_test_needed",
+                "Chrome is connected; run a capture test before relying on daily capture.",
+                "Run Test Chrome Capture from Starlee desktop setup.",
+            )
+        };
+        ChromeSetupStatus {
+            installed,
+            checked_in_recently,
+            permission_needed,
+            capture_test_passed,
+            capture_test_passed_at,
+            state: state.into(),
+            detail: detail.into(),
+            next_action: if recommended_next_action.is_empty()
+                || matches!(state, "capture_test_needed" | "capture_test_passed")
+            {
+                next_action.into()
+            } else {
+                recommended_next_action.into()
+            },
         }
     }
 
@@ -1605,11 +1689,14 @@ mod tests {
             }),
             safe_metadata: BTreeMap::from([
                 ("segment_count".into(), "0".into()),
+                ("selection_present".into(), "true".into()),
+                ("selection_char_count".into(), "42".into()),
                 ("bad key".into(), "should be dropped".into()),
                 (
                     "transcript_text".into(),
                     "never store transcript text here".into(),
                 ),
+                ("selected_text".into(), "selected private quote".into()),
             ]),
         })?;
 
@@ -1617,13 +1704,29 @@ mod tests {
         assert!(parse_rfc3339_utc(&stored.timestamp).is_some());
         assert!(stored.message.as_deref().unwrap_or("").len() <= 240);
         assert!(stored.safe_metadata.contains_key("segment_count"));
+        assert_eq!(
+            stored
+                .safe_metadata
+                .get("selection_present")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            stored
+                .safe_metadata
+                .get("selection_char_count")
+                .map(String::as_str),
+            Some("42")
+        );
         assert!(!stored.safe_metadata.contains_key("bad key"));
+        assert!(!stored.safe_metadata.contains_key("selected_text"));
         let serialized = serde_json::to_string(&engine.capture_diagnostics(10)?)?;
         assert!(!serialized.contains("capture_token"));
         assert!(!serialized.contains("Bearer "));
         assert!(!serialized.contains("OAuth"));
         assert!(!serialized.contains("<html"));
         assert!(!serialized.contains("never store transcript text here"));
+        assert!(!serialized.contains("selected private quote"));
         Ok(())
     }
 

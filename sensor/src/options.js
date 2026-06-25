@@ -37,13 +37,21 @@ async function renderStatus({ forceHello = false } = {}) {
   if (forceHello) await chrome.runtime.sendMessage({ type: "STARLEE_HELLO" });
   const state = await chrome.runtime.sendMessage({ type: "STARLEE_STATUS" });
   const bridge = await chrome.runtime.sendMessage({ type: "STARLEE_BRIDGE_HEALTH" }).catch(() => null);
-  const label = state.ok ? "Connected to local Starlee" : statusLabel(state);
+  const setup = bridge?.chrome_setup;
+  const label = state.ok ? setupLabel(setup) || "Connected to local Starlee" : statusLabel(state);
   connection.textContent = [
     label,
-    bridge?.recommended_next_action ? `Next action: ${bridge.recommended_next_action}` : "",
+    setup?.detail ? `Setup detail: ${setup.detail}` : "",
+    setup?.next_action ? `Next action: ${setup.next_action}` : bridge?.recommended_next_action ? `Next action: ${bridge.recommended_next_action}` : "",
     `Browser: ${state.browser || "Chrome"}`,
     `Extension: ${state.extensionVersion || "unknown"}`,
+    `Build: ${state.extensionBuild || bridge?.extension_build || "unknown"}`,
     `Port: ${state.port || 47291}`,
+    setup ? `Installed: ${setup.installed ? "yes" : "no"}` : "",
+    setup ? `Checked in recently: ${setup.checked_in_recently ? "yes" : "no"}` : "",
+    setup ? `Permission needed: ${setup.permission_needed ? "yes" : "no"}` : "",
+    setup ? `Capture test passed: ${setup.capture_test_passed ? "yes" : "no"}` : "",
+    setup?.capture_test_passed_at ? `Capture test: ${setup.capture_test_passed_at}` : "",
     state.lastHandshakeAt ? `Last handshake: ${state.lastHandshakeAt}` : "Last handshake: not yet connected",
     bridge?.checked_in_recently === false ? "Bridge heartbeat: stale or missing" : "",
     bridge?.can_capture_active_tab === false ? "Active tab capture: not available" : "",
@@ -53,6 +61,24 @@ async function renderStatus({ forceHello = false } = {}) {
     bridge?.last_failure_message ? bridge.last_failure_message : ""
   ].filter(Boolean).join("\n");
   connection.dataset.state = state.ok && bridge?.ok !== false ? "ok" : "warn";
+}
+
+function setupLabel(setup) {
+  if (!setup?.state) return "";
+  switch (setup.state) {
+    case "capture_test_passed":
+      return "Chrome setup is ready.";
+    case "capture_test_needed":
+      return "Chrome is connected. Run a capture test from Starlee desktop setup.";
+    case "permission_needed":
+      return "Chrome needs Starlee site access.";
+    case "check_in_needed":
+      return "Chrome extension has not checked in recently.";
+    case "install_needed":
+      return "Chrome extension setup is not complete.";
+    default:
+      return `Chrome setup: ${setup.state}`;
+  }
 }
 
 function statusLabel(state) {

@@ -40,6 +40,7 @@ final class StatusMenuController: NSObject {
         addRecentMenu(to: menu)
         menu.addItem(.separator())
         menu.addItem(item("Browser Setup…", #selector(browserSetup)))
+        menu.addItem(item("Test Chrome Capture", #selector(testChromeCapture)))
         menu.addItem(item("Run Setup Diagnostics…", #selector(showDoctor)))
         menu.addItem(item("Show Last Capture Trace…", #selector(showLastCaptureTrace)))
         menu.addItem(item("Open Vault", #selector(openVault)))
@@ -63,6 +64,7 @@ final class StatusMenuController: NSObject {
         let doctor = client.runJSON(["doctor"])
         let status = doctor?["status"] as? [String: Any]
         let bridge = status?["bridge_health"] as? [String: Any]
+        let chromeSetup = bridge?["chrome_setup"] as? [String: Any]
         let count = (status?["capture_count"] as? NSNumber)?.intValue ?? 0
         let ok = (doctor?["ok"] as? Bool) ?? false
         let title = "● \(count) captures · \(ok ? "ready" : "needs setup")"
@@ -73,8 +75,10 @@ final class StatusMenuController: NSObject {
         )
         summary.isEnabled = false
         menu.addItem(summary)
-        if let action = bridge?["recommended_next_action"] as? String, !action.isEmpty {
-            let bridgeItem = NSMenuItem(title: "Browser bridge: \(action)", action: nil, keyEquivalent: "")
+        let bridgeDetail = chromeSetup?["next_action"] as? String ?? bridge?["recommended_next_action"] as? String
+        if let action = bridgeDetail, !action.isEmpty {
+            let state = chromeSetup?["state"] as? String ?? "bridge"
+            let bridgeItem = NSMenuItem(title: "Chrome \(state): \(action)", action: nil, keyEquivalent: "")
             bridgeItem.isEnabled = false
             menu.addItem(bridgeItem)
         }
@@ -297,23 +301,61 @@ final class StatusMenuController: NSObject {
     }
 
     @objc func browserSetup() {
+        let doctor = client.runJSON(["doctor"])
+        let status = doctor?["status"] as? [String: Any]
+        let bridge = status?["bridge_health"] as? [String: Any] ?? [:]
+        let setup = bridge["chrome_setup"] as? [String: Any] ?? [:]
         let extensionURL = client.home.appendingPathComponent("sensor-extension")
         NSWorkspace.shared.activateFileViewerSelecting([extensionURL])
         if let chromeURL = URL(string: "chrome://extensions") {
             NSWorkspace.shared.open(chromeURL)
         }
+        let installed = (setup["installed"] as? Bool) == true ? "yes" : "no"
+        let checkedIn = (setup["checked_in_recently"] as? Bool) == true ? "yes" : "no"
+        let permissionNeeded = (setup["permission_needed"] as? Bool) == true ? "yes" : "no"
+        let captureTest = (setup["capture_test_passed"] as? Bool) == true ? "yes" : "no"
         DialogPresenter.show(
             title: "Browser setup",
             message: """
-            Safari:
-            Enable Starlee Capture in Safari Settings > Extensions, then allow it on the sites you want to save.
-
-            Chromium:
+            Chrome:
             Load or reload the selected folder in chrome://extensions:
 
             \(extensionURL.path)
+
+            Installed: \(installed)
+            Checked in recently: \(checkedIn)
+            Permission needed: \(permissionNeeded)
+            Capture test passed: \(captureTest)
+
+            State: \(setup["state"] as? String ?? "unknown")
+            Detail: \(setup["detail"] as? String ?? "unknown")
+            Next: \(setup["next_action"] as? String ?? bridge["recommended_next_action"] as? String ?? "Reload the extension, then run Test Chrome Capture.")
+
+            Safari:
+            Enable Starlee Capture in Safari Settings > Extensions, then allow it on the sites you want to save.
             """
         )
+    }
+
+    @objc func testChromeCapture() {
+        guard !isCapturing else { return }
+        isCapturing = true
+        startLoadingAnimation()
+
+        let timeout = DispatchWorkItem { [weak self] in
+            self?.finishCapture(PostResult(ok: false, message: "Chrome capture test timed out."))
+        }
+        timeoutWorkItem = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureTimeout, execute: timeout)
+
+        client.requestChromeSetupCaptureTest { [weak self] result in
+            guard let self else { return }
+            if result.ok, let requestId = result.requestId {
+                self.pollCaptureRequestStatus(id: requestId)
+            } else {
+                self.finishCapture(PostResult(ok: false, message: result.message))
+            }
+        }
     }
 
     @objc func showDoctor() {

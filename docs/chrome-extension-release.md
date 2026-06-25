@@ -42,7 +42,8 @@ The script:
 3. stages only `sensor/dist/extension`;
 4. removes source maps;
 5. removes any generated `starlee-config.json`;
-6. writes a ZIP to `release/chrome-extension/starlee-capture-<version>.zip`.
+6. includes `build-info.json` with git/build identity;
+7. writes a ZIP to `release/chrome-extension/starlee-capture-<version>.zip`.
 
 Inspect the package before upload:
 
@@ -60,6 +61,10 @@ The inspection gate fails if it finds:
 - source maps;
 - obvious bearer-token material;
 - unexpected remote HTTP(S) URLs.
+
+On success, the inspection command prints JSON with the package path, manifest
+version, build identity, build timestamp, and file count. Keep that output with
+the release notes for the Chrome Web Store candidate.
 
 ## Store listing draft
 

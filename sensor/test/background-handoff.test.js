@@ -16,7 +16,7 @@ test("active tab diagnostics classify missing and unsupported URLs", () => {
   assert.deepEqual(activeTabProblem({ id: 7 }), {
     event: "active_tab_missing_url",
     status: "permission_denied",
-    message: "Safari did not expose the active tab URL to Starlee."
+    message: "The browser did not expose the active tab URL to Starlee."
   });
   assert.deepEqual(activeTabProblem({ id: 7, url: "safari-web-extension://settings" }), {
     event: "active_tab_unsupported_url",
@@ -41,9 +41,8 @@ test("sendMessage no receiver returns actionable content script failure", async 
 
   assert.equal(result.ok, false);
   assert.equal(result.code, CONTENT_SCRIPT_UNREACHABLE);
-  assert.match(result.error, /enable the Starlee Safari extension/);
-  assert.match(result.error, /allow it on youtube\.com/);
-  assert.match(result.error, /reload the YouTube tab/);
+  assert.match(result.error, /Reload the active tab/);
+  assert.match(result.error, /confirm Starlee has site access/);
   assert.deepEqual(diagnostics.map((event) => event.event), [
     "content_script_message_send_started",
     "content_script_no_receiver"
@@ -133,7 +132,11 @@ test("content script returned failure is recorded separately from transport succ
     messageType: "STARLEE_CAPTURE_NOW",
     browserName: "Safari",
     recordDiagnostic: (event) => diagnostics.push(event),
-    sendMessage: async () => ({ ok: false, code: "unsupported_page", error: "Unsupported page" })
+    sendMessage: async () => ({
+      ok: false,
+      code: "unsupported_page",
+      error: "Unsupported page includes https://private.example/token and private body text"
+    })
   });
 
   assert.equal(result.ok, false);
@@ -142,6 +145,10 @@ test("content script returned failure is recorded separately from transport succ
     "content_script_message_send_succeeded",
     "content_script_returned_failure"
   ]);
+  assert.equal(diagnostics.at(-1).message, "Page content script reported an unsupported page.");
+  const serialized = JSON.stringify(diagnostics);
+  assert.equal(serialized.includes("https://private.example/token"), false);
+  assert.equal(serialized.includes("private body text"), false);
 });
 
 test("successful content script response flows normally", async () => {

@@ -60,6 +60,10 @@ const ASSETS: &[(&str, &[u8])] = &[
         "options.html",
         include_bytes!("../sensor/dist/extension/options.html"),
     ),
+    (
+        "build-info.json",
+        include_bytes!("../sensor/dist/extension/build-info.json"),
+    ),
 ];
 
 pub fn install(home: &Path, config: &LocalConfig) -> Result<PathBuf> {

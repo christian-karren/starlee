@@ -22,6 +22,7 @@ test -f "$TMP/background.js"
 test -f "$TMP/content.js"
 test -f "$TMP/options.html"
 test -f "$TMP/options.js"
+test -f "$TMP/build-info.json"
 test -f "$TMP/assets/icon-16.png"
 test -f "$TMP/assets/icon-32.png"
 test -f "$TMP/assets/icon-48.png"
@@ -47,4 +48,28 @@ if grep -R -E "fetch\\([[:space:]]*[\`'\"]https?://" "$TMP" | grep -v '127\.0\.0
   exit 1
 fi
 
-printf 'Chrome extension package inspection passed: %s\n' "$ZIP"
+node - "$TMP" "$ZIP" <<'NODE'
+const fs = require("fs");
+const [tmp, zip] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(`${tmp}/manifest.json`, "utf8"));
+const build = JSON.parse(fs.readFileSync(`${tmp}/build-info.json`, "utf8"));
+const files = [];
+function walk(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const path = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) walk(path);
+    else files.push(path.slice(tmp.length + 1));
+  }
+}
+walk(tmp);
+console.log(JSON.stringify({
+  ok: true,
+  package: zip,
+  version: manifest.version,
+  build_identity: build.git_commit && build.git_commit !== "unknown"
+    ? `${build.git_branch || "unknown"}@${build.git_commit}${build.git_dirty === "true" ? "+dirty" : ""}`
+    : "unknown",
+  built_at: build.built_at || "unknown",
+  file_count: files.length
+}, null, 2));
+NODE

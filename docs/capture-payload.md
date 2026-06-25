@@ -91,11 +91,22 @@ bridge diagnostics:
 {
   "bridge_health": {
     "ok": true,
+    "chrome_setup": {
+      "installed": true,
+      "checked_in_recently": true,
+      "permission_needed": false,
+      "capture_test_passed": true,
+      "capture_test_passed_at": "2026-06-23T05:00:02Z",
+      "state": "capture_test_passed",
+      "detail": "Chrome capture has completed a setup test through the local bridge.",
+      "next_action": "Open an article or YouTube watch page and capture from Starlee."
+    },
     "extension_setup_present": true,
     "extension_config_present": true,
     "checked_in_recently": true,
     "browser": "Chrome",
     "extension_version": "0.1.0",
+    "extension_build": "main@abc123",
     "can_capture_active_tab": true,
     "last_hello_at": "2026-06-23T05:00:00Z",
     "last_request_status": "capture_saved",
@@ -139,6 +150,7 @@ Content-Type: application/json
 {
   "browser": "Chromium",
   "extension_version": "0.1.0",
+  "extension_build": "main@abc123",
   "can_capture_active_tab": true
 }
 ```

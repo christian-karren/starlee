@@ -33,6 +33,16 @@ test("built dist manifest includes YouTube matches and content script file", asy
   assert.deepEqual(manifest.content_scripts[0].js, ["content.js"]);
   await access(new URL("../dist/extension/content.js", import.meta.url));
   await access(new URL("../dist/extension/background.js", import.meta.url));
+  await access(new URL("../dist/extension/build-info.json", import.meta.url));
+});
+
+test("built extension includes release build identity metadata", async () => {
+  const build = JSON.parse(await readFile(new URL("../dist/extension/build-info.json", import.meta.url), "utf8"));
+
+  assert.equal(typeof build.git_commit, "string");
+  assert.equal(typeof build.git_branch, "string");
+  assert.match(build.git_dirty, /^(true|false)$/);
+  assert.match(build.built_at, /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test("manifest icon assets exist at declared PNG dimensions", async () => {

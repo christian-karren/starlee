@@ -37,6 +37,46 @@ test("extracts normalized article metadata and public access signal", () => {
   assert.equal(payload.dom_extract.html_meta["starlee:access_reason"], "schema:isAccessibleForFree=true");
 });
 
+test("article extraction emits safe diagnostics without article body", () => {
+  const diagnostics = [];
+  const dom = new JSDOM(`<!doctype html>
+    <title>Fallback title</title>
+    <meta name="author" content="Starlee Test">
+    <link rel="canonical" href="https://example.com/durable-browser-memory">
+    <script type="application/ld+json">{"@type":"Article","isAccessibleForFree":true}</script>
+    ${BODY}`, { url: "https://example.com/story?token=secret" });
+
+  const payload = extractArticle(dom.window.document, {
+    onDiagnostic: (event) => diagnostics.push(event)
+  });
+
+  assert.equal(payload.type, "article");
+  assert.deepEqual(diagnostics.map((event) => event.event), [
+    "article_extraction_started",
+    "article_extraction_succeeded"
+  ]);
+  assert.equal(diagnostics.at(-1).safe_metadata.access, "public");
+  assert.match(diagnostics.at(-1).safe_metadata.word_count, /^\d+$/);
+  const serialized = JSON.stringify(diagnostics);
+  assert.equal(serialized.includes("local Markdown record"), false);
+  assert.equal(serialized.includes("secret"), false);
+});
+
+test("payload builder emits safe article counts", async () => {
+  const diagnostics = [];
+  const dom = new JSDOM(`<!doctype html><title>Fallback title</title>${BODY}`, { url: "https://example.com/story" });
+  const payload = await capturePayload(dom.window.document, {
+    onDiagnostic: (event) => diagnostics.push(event)
+  });
+
+  assert.equal(payload.type, "article");
+  assert.ok(diagnostics.some((event) => event.event === "payload_built"));
+  const built = diagnostics.find((event) => event.event === "payload_built");
+  assert.equal(built.safe_metadata.payload_type, "article");
+  assert.match(built.safe_metadata.text_char_count, /^\d+$/);
+  assert.equal(JSON.stringify(diagnostics).includes("Starlee keeps a local Markdown record"), false);
+});
+
 test("routes YouTube before article detection", async () => {
   const dom = new JSDOM(`<title>Video</title>${BODY}`, { url: "https://www.youtube.com/watch?v=test" });
   const payload = await capturePayload(dom.window.document);

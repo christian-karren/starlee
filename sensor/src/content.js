@@ -53,6 +53,7 @@ async function capture(_message, sendResponse) {
   const requestId = _message?.requestId;
   const source = _message?.source || "active-tab";
   const pageType = detectedType(document) || "unsupported";
+  const selectedText = String(window.getSelection?.()?.toString() || "").trim();
   await sendDiagnostic(requestId, {
     component: "content_script",
     event: "content_script_ready",
@@ -60,7 +61,9 @@ async function capture(_message, sendResponse) {
     source,
     page: safePageDomainFromDocument(document),
     safe_metadata: {
-      page_type: pageType
+      page_type: pageType,
+      selection_present: String(Boolean(selectedText)),
+      selection_char_count: String(selectedText.length)
     }
   });
   await sendDiagnostic(requestId, {
@@ -94,10 +97,28 @@ async function capture(_message, sendResponse) {
     for (const event of diagnosticEvents) {
       await sendDiagnostic(requestId, event);
     }
-    const selectedText = String(window.getSelection?.()?.toString() || "").trim();
     if (selectedText && payload?.dom_extract && payload.type === "article") {
       payload.dom_extract.selected_text = selectedText;
+      await sendDiagnostic(requestId, {
+        component: "content_script",
+        event: "content_script_selected_text_attached",
+        status: "ok",
+        source,
+        page: safePageDomainFromDocument(document),
+        safe_metadata: {
+          selection_present: "true",
+          selection_char_count: String(selectedText.length)
+        }
+      });
     }
+    await sendDiagnostic(requestId, {
+      component: "content_script",
+      event: "content_script_payload_ready",
+      status: "ok",
+      source,
+      page: safePageFromDocument(document),
+      safe_metadata: payloadMetadata(payload)
+    });
     const response = await chrome.runtime.sendMessage({
       type: MESSAGE.capture,
       payload,
@@ -107,16 +128,19 @@ async function capture(_message, sendResponse) {
     sendResponse(response);
   } catch (error) {
     const message = error.message || "This page cannot be captured by Starlee.";
-    const code = message.includes("does not look like")
-      ? "unsupported_page"
-      : "capture_failed";
+    const code = captureFailureCode(message, pageType);
     await sendDiagnostic(requestId, {
       component: "content_script",
       event: "content_script_capture_failed",
       status: code,
       source,
-      message,
-      page: safePageFromDocument(document)
+      message: failureDiagnosticMessage(code),
+      page: safePageFromDocument(document),
+      safe_metadata: {
+        page_type: pageType,
+        error_kind: captureFailureKind(message, pageType),
+        error_message: redactedErrorMessage(message)
+      }
     });
     sendResponse({ ok: false, code, error: message });
   }
@@ -156,4 +180,42 @@ function domainFromUrl(value) {
   } catch {
     return "";
   }
+}
+
+function payloadMetadata(payload = {}) {
+  return {
+    payload_type: payload.type || "unknown",
+    access: payload.access || "unknown",
+    text_char_count: String(payload.dom_extract?.text?.length || 0),
+    selection_present: String(Boolean(payload.dom_extract?.selected_text)),
+    transcript_segment_count: String(payload.transcript?.length || 0),
+    transcript_status: payload.transcript_status || "",
+    transcript_source: payload.transcript_source || "",
+    transcript_reason: payload.transcript_reason || ""
+  };
+}
+
+function captureFailureCode(message = "", pageType = "unsupported") {
+  if (message.includes("does not look like") || pageType === "unsupported") return "unsupported_page";
+  if (message.includes("readable article text")) return "empty_extract";
+  return "capture_failed";
+}
+
+function captureFailureKind(message = "", pageType = "unsupported") {
+  if (message.includes("does not look like") || pageType === "unsupported") return "unsupported_page";
+  if (message.includes("readable article text")) return "empty_article";
+  return "extractor_failure";
+}
+
+function failureDiagnosticMessage(code) {
+  if (code === "unsupported_page") return "The active page is not a supported article or YouTube watch page.";
+  if (code === "empty_extract") return "Starlee reached the page but could not extract article text.";
+  return "Starlee could not build a capture payload from the active page.";
+}
+
+function redactedErrorMessage(message = "") {
+  return String(message)
+    .replace(/https?:\/\/\S+/g, "[url]")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email]")
+    .slice(0, 160);
 }

@@ -36,7 +36,7 @@ export function activeTabProblem(tab = {}) {
     return {
       event: "active_tab_missing_url",
       status: "permission_denied",
-      message: "Safari did not expose the active tab URL to Starlee."
+      message: "The browser did not expose the active tab URL to Starlee."
     };
   }
   if (!supportedContentScriptUrl(tab.url)) {
@@ -69,7 +69,7 @@ export function contentScriptFailureResult(browserName = "Safari") {
   return {
     ok: false,
     code: CONTENT_SCRIPT_UNREACHABLE,
-    error: `${browserName} extension could not reach the page content script. Open Safari, enable the Starlee Safari extension, allow it on youtube.com, reload the YouTube tab, then try capture again.`
+    error: `${browserName} extension could not reach the page content script. Reload the active tab, confirm Starlee has site access, then try capture again.`
   };
 }
 
@@ -83,7 +83,7 @@ export function classifyContentScriptMessageError(error) {
       event: "content_script_timeout",
       status: CONTENT_SCRIPT_UNREACHABLE,
       error_kind: "timeout",
-      message: "Safari extension timed out waiting for the page content script."
+      message: "Browser extension timed out waiting for the page content script."
     };
   }
   if (noReceiver) {
@@ -91,7 +91,7 @@ export function classifyContentScriptMessageError(error) {
       event: "content_script_no_receiver",
       status: CONTENT_SCRIPT_UNREACHABLE,
       error_kind: "no_receiver",
-      message: "Safari extension could not reach the page content script."
+      message: "Browser extension could not reach the page content script."
     };
   }
   if (permissionDenied) {
@@ -99,14 +99,14 @@ export function classifyContentScriptMessageError(error) {
       event: "content_script_message_send_failed",
       status: "permission_denied",
       error_kind: "permission_denied",
-      message: "Safari did not grant Starlee access to message the page content script."
+      message: "The browser did not grant Starlee access to message the page content script."
     };
   }
   return {
     event: "content_script_message_send_failed",
     status: CONTENT_SCRIPT_UNREACHABLE,
     error_kind: "send_failed",
-    message: "Safari extension could not message the page content script."
+    message: "Browser extension could not message the page content script."
   };
 }
 
@@ -147,7 +147,7 @@ export async function sendCaptureMessageToContentScript({
         ...baseEvent,
         event: "content_script_no_receiver",
         status: failure.code,
-        message: "Safari extension could not reach the page content script.",
+        message: "Browser extension could not reach the page content script.",
         safe_metadata: {
           ...safe_metadata,
           error_kind: "empty_response"
@@ -171,7 +171,7 @@ export async function sendCaptureMessageToContentScript({
         ...baseEvent,
         event: "content_script_returned_failure",
         status: result.code || "capture_failed",
-        message: result.error || "Content script capture failed.",
+        message: contentScriptReturnedFailureMessage(result.code),
         safe_metadata: {
           ...safe_metadata,
           response_code: result.code || "capture_failed"
@@ -239,7 +239,7 @@ export async function probeContentScriptReadiness({
         ...baseEvent,
         event: "content_script_probe_no_receiver",
         status: failure.code,
-        message: "Safari extension could not reach the page content script.",
+        message: "Browser extension could not reach the page content script.",
         safe_metadata: {
           ...safe_metadata,
           error_kind: "empty_response"
@@ -263,7 +263,7 @@ export async function probeContentScriptReadiness({
       return {
         ok: false,
         code: "content_script_not_ready",
-        error: "Safari reached the page content script, but it is not ready to capture."
+        error: `${browserName} reached the page content script, but it is not ready to capture.`
       };
     }
     return result;
@@ -318,4 +318,17 @@ function redactedErrorMessage(message = "") {
     .replace(/https?:\/\/\S+/g, "[url]")
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email]")
     .slice(0, 160);
+}
+
+function contentScriptReturnedFailureMessage(code = "") {
+  switch (code) {
+    case "unsupported_page":
+      return "Page content script reported an unsupported page.";
+    case "permission_denied":
+      return "Page content script reported a permission issue.";
+    case "empty_extract":
+      return "Page content script could not extract article or transcript content.";
+    default:
+      return "Page content script capture failed.";
+  }
 }
