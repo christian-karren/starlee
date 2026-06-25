@@ -80,8 +80,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private var selectedMonthID: String?
     private lazy var fluidBackground = fluidBackgroundStore.load()
 
-    private let libraryButton = NSButton(title: "Library", target: nil, action: nil)
-    private let settingsButton = NSButton(title: "Settings", target: nil, action: nil)
+    private let libraryButton = SidebarBoxButton(title: "Library")
+    private let settingsButton = SidebarBoxButton(title: "Settings")
     private let monthStack = NSStackView()
     private var monthButtons: [String: NSButton] = [:]
     private var appBackgroundWebView: WKWebView?
@@ -201,42 +201,46 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 
     private func makeSidebar() -> NSView {
-        let sidebar = NSVisualEffectView()
-        sidebar.material = .hudWindow
-        sidebar.blendingMode = .withinWindow
-        sidebar.state = .active
+        let sidebar = NSView()
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         sidebar.wantsLayer = true
-        sidebar.layer?.backgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.06).cgColor
-        sidebar.layer?.borderColor = NSColor(calibratedWhite: 1.0, alpha: 0.10).cgColor
-        sidebar.layer?.borderWidth = 1
+        sidebar.layer?.backgroundColor = NSColor.black.cgColor
 
         let stack = NSStackView()
         stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 52, left: 14, bottom: 14, right: 14)
+        stack.alignment = .width
+        stack.spacing = 20
+        stack.edgeInsets = NSEdgeInsets(top: 28, left: 16, bottom: 18, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
         sidebar.addSubview(stack)
 
-        let brand = NSTextField(labelWithString: "Starlee")
-        brand.font = .systemFont(ofSize: 18, weight: .bold)
-        stack.addArrangedSubview(brand)
+        let wordmark = NSImageView()
+        wordmark.image = Bundle.main.url(forResource: "StarleeWordmark", withExtension: "png")
+            .flatMap(NSImage.init(contentsOf:))
+        wordmark.imageScaling = .scaleProportionallyUpOrDown
+        wordmark.translatesAutoresizingMaskIntoConstraints = false
+        wordmark.heightAnchor.constraint(equalToConstant: 86).isActive = true
+        stack.addArrangedSubview(wordmark)
 
         configureSidebarButton(libraryButton, action: #selector(showLibrary))
         configureSidebarButton(settingsButton, action: #selector(showSettings))
-        stack.addArrangedSubview(libraryButton)
-        stack.addArrangedSubview(settingsButton)
 
-        let monthHeader = NSTextField(labelWithString: "Months")
-        monthHeader.font = .systemFont(ofSize: 11, weight: .semibold)
-        monthHeader.textColor = .secondaryLabelColor
-        monthHeader.setContentHuggingPriority(.required, for: .vertical)
-        stack.addArrangedSubview(monthHeader)
+        let navStack = NSStackView(views: [libraryButton, settingsButton])
+        navStack.orientation = .vertical
+        navStack.alignment = .width
+        navStack.spacing = 12
+        stack.addArrangedSubview(navStack)
+
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.layer?.backgroundColor = NSColor.white.cgColor
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        stack.addArrangedSubview(divider)
 
         monthStack.orientation = .vertical
-        monthStack.alignment = .leading
-        monthStack.spacing = 3
+        monthStack.alignment = .width
+        monthStack.spacing = 12
         stack.addArrangedSubview(monthStack)
         stack.addArrangedSubview(NSView())
 
@@ -305,9 +309,6 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private func configureSidebarButton(_ button: NSButton, action: Selector) {
         button.target = self
         button.action = action
-        button.bezelStyle = .inline
-        button.alignment = .left
-        button.widthAnchor.constraint(equalToConstant: 188).isActive = true
     }
 
     private func configureTable() {
@@ -798,17 +799,16 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         monthButtons.removeAll()
         if groups.isEmpty {
             let empty = NSTextField(labelWithString: "No captures yet")
-            empty.font = .systemFont(ofSize: 12)
-            empty.textColor = .secondaryLabelColor
+            empty.font = SidebarBoxButton.labelFont
+            empty.textColor = .white
             monthStack.addArrangedSubview(empty)
             return
         }
         for group in groups {
-            let button = NSButton(title: "\(group.label)  \(group.captures.count)", target: self, action: #selector(selectMonth(_:)))
-            button.bezelStyle = .inline
-            button.alignment = .left
+            let button = SidebarBoxButton(title: group.label)
+            button.target = self
+            button.action = #selector(selectMonth(_:))
             button.identifier = NSUserInterfaceItemIdentifier(group.id)
-            button.widthAnchor.constraint(equalToConstant: 188).isActive = true
             monthButtons[group.id] = button
             monthStack.addArrangedSubview(button)
         }
@@ -817,9 +817,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private func updateSidebarSelection() {
         libraryButton.state = primaryView == .library ? .on : .off
         settingsButton.state = primaryView == .settings ? .on : .off
+        libraryButton.setSelected(primaryView == .library)
+        settingsButton.setSelected(primaryView == .settings)
         for (id, button) in monthButtons {
-            button.state = primaryView == .library && id == selectedMonthID ? .on : .off
-            button.isEnabled = primaryView == .library
+            let isSelected = primaryView == .library && id == selectedMonthID
+            button.state = isSelected ? .on : .off
+            (button as? SidebarBoxButton)?.setSelected(isSelected)
+            button.isEnabled = true
         }
     }
 
@@ -1177,5 +1181,114 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     @objc private func revealSelectedCapture() {
         guard let path = selectedCapture()?.filePath, !path.isEmpty else { return }
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+}
+
+private final class SidebarBoxButton: NSButton {
+    static var labelFont: NSFont {
+        NSFont(name: "Avenir Next Demi Bold", size: 16)
+            ?? NSFont(name: "Helvetica Neue", size: 16)
+            ?? .systemFont(ofSize: 16, weight: .bold)
+    }
+
+    private static let normalColor = NSColor.white
+    private static let hoverColor = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 1)
+    private var trackingAreaRef: NSTrackingArea?
+    private var isHovering = false
+
+    init(title: String) {
+        super.init(frame: .zero)
+        self.title = title
+        isBordered = false
+        bezelStyle = .regularSquare
+        setButtonType(.momentaryChange)
+        alignment = .center
+        font = Self.labelFont
+        contentTintColor = .black
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: 188).isActive = true
+        heightAnchor.constraint(equalToConstant: 52).isActive = true
+        layer?.backgroundColor = Self.normalColor.cgColor
+        layer?.cornerRadius = 3
+        layer?.borderColor = NSColor.black.cgColor
+        layer?.borderWidth = 2
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.28
+        layer?.shadowOffset = CGSize(width: 3, height: -3)
+        layer?.shadowRadius = 0
+        updateAttributedTitle()
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var title: String {
+        didSet {
+            updateAttributedTitle()
+        }
+    }
+
+    override var isEnabled: Bool {
+        didSet {
+            alphaValue = 1
+            updateAttributedTitle()
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingAreaRef = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        applyFill(animated: true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        applyFill(animated: true)
+    }
+
+    func setSelected(_: Bool) {
+        applyFill(animated: false)
+    }
+
+    private func updateAttributedTitle() {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: Self.labelFont,
+                .foregroundColor: NSColor.black,
+                .paragraphStyle: paragraph
+            ]
+        )
+    }
+
+    private func applyFill(animated: Bool) {
+        let color = isHovering ? Self.hoverColor : Self.normalColor
+        guard animated else {
+            layer?.backgroundColor = color.cgColor
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            animator().layer?.backgroundColor = color.cgColor
+        }
     }
 }
