@@ -137,6 +137,45 @@ test("still reports language-unavailable when the open transcript panel says so"
   assert.equal(result.transcript_reason, "transcript_language_unavailable");
 });
 
+test("waits for lazy-rendered rows after the panel opens instead of re-clicking", async () => {
+  // Reproduces the live trace: the panel opens with 0 rows, then YouTube renders
+  // the lines a beat later. Discovery must poll (not click again, which would
+  // toggle the panel shut) and still capture the transcript.
+  const events = [];
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="Lazy rows demo">
+    <button id="transcript">Show transcript</button>`, {
+    url: "https://www.youtube.com/watch?v=lazyrows123",
+    pretendToBeVisual: true
+  });
+  const doc = dom.window.document;
+  let clicks = 0;
+  doc.getElementById("transcript").addEventListener("click", () => {
+    clicks += 1;
+    // First click opens an empty panel; rows arrive ~250ms later.
+    if (clicks === 1) {
+      doc.body.insertAdjacentHTML("beforeend", `<ytd-transcript-renderer></ytd-transcript-renderer>`);
+      setTimeout(() => {
+        doc.querySelector("ytd-transcript-renderer").insertAdjacentHTML("beforeend", `
+          <ytd-transcript-segment-renderer>
+            <span class="segment-timestamp">0:04</span>
+            <yt-formatted-string class="segment-text">Lazy line</yt-formatted-string>
+          </ytd-transcript-segment-renderer>`);
+      }, 250);
+    }
+  });
+
+  const result = await extractYouTubeResult(doc, {
+    discoverTranscript: true,
+    transcriptDiscoveryTimeoutMs: 1500,
+    onDiagnostic: (event) => events.push(event)
+  });
+
+  assert.equal(result.transcript_status, "full");
+  assert.deepEqual(result.segments, [{ t: 4, text: "Lazy line" }]);
+  assert.equal(clicks, 1, "should open the panel exactly once and then poll");
+});
+
 test("clicks actionable button ancestor for nested transcript label", async () => {
   const events = [];
   const dom = new JSDOM(`<title>Video</title>

@@ -99,7 +99,9 @@ export async function extractYouTubeResult(document, options = {}) {
     });
     discovery = await discoverTranscript(document, options);
   }
-  const segments = discoveryAttempted ? extractRenderedTranscriptSegments(document) : initialSegments;
+  const segments = discoveryAttempted
+    ? (discovery.segments?.length ? discovery.segments : extractRenderedTranscriptSegments(document))
+    : initialSegments;
   const transcriptStatus = segments.length > 0 ? "full" : "unavailable";
   const transcriptSource = segments.length > 0 ? "rendered_dom" : "unavailable";
   const transcriptReason = segments.length > 0
@@ -190,20 +192,39 @@ async function discoverTranscript(document, options = {}) {
   const seen = new Set();
   let buttonFound = false;
   let clickAttempted = false;
+  // Tracks whether *we* opened the transcript panel, so we can close it again
+  // afterward and leave the viewer's screen exactly as we found it.
+  let openedByUs = false;
   let panelOpened = transcriptPanelOpen(document);
   let rowCount = transcriptRows(document).length;
   const attemptedControls = new WeakSet();
   const attemptedExpanders = new WeakSet();
   const attemptedMenus = new WeakSet();
-  if (extractRenderedTranscriptSegments(document).length > 0) {
+
+  const succeed = (segments) => {
     emitTranscriptDiagnostic(options, "transcript_extraction_succeeded", {
       status: "ok",
       safe_metadata: {
-        segment_count: String(extractRenderedTranscriptSegments(document).length),
+        segment_count: String(segments.length),
         elapsed_ms: String(Date.now() - startedAt)
       }
     });
-    return { reason: "rendered_transcript_segments_found", panelOpened: true, rowCount };
+    // We already have the segment data in hand, so closing the panel (which
+    // removes the rendered rows from the DOM) does not cost us anything.
+    if (openedByUs) closeTranscriptPanel(document);
+    return {
+      reason: "rendered_transcript_segments_found",
+      panelOpened: true,
+      rowCount: segments.length,
+      segments
+    };
+  };
+
+  // Already rendered (e.g. the user opened the transcript themselves). Read it
+  // without clicking anything, and leave their open panel as-is.
+  const existing = extractRenderedTranscriptSegments(document);
+  if (existing.length > 0) {
+    return succeed(existing);
   }
 
   while (Date.now() < deadline) {
@@ -213,45 +234,40 @@ async function discoverTranscript(document, options = {}) {
         status: "ok",
         safe_metadata: { row_count: String(transcriptRows(document).length), segment_count: String(segments.length) }
       }, seen);
-      emitTranscriptDiagnostic(options, "transcript_extraction_succeeded", {
-        status: "ok",
-        safe_metadata: { segment_count: String(segments.length), elapsed_ms: String(Date.now() - startedAt) }
-      });
-      return { reason: "rendered_transcript_segments_found", panelOpened: true, rowCount: transcriptRows(document).length };
+      return succeed(segments);
     }
 
     panelOpened = transcriptPanelOpen(document);
     rowCount = transcriptRows(document).length;
     if (panelOpened) {
+      // The panel is open. Do NOT click anything else: clicking other
+      // transcript-labeled controls toggles the panel shut and moves the page.
+      // Detect a genuine "unavailable" message; otherwise just wait for the
+      // lazy-rendered transcript rows to appear.
       emitTranscriptDiagnostic(options, "transcript_panel_opened", {
         status: "ok",
         safe_metadata: { row_count: String(rowCount), elapsed_ms: String(Date.now() - startedAt) }
       }, seen);
-      if (rowCount > 0) {
-        emitTranscriptDiagnostic(options, "transcript_rows_empty", {
+      const unavailable = transcriptUnavailableReason(document);
+      if (unavailable) {
+        emitTranscriptDiagnostic(options, unavailable.event, {
           status: "unavailable",
-          safe_metadata: { row_count: String(rowCount), segment_count: "0" }
+          safe_metadata: {
+            reason: unavailable.reason,
+            panel_open: "true",
+            elapsed_ms: String(Date.now() - startedAt)
+          }
         }, seen);
+        if (openedByUs) closeTranscriptPanel(document);
+        return { reason: unavailable.reason, panelOpened, rowCount, segments: [] };
       }
+      await sleep(150);
+      continue;
     }
 
-    // Only trust an "unavailable" verdict once the transcript panel is actually
-    // open. Checking before that let stray page text (e.g. an audio-track menu
-    // matching /no language/) abort discovery before "Show transcript" was ever
-    // clicked, producing a false `transcript_language_unavailable` in ~8ms.
-    const unavailable = panelOpened ? transcriptUnavailableReason(document) : null;
-    if (unavailable) {
-      emitTranscriptDiagnostic(options, unavailable.event, {
-        status: "unavailable",
-        safe_metadata: {
-          reason: unavailable.reason,
-          panel_open: String(panelOpened),
-          elapsed_ms: String(Date.now() - startedAt)
-        }
-      }, seen);
-      return { reason: unavailable.reason, panelOpened, rowCount };
-    }
-
+    // The panel is not open yet. Try to open it with a single, non-scrolling
+    // activation of the transcript control (falling back to description
+    // expansion and the overflow menu only when no control is present).
     const transcriptControl = firstTranscriptControl(document, attemptedControls);
     if (transcriptControl) {
       buttonFound = true;
@@ -282,26 +298,21 @@ async function discoverTranscript(document, options = {}) {
       await sleep(300);
       const clickedSegments = extractRenderedTranscriptSegments(document);
       const openedAfterClick = transcriptPanelOpen(document);
+      const opened = openedAfterClick || clickedSegments.length > 0;
+      if (openedAfterClick) openedByUs = true;
       emitTranscriptDiagnostic(options, "transcript_button_click_completed", {
-        status: openedAfterClick || clickedSegments.length > 0 ? "ok" : "unavailable",
+        status: opened ? "ok" : "unavailable",
         safe_metadata: {
           ...controlMetadata(transcriptControl),
           click_method_used: "realistic_sequence",
-          panel_opened_after_click: String(openedAfterClick || clickedSegments.length > 0),
+          panel_opened_after_click: String(opened),
           elapsed_ms: String(Date.now() - startedAt)
         }
       });
-      if (clickedSegments.length > 0) {
-        emitTranscriptDiagnostic(options, "transcript_panel_opened", {
-          status: "ok",
-          safe_metadata: { row_count: String(transcriptRows(document).length), elapsed_ms: String(Date.now() - startedAt) }
-        }, seen);
-        emitTranscriptDiagnostic(options, "transcript_extraction_succeeded", {
-          status: "ok",
-          safe_metadata: { segment_count: String(clickedSegments.length), elapsed_ms: String(Date.now() - startedAt) }
-        });
-        return { reason: "rendered_transcript_segments_found", panelOpened: true, rowCount: transcriptRows(document).length };
-      }
+      // If the panel opened, hand off to the next iteration's panel-open branch
+      // (so we never click again and toggle it shut). If it did NOT open, fall
+      // through to try description expansion / the overflow menu this round.
+      if (opened) continue;
     }
 
     const expander = firstDescriptionExpander(document, attemptedExpanders);
@@ -317,9 +328,6 @@ async function discoverTranscript(document, options = {}) {
       }, seen);
       activateControl(expander.node);
       await sleep(250);
-      if (extractRenderedTranscriptSegments(document).length > 0) {
-        return { reason: "rendered_transcript_segments_found", panelOpened: true, rowCount: transcriptRows(document).length };
-      }
       continue;
     }
 
@@ -336,9 +344,6 @@ async function discoverTranscript(document, options = {}) {
       }, seen);
       activateControl(menu.node);
       await sleep(250);
-      if (extractRenderedTranscriptSegments(document).length > 0) {
-        return { reason: "rendered_transcript_segments_found", panelOpened: true, rowCount: transcriptRows(document).length };
-      }
       continue;
     }
 
@@ -353,25 +358,31 @@ async function discoverTranscript(document, options = {}) {
     await sleep(250);
   }
 
+  // Deadline reached. One last read in case rows rendered on the final tick.
+  const finalSegments = extractRenderedTranscriptSegments(document);
+  if (finalSegments.length > 0) {
+    return succeed(finalSegments);
+  }
   panelOpened = transcriptPanelOpen(document);
   rowCount = transcriptRows(document).length;
-  if (panelOpened && rowCount === 0) {
+  if (openedByUs) closeTranscriptPanel(document);
+  if (panelOpened) {
     emitTranscriptDiagnostic(options, "transcript_panel_opened", {
       status: "ok",
-      safe_metadata: { row_count: "0", elapsed_ms: String(Date.now() - startedAt) }
+      safe_metadata: { row_count: String(rowCount), elapsed_ms: String(Date.now() - startedAt) }
     }, seen);
     emitTranscriptDiagnostic(options, "transcript_rows_empty", {
       status: "unavailable",
-      safe_metadata: { row_count: "0", segment_count: "0" }
+      safe_metadata: { row_count: String(rowCount), segment_count: "0" }
     }, seen);
-    return { reason: "transcript_rows_empty", panelOpened, rowCount };
+    return { reason: "transcript_rows_empty", panelOpened, rowCount, segments: [] };
   }
-  if (clickAttempted && !panelOpened) {
+  if (clickAttempted) {
     emitTranscriptDiagnostic(options, "transcript_panel_not_opened", {
       status: "unavailable",
       safe_metadata: { elapsed_ms: String(Date.now() - startedAt) }
     }, seen);
-    return { reason: "transcript_panel_not_opened", panelOpened, rowCount };
+    return { reason: "transcript_panel_not_opened", panelOpened, rowCount, segments: [] };
   }
   emitTranscriptDiagnostic(options, "transcript_discovery_timed_out", {
     status: "unavailable",
@@ -386,8 +397,29 @@ async function discoverTranscript(document, options = {}) {
   return {
     reason: buttonFound ? "transcript_discovery_timed_out" : "transcript_button_not_found",
     panelOpened,
-    rowCount
+    rowCount,
+    segments: []
   };
+}
+
+// Best-effort close of the transcript engagement panel so capturing leaves the
+// page exactly as the viewer had it. Never throws; leaving it open is harmless.
+function closeTranscriptPanel(document) {
+  try {
+    const panel = document.querySelector(
+      "ytd-engagement-panel-section-list-renderer[target-id*='transcript']"
+    );
+    if (!panel) return;
+    const closeButton = panel.querySelector([
+      "#visibility-button button",
+      "#visibility-button",
+      "button[aria-label*='close' i]",
+      "[aria-label*='close transcript' i]"
+    ].join(", "));
+    if (closeButton) activateControl(closeButton);
+  } catch {
+    // best effort
+  }
 }
 
 function firstTranscriptControl(document, attemptedControls = new WeakSet()) {
@@ -513,7 +545,9 @@ function nearestActionableControl(node) {
 }
 
 function activateControl(node) {
-  node.scrollIntoView?.({ block: "center", inline: "center", behavior: "instant" });
+  // Deliberately no scrollIntoView: it yanked the viewport to each control and
+  // made the page visibly jump around. Synthetic pointer/click events do not
+  // require the element to be scrolled into view.
   node.focus?.({ preventScroll: true });
   dispatchPointerMouseSequence(node);
   node.click?.();
