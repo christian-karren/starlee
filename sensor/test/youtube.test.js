@@ -115,6 +115,61 @@ test("captures transcript invisibly from the caption track (primary path)", asyn
   assert.ok(events.some((event) => event.event === "youtube_timedtext_fetch_succeeded"));
 });
 
+test("fetches the watch-page HTML to recover caption tracks when the DOM lacks them", async () => {
+  // The real failure: the content script's isolated world can't read
+  // window.ytInitialPlayerResponse and YouTube removed the inline script, so the
+  // live DOM has no player response. We must re-fetch the page HTML to get it.
+  const playerResponse = {
+    captions: {
+      playerCaptionsTracklistRenderer: {
+        captionTracks: [
+          { baseUrl: "https://www.youtube.com/api/timedtext?v=html123&lang=en", languageCode: "en", kind: "asr" }
+        ]
+      }
+    }
+  };
+  const html = `<!doctype html><html><body><script>var ytInitialPlayerResponse = ${JSON.stringify(playerResponse)};</script></body></html>`;
+  const events = [];
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="HTML fallback demo">`, {
+    url: "https://www.youtube.com/watch?v=html123",
+    pretendToBeVisual: true
+  });
+  const calls = [];
+  dom.window.fetch = async (url) => {
+    calls.push(url);
+    if (String(url).includes("timedtext")) {
+      return {
+        ok: true,
+        json: async () => ({
+          events: [
+            { tStartMs: 0, segs: [{ utf8: "From HTML" }] },
+            { tStartMs: 3000, segs: [{ utf8: "fetch fallback" }] }
+          ]
+        })
+      };
+    }
+    return { ok: true, text: async () => html };
+  };
+
+  const result = await extractYouTubeResult(dom.window.document, {
+    discoverTranscript: true,
+    transcriptDiscoveryTimeoutMs: 1500,
+    onDiagnostic: (event) => events.push(event)
+  });
+
+  assert.equal(result.transcript_status, "full");
+  assert.equal(result.transcript_source, "caption_track");
+  assert.deepEqual(result.segments, [
+    { t: 0, text: "From HTML" },
+    { t: 3, text: "fetch fallback" }
+  ]);
+  const found = events.find((event) => event.event === "youtube_caption_tracks_found");
+  assert.equal(found.safe_metadata.player_response_source, "page_html");
+  assert.ok(calls.some((url) => url === "https://www.youtube.com/watch?v=html123"));
+  assert.ok(calls.some((url) => String(url).includes("timedtext")));
+});
+
 test("falls back to rendered-DOM scrape when the caption track yields nothing", async () => {
   const playerResponse = { captions: { playerCaptionsTracklistRenderer: { captionTracks: [] } } };
   const events = [];

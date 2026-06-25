@@ -181,12 +181,12 @@ function emitDiagnostic(options, event, detail = {}) {
 // covers auto-generated captions, needs no UI interaction, and does not depend on
 // the transcript panel rendering. Returns { segments, reason }; never throws.
 async function extractTranscriptViaCaptionTrack(document, options) {
-  const playerResponse = parsePlayerResponse(document);
+  const { playerResponse, source } = await loadPlayerResponse(document);
   if (!playerResponse) {
     emitDiagnostic(options, "youtube_caption_tracks_found", {
       status: "unavailable",
-      message: "No player response found in page.",
-      safe_metadata: { track_count: "0" }
+      message: "No player response found in page or page HTML.",
+      safe_metadata: { track_count: "0", player_response_source: source }
     });
     return { segments: [], reason: "player_response_unavailable" };
   }
@@ -196,7 +196,8 @@ async function extractTranscriptViaCaptionTrack(document, options) {
     message: tracks.length > 0 ? "Caption tracks present in player response." : "No caption tracks in player response.",
     safe_metadata: {
       track_count: String(tracks.length),
-      languages: tracks.map((track) => track.languageCode).filter(Boolean).slice(0, 8).join(",")
+      languages: tracks.map((track) => track.languageCode).filter(Boolean).slice(0, 8).join(","),
+      player_response_source: source
     }
   });
   const track = pickCaptionTrack(tracks);
@@ -223,22 +224,57 @@ async function extractTranscriptViaCaptionTrack(document, options) {
   };
 }
 
+// Obtain the player response (which carries the caption tracks). The content
+// script runs in an isolated world, so it cannot read window.ytInitialPlayerResponse,
+// and YouTube often removes the inline bootstrap <script> from the DOM after it
+// runs. So: try the live DOM first (fast, no network), then fall back to fetching
+// the watch page HTML, whose server-rendered ytInitialPlayerResponse reliably
+// includes the caption tracks.
+async function loadPlayerResponse(document) {
+  const fromDom = parsePlayerResponse(document);
+  if (fromDom) return { playerResponse: fromDom, source: "dom" };
+  const html = await fetchPageHtml(document);
+  if (html) {
+    const fromHtml = parsePlayerResponseFromText(html);
+    if (fromHtml) return { playerResponse: fromHtml, source: "page_html" };
+  }
+  return { playerResponse: null, source: "none" };
+}
+
+async function fetchPageHtml(document) {
+  const view = document.defaultView;
+  const fetchFn = view?.fetch || (typeof fetch === "function" ? fetch : null);
+  const url = document.location?.href;
+  if (!fetchFn || !url) return null;
+  try {
+    const response = await fetchFn(url, { credentials: "include" });
+    if (!response?.ok) return null;
+    return await response.text();
+  } catch {
+    return null;
+  }
+}
+
 function parsePlayerResponse(document) {
   for (const script of document.querySelectorAll("script")) {
-    const content = script.textContent || "";
-    const marker = content.indexOf("ytInitialPlayerResponse");
-    if (marker === -1) continue;
-    const braceStart = content.indexOf("{", marker);
-    if (braceStart === -1) continue;
-    const json = balancedJsonAt(content, braceStart);
-    if (!json) continue;
-    try {
-      return JSON.parse(json);
-    } catch {
-      // keep scanning other scripts
-    }
+    const found = parsePlayerResponseFromText(script.textContent || "");
+    if (found) return found;
   }
   return null;
+}
+
+function parsePlayerResponseFromText(text) {
+  const marker = text.indexOf("ytInitialPlayerResponse");
+  if (marker === -1) return null;
+  const braceStart = text.indexOf("{", marker);
+  if (braceStart === -1) return null;
+  const json = balancedJsonAt(text, braceStart);
+  if (!json) return null;
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
 }
 
 function balancedJsonAt(text, start) {
