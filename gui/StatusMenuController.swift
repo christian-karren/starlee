@@ -1,7 +1,7 @@
 import AppKit
 
 final class StatusMenuController: NSObject {
-    private static let captureTimeout: TimeInterval = 12
+    private static let captureTimeout: TimeInterval = 25
 
     private let statusItem: NSStatusItem
     private let client: StarleeClient

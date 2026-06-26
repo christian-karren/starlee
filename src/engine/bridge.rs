@@ -8,7 +8,10 @@ use crate::config::{
     CaptureDiagnosticEvent, CaptureRequestPageMetadata, ExtensionState, LocalConfig,
 };
 
-pub const CAPTURE_REQUEST_TTL: Duration = Duration::from_secs(10);
+// Generous enough to let the browser open the YouTube transcript panel and wait
+// out a slow transcript load (which can take several seconds) before the request
+// is considered stale.
+pub const CAPTURE_REQUEST_TTL: Duration = Duration::from_secs(25);
 pub const EXTENSION_HEARTBEAT_FRESHNESS: Duration = Duration::from_secs(5 * 60);
 const CAPTURE_DIAGNOSTIC_LIMIT: usize = 120;
 
@@ -155,7 +158,7 @@ pub(crate) fn default_capture_status_message(status: &str) -> Option<String> {
             "Load or reload the Starlee browser extension, then try again."
         }
         CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE => {
-            "Safari extension could not reach the page content script."
+            "The Starlee content script was not running in the page."
         }
         CAPTURE_STATUS_TIMED_OUT => "The browser did not pick up the request in time.",
         _ => return None,
@@ -213,12 +216,89 @@ pub(crate) fn bridge_next_action(
             "Load or reload the Starlee browser extension, then try again.".into()
         }
         Some(CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE) => {
-            "Open Safari, enable the Starlee Safari extension, allow it on youtube.com, reload the YouTube tab, then try capture again.".into()
+            "Reload the page so the Starlee content script loads (it does not inject into tabs opened before the extension was enabled), confirm the extension is enabled and allowed on this site, then try capture again.".into()
         }
         Some(CAPTURE_STATUS_FAILED) => {
             "Retry capture from the active tab; run `starlee doctor` if it fails again.".into()
         }
         _ => "Bridge is ready. Open an article or YouTube watch page and capture again.".into(),
+    }
+}
+
+/// Derives a transcript-specific next action from a request's diagnostic trace.
+///
+/// `bridge_next_action` only knows about install/heartbeat/permission state, so a
+/// YouTube capture that reached the page but came back without a transcript would
+/// otherwise be told "Bridge is ready." This inspects the YouTube extractor events
+/// and maps the recorded reason code to the precise recovery step. Returns `None`
+/// when the transcript was captured, when extraction never ran, or when the trace
+/// has no YouTube extractor events (a non-YouTube capture).
+pub(crate) fn youtube_transcript_next_action(events: &[CaptureDiagnosticEvent]) -> Option<String> {
+    let segments = events
+        .iter()
+        .rev()
+        .find(|event| event.event == "youtube_segments_extracted");
+    if let Some(event) = segments {
+        if event.status.as_deref() == Some("ok") {
+            return None;
+        }
+        let reason = event
+            .safe_metadata
+            .get("transcript_reason")
+            .map(String::as_str)
+            .unwrap_or("");
+        return Some(youtube_reason_action(reason).into());
+    }
+    // Metadata failed before transcript discovery ever started.
+    let metadata_failed = events.iter().rev().any(|event| {
+        event.event == "youtube_metadata_extracted" && event.status.as_deref() == Some("failed")
+    });
+    if metadata_failed {
+        return Some(youtube_reason_action("youtube_metadata_unavailable").into());
+    }
+    None
+}
+
+/// Maps a YouTube transcript reason code to a single, safe recovery instruction.
+/// Unknown reasons fall through to a generic transcript-retry action.
+pub(crate) fn youtube_reason_action(reason: &str) -> &'static str {
+    match reason {
+        "rendered_transcript_segments_found" => {
+            "Transcript captured. Open an article or YouTube watch page and capture again."
+        }
+        "transcript_disabled_by_video" => {
+            "This video does not provide a transcript (captions are disabled). Starlee saved the video metadata only."
+        }
+        "transcript_language_unavailable" => {
+            "No transcript is available in a supported language for this video. Starlee saved the video metadata only."
+        }
+        "transcript_rows_empty" => {
+            "The transcript panel opened but rendered no lines. Reload the YouTube tab, open the transcript once, then capture again."
+        }
+        "transcript_panel_still_loading" => {
+            "The transcript was still loading when capture finished. Reload the tab, wait for the video to settle, then capture again."
+        }
+        "transcript_panel_not_opened" => {
+            "Starlee found the transcript control but the panel did not open. Open the transcript once manually, then capture again."
+        }
+        "transcript_button_not_found" => {
+            "No \"Show transcript\" control was found. Expand the video description to reveal it, or open the transcript once manually, then capture again."
+        }
+        "transcript_discovery_timed_out" => {
+            "Transcript discovery timed out before lines rendered. Reload the YouTube tab and capture again once the page has fully loaded."
+        }
+        "transcript_panel_not_rendered" => {
+            "The transcript had not rendered when capture ran. Reload the YouTube tab so the content script runs after the page loads, then capture again."
+        }
+        "youtube_metadata_unavailable" => {
+            "The YouTube watch page had not finished loading (video metadata was unavailable). Reload the tab and capture again."
+        }
+        "extractor_failure" => {
+            "YouTube extraction failed before reading the page. Reload the YouTube tab and capture again."
+        }
+        _ => {
+            "Starlee could not capture this video's transcript. Reload the YouTube tab, open the transcript once, then capture again."
+        }
     }
 }
 
@@ -274,7 +354,7 @@ pub(crate) fn sanitize_capture_diagnostic_event(
     for (key, value) in event.safe_metadata {
         if let (Some(key), Some(value)) = (
             sanitize_metadata_key(&key),
-            sanitize_metadata_string(&value, 240),
+            sanitize_metadata_string(&value, 240).filter(|value| !contains_sensitive_token(value)),
         ) {
             safe_metadata.insert(key, value);
         }
@@ -300,10 +380,39 @@ pub(crate) fn sanitize_capture_diagnostic_event(
             .and_then(|value| sanitize_metadata_string(&value, 80)),
         message: event
             .message
-            .and_then(|value| sanitize_metadata_string(&value, 240)),
+            .and_then(|value| sanitize_metadata_string(&value, 240))
+            .map(|value| {
+                if contains_sensitive_token(&value) {
+                    "[redacted]".into()
+                } else {
+                    value
+                }
+            }),
         page: event.page.map(sanitize_page_metadata),
         safe_metadata,
     }
+}
+
+// Defense-in-depth: even though the extension never puts secrets into diagnostic
+// values or messages, drop/redact anything that looks like a credential so a future
+// regression cannot leak one. Catches SAPISIDHASH/Bearer headers and long hex runs
+// (40-char SHA-1, 64-char capture token).
+fn contains_sensitive_token(value: &str) -> bool {
+    if value.contains("SAPISIDHASH") || value.contains("Bearer ") {
+        return true;
+    }
+    let mut hex_run = 0usize;
+    for character in value.chars() {
+        if character.is_ascii_hexdigit() {
+            hex_run += 1;
+            if hex_run >= 40 {
+                return true;
+            }
+        } else {
+            hex_run = 0;
+        }
+    }
+    false
 }
 
 fn sanitize_metadata_key(value: &str) -> Option<String> {
@@ -321,6 +430,11 @@ fn sanitize_metadata_key(value: &str) -> Option<String> {
         "transcript_text",
         "embedding",
         "oauth",
+        "sapisid",
+        "bearer",
+        "secret",
+        "credential",
+        "password",
     ]
     .iter()
     .any(|forbidden| lower.contains(forbidden))
