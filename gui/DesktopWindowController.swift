@@ -87,6 +87,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private let settingsButton = SidebarBoxButton(title: "Settings")
     private let monthStack = NSStackView()
     private var monthButtons: [String: NSButton] = [:]
+    private weak var sidebarDivider: NSView?
     private var appBackgroundWebView: WKWebView?
     private weak var rootSplitView: NSSplitView?
     private weak var pixelColorWell: NSColorWell?
@@ -252,7 +253,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         divider.layer?.backgroundColor = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 0.86).cgColor
         divider.translatesAutoresizingMaskIntoConstraints = false
         divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        divider.isHidden = true
         stack.addArrangedSubview(divider)
+        sidebarDivider = divider
 
         monthStack.orientation = .vertical
         monthStack.alignment = .width
@@ -1160,11 +1163,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             view.removeFromSuperview()
         }
         monthButtons.removeAll()
+        sidebarDivider?.isHidden = groups.isEmpty
         if groups.isEmpty {
-            let empty = NSTextField(labelWithString: "No captures yet")
-            empty.font = SidebarBoxButton.labelFont
-            empty.textColor = .white
-            monthStack.addArrangedSubview(empty)
             refreshSidebarHoles()
             return
         }

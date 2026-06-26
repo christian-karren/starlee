@@ -427,6 +427,30 @@ time {
   color: var(--white);
 }
 
+.empty-library-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.empty-library-state[hidden] {
+  display: none;
+}
+
+.empty-library-state p {
+  max-width: 340px;
+  border: 3px solid var(--black);
+  background: var(--white);
+  color: var(--black);
+  padding: 24px 28px;
+  box-shadow: 6px 6px 0 var(--black);
+  font: 500 14px/1.55 var(--sans);
+  text-align: center;
+}
+
 /* --- Reader -------------------------------------------------------------- */
 
 .reader[hidden] {
