@@ -1531,11 +1531,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         else {
             return jsonObjectString(["id": id, "error": "This record is no longer available."])
         }
+        // Display layer is metadata-only: the captured body/transcript is never
+        // sent to the UI. It stays on disk in the vault for `starlee search` and
+        // `starlee_query`; the reader only shows attribution and a source link.
         var reader: [String: Any] = [
             "id": id,
             "title": (metadata["title"] as? String) ?? capture?.title ?? "Untitled",
-            "type": displayType((metadata["type"] as? String) ?? capture?.type ?? ""),
-            "body": (record["body"] as? String) ?? "",
+            "type": (metadata["type"] as? String) ?? capture?.type ?? "note",
             "filePath": (record["file_path"] as? String) ?? capture?.filePath ?? "",
         ]
         if let url = metadata["url"] as? String, !url.isEmpty {
@@ -1546,18 +1548,14 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         if let author = metadata["author"] as? String, !author.isEmpty {
             reader["author"] = author
         }
+        if let published = metadata["published_at"] as? String, !published.isEmpty {
+            reader["publishedAt"] = published
+        }
         if let capture {
-            reader["source"] = capture.source
             reader["date"] = displayDate(capture.capturedAt, fallback: capture.capturedAtText)
-            if !capture.transcriptStatus.isEmpty {
-                reader["transcriptStatus"] = capture.transcriptStatus
-            }
         }
         if let topics = metadata["topics"] as? [String], !topics.isEmpty {
             reader["topics"] = topics
-        }
-        if let wordCount = metadata["word_count"] as? Int {
-            reader["wordCount"] = wordCount
         }
         return jsonObjectString(reader)
     }

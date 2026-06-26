@@ -177,24 +177,30 @@ function setEditMode(active) {
 
 // --- Reader ---------------------------------------------------------------
 
+function formatDay(value) {
+  return String(value || "").slice(0, 10); // YYYY-MM-DD
+}
+
 function metaLine(record) {
   const parts = [];
-  if (record.type) parts.push(escapeHtml(record.type));
-  if (record.source) parts.push(escapeHtml(record.source));
-  if (record.author) parts.push(`by ${escapeHtml(record.author)}`);
-  if (record.date) parts.push(escapeHtml(record.date));
-  if (typeof record.wordCount === "number" && record.wordCount > 0) {
-    parts.push(`${record.wordCount.toLocaleString()} words`);
+  const isYouTube = record.type === "youtube";
+  if (record.author) {
+    // For YouTube the author field holds the channel name.
+    parts.push(escapeHtml(isYouTube ? record.author : `by ${record.author}`));
   }
-  if (record.transcriptStatus) parts.push(escapeHtml(record.transcriptStatus));
+  if (!isYouTube && record.publishedAt) {
+    parts.push(`Published ${escapeHtml(formatDay(record.publishedAt))}`);
+  }
+  if (record.date) parts.push(`Saved ${escapeHtml(record.date)}`);
   return parts.join(" · ");
 }
 
 function renderReaderActions(record) {
   const actions = [];
   if (record.url) {
+    const label = record.type === "youtube" ? "Watch on YouTube" : "Go to Source";
     actions.push(
-      `<button class="reader-action" type="button" data-open-url="${escapeHtml(record.url)}">Open original</button>`
+      `<button class="reader-action reader-action-primary" type="button" data-open-url="${escapeHtml(record.url)}">${label} ↗</button>`
     );
   }
   if (record.filePath) {
@@ -272,8 +278,14 @@ window.renderStarleeReader = (record) => {
     elements.readerMeta.textContent = metaLine(record);
     renderReaderTopics(record.topics);
     renderReaderActions(record);
-    // body is plain text/markdown; render as preformatted text to avoid injection.
-    elements.readerBody.textContent = record.body || "(No saved text for this capture.)";
+    // The captured body/transcript is intentionally never shown here. The full
+    // text lives in the vault for search and Codex; the reader is metadata-only
+    // and sends the reader to the original source.
+    const isYouTube = record.type === "youtube";
+    elements.readerBody.textContent = record.url
+      ? `The full ${isYouTube ? "transcript" : "text"} is saved privately in your vault for search and Codex. Open the source to ${isYouTube ? "watch the original" : "read the original"}.`
+      : "The full text is saved privately in your vault for search and Codex.";
+    elements.readerBody.classList.add("reader-body-note");
     elements.readerBody.scrollTop = 0;
   }
   elements.reader.hidden = false;

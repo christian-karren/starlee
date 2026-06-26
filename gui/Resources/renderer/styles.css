@@ -583,6 +583,45 @@ time {
   background: #f4d8d4;
 }
 
+/* Primary call-to-action: send the reader to the original source. */
+.reader-action-primary {
+  order: -1;
+  min-height: 42px;
+  padding: 0 20px;
+  border-color: var(--navy);
+  background: var(--navy);
+  color: var(--white);
+  font-size: 14px;
+  font-weight: 820;
+  box-shadow: 3px 3px 0 var(--black);
+}
+
+.reader-action-primary:hover {
+  background: #0c1f3d;
+}
+
+.reader-action-primary:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--black);
+}
+
+/* Metadata-only reader: the body area shows a short note, not the article. */
+.reader-body.reader-body-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-style: dashed;
+  border-color: rgba(9, 5, 5, 0.2);
+  background: rgba(9, 5, 5, 0.03);
+  color: rgba(9, 5, 5, 0.55);
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.5;
+  text-align: center;
+  white-space: normal;
+}
+
 .reader-body {
   min-height: 0;
   overflow: auto;
