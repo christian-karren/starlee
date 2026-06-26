@@ -520,9 +520,31 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                 "action": "openVault", "actionLabel": "Open"
             ],
             [
-                "id": "import", "title": "Import / Export",
-                "status": "Local", "ok": true,
-                "action": "import", "actionLabel": "Import"
+                "id": "upload", "title": "Upload documents",
+                "status": "PDF · Word · text", "ok": true,
+                "action": "upload", "actionLabel": "Upload"
+            ],
+            [
+                "id": "export", "title": "Share your brain",
+                "status": "Audited export", "ok": true,
+                "detail": "Creates a shareable copy. Restricted article bodies are always removed.",
+                "action": "exportBrain", "actionLabel": "Export"
+            ],
+            [
+                "id": "ingest", "title": "Borrow a brain",
+                "status": "Read-only", "ok": true,
+                "detail": "Open a friend’s .starlee bundle and search it with scope: borrowed.",
+                "action": "ingestBrain", "actionLabel": "Ingest"
+            ],
+            [
+                "id": "onboarding", "title": "Getting started",
+                "status": "Replay the intro", "ok": true,
+                "action": "rerunOnboarding", "actionLabel": "Show me"
+            ],
+            [
+                "id": "privacy", "title": "Privacy",
+                "status": "On-device", "ok": true,
+                "detail": "Captured content and search run locally. Nothing leaves your device unless you export it."
             ],
             [
                 "id": "about", "title": "App version",
@@ -1342,9 +1364,63 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             uploadDocuments()
         case "onboardingDone":
             UserDefaults.standard.set(true, forKey: Self.onboardingCompleteKey)
+        case "exportBrain":
+            exportBrain()
+        case "ingestBrain":
+            ingestBrain()
+        case "rerunOnboarding":
+            rerunOnboarding()
         default:
             break
         }
+    }
+
+    /// Export an audited, shareable copy of the vault. Restricted bodies are
+    /// stripped by the CLI before the bundle is written.
+    private func exportBrain() {
+        guard let window else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "my-brain.starlee"
+        panel.message = "Export a shareable copy of your brain. Restricted article bodies are always removed."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            self.client.runAsync(["export", url.path]) { _ in
+                DialogPresenter.show(
+                    title: "Brain exported",
+                    message: "Saved \(url.lastPathComponent). Restricted article bodies were excluded from the bundle."
+                )
+            }
+        }
+    }
+
+    /// Mount a friend's `.starlee` bundle read-only so it can be searched with
+    /// scope: borrowed.
+    private func ingestBrain() {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Open a .starlee bundle to search it read-only."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            self.client.runAsync(["ingest", url.path]) { [weak self] _ in
+                self?.reload()
+                DialogPresenter.show(
+                    title: "Brain added",
+                    message: "You can now search \(url.lastPathComponent) from Codex with scope: borrowed."
+                )
+            }
+        }
+    }
+
+    /// Replay the first-run onboarding from Settings.
+    private func rerunOnboarding() {
+        UserDefaults.standard.set(false, forKey: Self.onboardingCompleteKey)
+        showLibrary()
+        libraryWebView?.evaluateJavaScript(
+            "if (window.showStarleeOnboarding) { window.showStarleeOnboarding(); }",
+            completionHandler: nil
+        )
     }
 
     /// Bulk-import user documents (PDF, Word, text, Markdown) with an optional

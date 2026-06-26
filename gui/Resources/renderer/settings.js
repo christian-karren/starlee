@@ -219,8 +219,12 @@
     ]));
     bgPanel.appendChild(h("div", { class: "caption", text: "Style" }));
     bgPanel.appendChild(renderTiles());
+    // Fine-tuning knobs are tucked under a disclosure so the presets lead.
+    const advanced = h("details", { class: "advanced" });
+    advanced.appendChild(h("summary", { text: "Advanced controls" }));
     bgControlsHost = h("div", {});
-    bgPanel.appendChild(bgControlsHost);
+    advanced.appendChild(bgControlsHost);
+    bgPanel.appendChild(advanced);
     renderBgControls();
   }
 

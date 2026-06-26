@@ -194,6 +194,35 @@ time {
   color: var(--white);
 }
 
+/* Settings "Advanced controls" disclosure for the background fine-tuning. */
+details.advanced {
+  margin-top: 14px;
+}
+
+details.advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--cream);
+  opacity: 0.8;
+}
+
+details.advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.advanced > summary::before {
+  content: "▸ ";
+}
+
+details.advanced[open] > summary::before {
+  content: "▾ ";
+}
+
 .filter-wrap {
   position: relative;
 }
