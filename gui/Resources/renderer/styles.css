@@ -10,6 +10,21 @@
   --navy: #13284B;
   --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+
+  /* Polish tokens (make-interfaces-feel-better): one source of truth for the
+     timings/easing/depth used across the renderer. */
+  --dur-hover: 120ms;
+  --dur-press: 150ms;
+  --dur-enter: 360ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --shadow-border:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 1px 2px -1px rgba(0, 0, 0, 0.06),
+    0 2px 4px 0 rgba(0, 0, 0, 0.04);
+  --shadow-border-hover:
+    0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 1px 2px -1px rgba(0, 0, 0, 0.08),
+    0 2px 4px 0 rgba(0, 0, 0, 0.06);
 }
 
 * {
@@ -24,6 +39,9 @@ body,
   min-height: 100%;
   margin: 0;
   overflow: hidden;
+  /* Crisper, lighter text on macOS (applied once at the root). */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
@@ -78,6 +96,7 @@ h1 {
   line-height: 1;
   font-weight: 850;
   letter-spacing: 0;
+  text-wrap: balance;
 }
 
 h2 {
@@ -146,6 +165,7 @@ input::placeholder {
 
 time {
   font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .card-row {
@@ -392,6 +412,7 @@ time {
   color: var(--cream);
   font-size: 12px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -849,6 +870,102 @@ time {
 .onb-menubar-arrow span {
   font-size: 12px;
   letter-spacing: 0.02em;
+}
+
+/* --- Interaction & motion polish (make-interfaces-feel-better) ----------- */
+
+/* Extend small controls to a comfortable hit area without changing their look.
+   The card delete control overlaps only the card it sits on, which ignores
+   clicks in edit mode, so a 44px target is safe. */
+.card-delete::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
+.topic-remove {
+  position: relative;
+}
+
+.topic-remove::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  transform: translate(-50%, -50%);
+}
+
+/* A small tactile press on controls that lack the brutalist shadow-shift. */
+.reader-close,
+.topic-chip,
+.card-delete {
+  transition-property: transform, background, box-shadow;
+  transition-duration: var(--dur-press);
+  transition-timing-function: var(--ease-out);
+}
+
+.reader-close:active {
+  transform: scale(0.96);
+}
+
+/* Discrete entrances: split into the panel's semantic chunks and stagger them,
+   combining opacity, translate, and blur (one-shot keyframes are correct here). */
+@keyframes polishFadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.reader.open .reader-panel > * {
+  animation: polishFadeInUp var(--dur-enter) var(--ease-out) both;
+}
+
+.reader.open .reader-panel > *:nth-child(2) {
+  animation-delay: 70ms;
+}
+
+.reader.open .reader-panel > *:nth-child(3) {
+  animation-delay: 140ms;
+}
+
+.onb-step:not([hidden]) > * {
+  animation: polishFadeInUp var(--dur-enter) var(--ease-out) both;
+}
+
+.onb-step:not([hidden]) > *:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+.onb-step:not([hidden]) > *:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+.onb-step:not([hidden]) > *:nth-child(4) {
+  animation-delay: 180ms;
+}
+
+.onb-step:not([hidden]) > *:nth-child(n + 5) {
+  animation-delay: 220ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader.open .reader-panel > *,
+  .onb-step:not([hidden]) > * {
+    animation: none;
+  }
 }
 
 @media (max-width: 620px) {
