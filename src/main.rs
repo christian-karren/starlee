@@ -6,6 +6,7 @@ mod documents;
 mod embedding;
 mod engine;
 mod http;
+mod identity;
 mod index;
 mod mcp;
 mod model;

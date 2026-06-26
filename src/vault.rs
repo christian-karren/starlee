@@ -5,7 +5,6 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Utc};
-use sha2::{Digest, Sha256};
 
 use crate::model::{CaptureInput, Frontmatter, Record, SourceType};
 
@@ -46,16 +45,12 @@ impl Vault {
                 format!("{}-spotify-{episode_id}.md", now.format("%Y-%m-%d")),
             )
         } else {
-            let mut hasher = Sha256::new();
-            hasher.update(input.url.as_deref().unwrap_or(&input.title));
-            hasher.update(now.timestamp_nanos_opt().unwrap_or_default().to_le_bytes());
-            let digest = format!("{:x}", hasher.finalize());
-            let id = format!(
-                "{}-{}-{}",
-                now.format("%Y-%m%d"),
-                &digest[..6],
-                &digest[6..12]
-            );
+            // Stable, content-addressed identity (PRD REQ-001): derived from the
+            // canonical URL (or title+body for note-only captures), never from
+            // wall-clock time, so the same source captured on any device shares
+            // one ID and converges on sync instead of duplicating.
+            let id =
+                crate::identity::record_id(input.url.as_deref(), &input.title, &input.text);
             (id.clone(), format!("{}-{}.md", id, slugify(&input.title)))
         };
         let path = year.join(file_name);
