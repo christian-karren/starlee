@@ -520,10 +520,8 @@ export function parseTimestamp(value = "") {
 function extractRenderedTranscriptSegments(document) {
   const seen = new Set();
   const segments = [];
-  for (const node of document.querySelectorAll("ytd-transcript-segment-renderer, ytd-transcript-segment-list-renderer [class*='segment']")) {
-    const timestampText = text(node, ".segment-timestamp") || text(node, "[class*='timestamp']");
-    const segmentText = cleanText(text(node, ".segment-text") || text(node, "yt-formatted-string") || "");
-    const t = parseTimestamp(timestampText);
+  for (const node of document.querySelectorAll(TRANSCRIPT_SEGMENT_SELECTOR)) {
+    const { t, text: segmentText } = readTranscriptSegment(node);
     if (!Number.isFinite(t) || !segmentText) continue;
     const key = `${Math.floor(t * 1000)}:${segmentText}`;
     if (seen.has(key)) continue;
@@ -531,6 +529,50 @@ function extractRenderedTranscriptSegments(document) {
     segments.push({ t, text: segmentText });
   }
   return segments;
+}
+
+// Matches both the legacy renderer and YouTube's newer "view-model" transcript
+// markup. `transcript-segment-view-model` replaced `ytd-transcript-segment-renderer`.
+const TRANSCRIPT_SEGMENT_SELECTOR = [
+  "ytd-transcript-segment-renderer",
+  "transcript-segment-view-model",
+  "[class*='segment-text']",
+  "ytd-transcript-segment-list-renderer [class*='segment']"
+].join(", ");
+
+function readTranscriptSegment(node) {
+  // Prefer explicit timestamp/text containers (legacy + current class names).
+  const timestampText =
+    text(node, ".segment-timestamp") ||
+    text(node, "[class*='timestamp']") ||
+    text(node, "[class*='time']");
+  const segmentText = cleanText(
+    text(node, ".segment-text") ||
+    text(node, "[class*='segment-text']") ||
+    text(node, "yt-formatted-string") ||
+    ""
+  );
+  if (Number.isFinite(parseTimestamp(timestampText)) && segmentText) {
+    return { t: parseTimestamp(timestampText), text: segmentText };
+  }
+  // Fallback for the view-model markup: timestamp and text are not in known
+  // containers. Find the child element whose text is exactly a "M:SS" stamp, then
+  // take the remainder of the segment's text as the line.
+  const full = cleanText(node.textContent || "");
+  const stampPattern = /^\d{1,2}:\d{2}(?::\d{2})?$/;
+  for (const element of node.querySelectorAll("*")) {
+    const candidate = cleanText(element.textContent || "");
+    if (!stampPattern.test(candidate)) continue;
+    let rest = full.startsWith(candidate) ? full.slice(candidate.length) : full.replace(candidate, "");
+    rest = cleanText(rest);
+    if (rest) return { t: parseTimestamp(candidate), text: rest };
+  }
+  // Last resort: split the segment's own text on the leading stamp.
+  const match = full.match(/^(\d{1,2}:\d{2}(?::\d{2})?)\s*([\s\S]+)$/);
+  if (match) {
+    return { t: parseTimestamp(match[1]), text: cleanText(match[2]) };
+  }
+  return { t: Number.NaN, text: "" };
 }
 
 async function discoverTranscript(document, options = {}) {
@@ -958,6 +1000,7 @@ function transcriptRows(document) {
   return [
     ...document.querySelectorAll([
       "ytd-transcript-segment-renderer",
+      "transcript-segment-view-model",
       "ytd-transcript-segment-list-renderer [class*='segment']",
       "ytd-transcript-renderer [class*='segment']",
       "[data-purpose='transcript-segment']"

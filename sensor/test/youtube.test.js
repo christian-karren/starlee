@@ -40,6 +40,25 @@ test("captures useful YouTube metadata when transcript is unavailable", async ()
   assert.equal(payload.transcript_reason, "transcript_panel_not_rendered");
 });
 
+test("extracts the new transcript-segment-view-model markup", async () => {
+  // YouTube migrated the transcript panel from ytd-transcript-segment-renderer to
+  // transcript-segment-view-model; timestamp/text are no longer in known classes,
+  // so we split on the leading "M:SS" stamp in the segment's own text.
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="View-model demo">
+    <ytd-transcript-renderer>
+      <transcript-segment-view-model><div>0:00</div><div>How are you thinking about Apple's</div></transcript-segment-view-model>
+      <transcript-segment-view-model><div>0:03</div><div>bet on AI?</div></transcript-segment-view-model>
+    </ytd-transcript-renderer>`, { url: "https://www.youtube.com/watch?v=viewmodel123" });
+  const payload = await extractYouTube(dom.window.document);
+  assert.deepEqual(payload.transcript, [
+    { t: 0, text: "How are you thinking about Apple's" },
+    { t: 3, text: "bet on AI?" }
+  ]);
+  assert.equal(payload.transcript_status, "full");
+  assert.equal(payload.transcript_source, "rendered_dom");
+});
+
 test("detects only supported YouTube watch pages", () => {
   assert.equal(isYouTubeWatch(new JSDOM("", { url: "https://www.youtube.com/watch?v=abc123" }).window.document), true);
   assert.equal(isYouTubeWatch(new JSDOM("", { url: "https://music.youtube.com/watch?v=abc123" }).window.document), true);
