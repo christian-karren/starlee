@@ -107,6 +107,7 @@ impl Vault {
             access: input.access,
             summary,
             tags: input.tags,
+            topics: crate::topics::sanitize_topics(input.topics),
             spotify_episode_id: input.spotify_episode_id,
             spotify_show_id: input.spotify_show_id,
             show: input.show,
@@ -178,6 +179,52 @@ impl Vault {
         paths.sort();
         paths.into_iter().map(|path| self.read(&path)).collect()
     }
+
+    /// Permanently delete a record's Markdown file from the vault.
+    ///
+    /// Returns `true` if a file was removed, `false` if it was already gone.
+    /// The resolved path is validated to live inside the vault root, so a record
+    /// whose `file_path` was tampered with to point elsewhere (e.g. via `..`
+    /// traversal) is refused rather than deleting an arbitrary file.
+    pub fn delete(&self, record: &Record) -> Result<bool> {
+        let safe = self.resolve_within_root(Path::new(&record.file_path))?;
+        match fs::remove_file(&safe) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error).with_context(|| format!("delete {}", safe.display())),
+        }
+    }
+
+    /// Resolve `path` to a canonical location and confirm it is inside the vault
+    /// root. Fails closed on any path that escapes the root.
+    fn resolve_within_root(&self, path: &Path) -> Result<PathBuf> {
+        let root = self
+            .root
+            .canonicalize()
+            .with_context(|| format!("resolve vault root {}", self.root.display()))?;
+        let resolved = if path.exists() {
+            path.canonicalize()
+                .with_context(|| format!("resolve {}", path.display()))?
+        } else {
+            // The file may already be gone; still resolve the parent so that any
+            // `..` segments are collapsed before the containment check.
+            let parent = path.parent().unwrap_or_else(|| Path::new("."));
+            let parent = parent
+                .canonicalize()
+                .with_context(|| format!("resolve {}", parent.display()))?;
+            match path.file_name() {
+                Some(name) => parent.join(name),
+                None => parent,
+            }
+        };
+        if !resolved.starts_with(&root) {
+            bail!(
+                "refusing to delete path outside the vault: {}",
+                resolved.display()
+            );
+        }
+        Ok(resolved)
+    }
 }
 
 fn slugify(value: &str) -> String {
@@ -234,6 +281,57 @@ mod tests {
     #[test]
     fn slugs_are_portable() {
         assert_eq!(slugify("Meta & AI: What Now?"), "meta-ai-what-now");
+    }
+
+    #[test]
+    fn delete_removes_a_record_file() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let vault = Vault::new(temp.path().join("vault"));
+        let record = vault.write(CaptureInput::new(
+            "Note",
+            "Body text",
+            SourceType::Note,
+            crate::model::Access::Restricted,
+        ))?;
+        assert!(Path::new(&record.file_path).exists());
+        assert!(vault.delete(&record)?);
+        assert!(!Path::new(&record.file_path).exists());
+        // Idempotent: deleting again reports nothing was removed.
+        assert!(!vault.delete(&record)?);
+        Ok(())
+    }
+
+    #[test]
+    fn delete_refuses_paths_outside_the_vault() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let vault = Vault::new(temp.path().join("vault"));
+        let record = vault.write(CaptureInput::new(
+            "Note",
+            "Body text",
+            SourceType::Note,
+            crate::model::Access::Restricted,
+        ))?;
+        // A file that lives outside the vault root must never be deletable, even
+        // if a record's file_path is tampered to point at it directly...
+        let outside = temp.path().join("secret.txt");
+        fs::write(&outside, "do not delete")?;
+        let mut absolute = record.clone();
+        absolute.file_path = outside.display().to_string();
+        assert!(vault.delete(&absolute).is_err());
+        assert!(outside.exists());
+
+        // ...or via a `..` traversal segment that escapes the root.
+        let mut traversal = record.clone();
+        traversal.file_path = temp
+            .path()
+            .join("vault")
+            .join("..")
+            .join("secret.txt")
+            .display()
+            .to_string();
+        assert!(vault.delete(&traversal).is_err());
+        assert!(outside.exists());
+        Ok(())
     }
 
     #[test]

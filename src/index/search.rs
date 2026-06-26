@@ -224,6 +224,7 @@ fn map_search_hit(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
         source_type: serde_json::from_value(serde_json::Value::String(source_type))
             .unwrap_or_default(),
         site: row.get(3)?,
+        author: None,
         url: row.get(4)?,
         captured_at: row.get(5)?,
         consumed_at: row.get(10)?,
@@ -232,6 +233,7 @@ fn map_search_hit(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
         } else {
             Access::Restricted
         },
+        topics: Vec::new(),
         snippet: row.get(7)?,
         file_path: row.get(8)?,
         score: 0.0,

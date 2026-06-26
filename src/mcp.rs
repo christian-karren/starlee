@@ -137,6 +137,21 @@ fn call_tool(engine: &Engine, name: &str, args: Value) -> Result<Value> {
             serde_json::to_value(engine.recent(args["k"].as_u64().unwrap_or(10) as usize)?)?
         }
         "get" => serde_json::to_value(engine.get_any(args["id"].as_str().unwrap_or_default())?)?,
+        "delete" => {
+            json!({"deleted": engine.delete(args["id"].as_str().unwrap_or_default())?})
+        }
+        "topics" => serde_json::to_value(engine.list_topics()?)?,
+        "set_topics" => serde_json::to_value(engine.set_record_topics(
+            args["id"].as_str().unwrap_or_default(),
+            string_list(&args, "topics"),
+        )?)?,
+        "rename_topic" => json!({"changed": engine.rename_topic(
+            args["from"].as_str().unwrap_or_default(),
+            args["to"].as_str().unwrap_or_default(),
+        )?}),
+        "delete_topic" => json!({"changed": engine.delete_topic(
+            args["name"].as_str().unwrap_or_default(),
+        )?}),
         "status" => serde_json::to_value(engine.status()?)?,
         "doctor" => serde_json::to_value(engine.doctor()?)?,
         "reindex" => serde_json::to_value(engine.reindex(false)?)?,
@@ -168,7 +183,7 @@ fn tool_definitions() -> Vec<Value> {
         tool(
             "capture",
             "Capture pasted text into the local vault",
-            json!({"type":"object","properties":{"title":{"type":"string"},"text":{"type":"string"},"source_type":{"type":"string","enum":["article","youtube","note"]},"access":{"type":"string","enum":["public","restricted"]},"url":{"type":"string"},"author":{"type":"string"},"site":{"type":"string"},"summary":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}},"anyOf":[{"required":["text"]},{"required":["url"]}]}),
+            json!({"type":"object","properties":{"title":{"type":"string"},"text":{"type":"string"},"source_type":{"type":"string","enum":["article","youtube","note"]},"access":{"type":"string","enum":["public","restricted"]},"url":{"type":"string"},"author":{"type":"string"},"site":{"type":"string"},"summary":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"topics":{"type":"array","items":{"type":"string"}}},"anyOf":[{"required":["text"]},{"required":["url"]}]}),
         ),
         tool(
             "search",
@@ -204,6 +219,31 @@ fn tool_definitions() -> Vec<Value> {
             "get",
             "Get a complete local record by id",
             json!({"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}),
+        ),
+        tool(
+            "delete",
+            "Permanently delete a capture (Markdown file and all index rows) by id",
+            json!({"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}),
+        ),
+        tool(
+            "topics",
+            "List user topics across the corpus with assignment counts",
+            json!({"type":"object"}),
+        ),
+        tool(
+            "set_topics",
+            "Replace the topic set on a record (topics persist in Markdown frontmatter)",
+            json!({"type":"object","required":["id","topics"],"properties":{"id":{"type":"string"},"topics":{"type":"array","items":{"type":"string"}}}}),
+        ),
+        tool(
+            "rename_topic",
+            "Rename a topic across every record that carries it",
+            json!({"type":"object","required":["from","to"],"properties":{"from":{"type":"string"},"to":{"type":"string"}}}),
+        ),
+        tool(
+            "delete_topic",
+            "Remove a topic from every record that carries it; the records are kept",
+            json!({"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}),
         ),
         tool(
             "status",
@@ -253,6 +293,18 @@ fn parse_since(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
 
 fn tool(name: &str, description: &str, input_schema: Value) -> Value {
     json!({"name":name,"description":description,"inputSchema":input_schema})
+}
+
+fn string_list(args: &Value, key: &str) -> Vec<String> {
+    args.get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

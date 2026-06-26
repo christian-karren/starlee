@@ -13,11 +13,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let title: String
         let type: String
         let site: String?
+        let author: String?
         let url: URL?
         let capturedAt: Date?
         let capturedAtText: String
         let filePath: String
         let snippet: String
+        let topics: [String]
 
         var monthKey: String {
             guard let capturedAt else { return "undated" }
@@ -104,6 +106,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let readinessLabel = NSTextField(wrappingLabelWithString: "")
     private let searchField = NSSearchField()
+    private static let onboardingCompleteKey = "StarleeOnboardingComplete"
     private let tableView = NSTableView()
     private var libraryWebView: WKWebView?
     private var libraryWebViewLoaded = false
@@ -517,9 +520,31 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                 "action": "openVault", "actionLabel": "Open"
             ],
             [
-                "id": "import", "title": "Import / Export",
-                "status": "Local", "ok": true,
-                "action": "import", "actionLabel": "Import"
+                "id": "upload", "title": "Upload documents",
+                "status": "PDF · Word · text", "ok": true,
+                "action": "upload", "actionLabel": "Upload"
+            ],
+            [
+                "id": "export", "title": "Share your brain",
+                "status": "Audited export", "ok": true,
+                "detail": "Creates a shareable copy. Restricted article bodies are always removed.",
+                "action": "exportBrain", "actionLabel": "Export"
+            ],
+            [
+                "id": "ingest", "title": "Borrow a brain",
+                "status": "Read-only", "ok": true,
+                "detail": "Open a friend’s .starlee bundle and search it with scope: borrowed.",
+                "action": "ingestBrain", "actionLabel": "Ingest"
+            ],
+            [
+                "id": "onboarding", "title": "Getting started",
+                "status": "Replay the intro", "ok": true,
+                "action": "rerunOnboarding", "actionLabel": "Show me"
+            ],
+            [
+                "id": "privacy", "title": "Privacy",
+                "status": "On-device", "ok": true,
+                "detail": "Captured content and search run locally. Nothing leaves your device unless you export it."
             ],
             [
                 "id": "about", "title": "App version",
@@ -1094,11 +1119,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             title: title,
             type: value["type"] as? String ?? "note",
             site: value["site"] as? String,
+            author: (value["author"] as? String).flatMap { $0.isEmpty ? nil : $0 },
             url: urlString.flatMap(URL.init(string:)),
             capturedAt: parseDate(dateText),
             capturedAtText: dateText,
             filePath: value["file_path"] as? String ?? "",
-            snippet: value["snippet"] as? String ?? ""
+            snippet: value["snippet"] as? String ?? "",
+            topics: (value["topics"] as? [String]) ?? []
         )
     }
 
@@ -1190,6 +1217,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             "monthLabel": monthLabel,
             "totalCount": captures.count,
             "readiness": readiness,
+            "showOnboarding": !UserDefaults.standard.bool(forKey: Self.onboardingCompleteKey),
             "backgroundSettings": fluidBackground.webPayload,
             "captures": monthCaptures.map { capture in
                 [
@@ -1197,10 +1225,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                     "title": capture.title,
                     "type": capture.type,
                     "source": capture.source,
+                    "author": capture.author ?? "",
                     "date": displayDate(capture.capturedAt, fallback: capture.capturedAtText),
+                    "capturedAt": capture.capturedAtText,
                     "snippet": capture.snippet,
                     "url": capture.url?.absoluteString ?? "",
-                    "filePath": capture.filePath
+                    "filePath": capture.filePath,
+                    "topics": capture.topics
                 ]
             }
         ]
@@ -1277,6 +1308,10 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             return
         }
         libraryWebViewLoaded = true
+        // WKWebView :hover states only update while the host window delivers
+        // mouse-moved events; without this the card hover border lagged or only
+        // appeared after a click (REQ-001).
+        webView.window?.acceptsMouseMovedEvents = true
         let payload = pendingLibraryPayload ?? libraryPayloadJSON()
         pendingLibraryPayload = nil
         webView.evaluateJavaScript("window.__starleeLibraryPayload = \(payload); if (window.renderStarleeLibrary) { window.renderStarleeLibrary(window.__starleeLibraryPayload); }", completionHandler: nil)
@@ -1307,9 +1342,256 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             copySupportBundle()
         case "import":
             importDocument()
+        case "open":
+            if let id = body["id"] as? String { presentReader(id: id) }
+        case "delete":
+            if let id = body["id"] as? String {
+                confirmAndDelete(id: id, title: (body["title"] as? String) ?? "this capture")
+            }
+        case "openURL":
+            if let urlString = body["url"] as? String, let url = URL(string: urlString) {
+                NSWorkspace.shared.open(url)
+            }
+        case "reveal":
+            if let path = body["path"] as? String, !path.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            }
+        case "setTopics":
+            if let id = body["id"] as? String {
+                setRecordTopics(id: id, topics: (body["topics"] as? [String]) ?? [])
+            }
+        case "upload":
+            uploadDocuments()
+        case "onboardingDone":
+            UserDefaults.standard.set(true, forKey: Self.onboardingCompleteKey)
+        case "exportBrain":
+            exportBrain()
+        case "ingestBrain":
+            ingestBrain()
+        case "rerunOnboarding":
+            rerunOnboarding()
         default:
             break
         }
+    }
+
+    /// Export an audited, shareable copy of the vault. Restricted bodies are
+    /// stripped by the CLI before the bundle is written.
+    private func exportBrain() {
+        guard let window else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "my-brain.starlee"
+        panel.message = "Export a shareable copy of your brain. Restricted article bodies are always removed."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            self.client.runAsync(["export", url.path]) { _ in
+                DialogPresenter.show(
+                    title: "Brain exported",
+                    message: "Saved \(url.lastPathComponent). Restricted article bodies were excluded from the bundle."
+                )
+            }
+        }
+    }
+
+    /// Mount a friend's `.starlee` bundle read-only so it can be searched with
+    /// scope: borrowed.
+    private func ingestBrain() {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Open a .starlee bundle to search it read-only."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            self.client.runAsync(["ingest", url.path]) { [weak self] _ in
+                self?.reload()
+                DialogPresenter.show(
+                    title: "Brain added",
+                    message: "You can now search \(url.lastPathComponent) from Codex with scope: borrowed."
+                )
+            }
+        }
+    }
+
+    /// Replay the first-run onboarding from Settings.
+    private func rerunOnboarding() {
+        UserDefaults.standard.set(false, forKey: Self.onboardingCompleteKey)
+        showLibrary()
+        libraryWebView?.evaluateJavaScript(
+            "if (window.showStarleeOnboarding) { window.showStarleeOnboarding(); }",
+            completionHandler: nil
+        )
+    }
+
+    /// Bulk-import user documents (PDF, Word, text, Markdown) with an optional
+    /// shared topic, then reload the Library. Parsing happens locally in the CLI.
+    private func uploadDocuments() {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        var types: [UTType] = [.pdf, .plainText, .text, .utf8PlainText]
+        for ext in ["docx", "md", "markdown"] {
+            if let type = UTType(filenameExtension: ext) { types.append(type) }
+        }
+        panel.allowedContentTypes = types
+        panel.message = "Choose PDF, Word, text, or Markdown files to add to your brain."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let self, !panel.urls.isEmpty else { return }
+            let urls = panel.urls
+            let topic = self.promptForBatchTopic(count: urls.count)
+            guard topic != nil else { return } // user cancelled the topic step
+            var arguments = ["import"]
+            arguments.append(contentsOf: urls.map { $0.path })
+            if let topic, !topic.isEmpty {
+                arguments.append("--topic")
+                arguments.append(topic)
+            }
+            self.progress.startAnimation(nil)
+            self.client.runAsync(arguments) { [weak self] output in
+                guard let self else { return }
+                self.reportImport(output: output, total: urls.count)
+                self.reload()
+            }
+        }
+    }
+
+    /// Returns the chosen topic (possibly empty for "no topic"), or nil if the
+    /// user cancelled the import entirely.
+    private func promptForBatchTopic(count: Int) -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Add a topic to \(count) document\(count == 1 ? "" : "s")?"
+        alert.informativeText = "Optional — leave blank to import without a topic."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Topic (optional)"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Import")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func reportImport(output: String, total: Int) {
+        guard
+            let data = output.data(using: .utf8),
+            let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        let imported = (value["imported"] as? [[String: Any]])?.count ?? 0
+        let skipped = value["skipped"] as? [[String: Any]] ?? []
+        guard !skipped.isEmpty else { return } // silent on full success; reload shows results
+        let reasons = skipped.prefix(5).compactMap { entry -> String? in
+            guard let path = entry["path"] as? String else { return nil }
+            let name = URL(fileURLWithPath: path).lastPathComponent
+            let reason = entry["reason"] as? String ?? "could not be read"
+            return "• \(name): \(reason)"
+        }
+        DialogPresenter.show(
+            title: "Imported \(imported) of \(total)",
+            message: "Some files were skipped:\n\n" + reasons.joined(separator: "\n")
+        )
+    }
+
+    /// Persist a record's topic set, then refresh the Library so cards and the
+    /// filter facets reflect the change. The reader updates its chips
+    /// optimistically, so it is left open and untouched.
+    private func setRecordTopics(id: String, topics: [String]) {
+        var arguments = ["set-topics", id]
+        for topic in topics {
+            arguments.append("--topic")
+            arguments.append(topic)
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            _ = self.client.run(arguments)
+            DispatchQueue.main.async { self.reload() }
+        }
+    }
+
+    /// Fetch the full record (metadata incl. topics + body) off the main thread,
+    /// then hand it to the renderer's reader overlay.
+    private func presentReader(id: String) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let result = self.client.runJSON(["get", id])
+            DispatchQueue.main.async {
+                let payload = self.readerPayloadJSON(id: id, result: result)
+                self.libraryWebView?.evaluateJavaScript(
+                    "if (window.renderStarleeReader) { window.renderStarleeReader(\(payload)); }",
+                    completionHandler: nil
+                )
+            }
+        }
+    }
+
+    private func readerPayloadJSON(id: String, result: [String: Any]?) -> String {
+        let capture = captures.first { $0.id == id }
+        guard
+            let record = result?["record"] as? [String: Any],
+            let metadata = record["metadata"] as? [String: Any]
+        else {
+            return jsonObjectString(["id": id, "error": "This record is no longer available."])
+        }
+        // Display layer is metadata-only: the captured body/transcript is never
+        // sent to the UI. It stays on disk in the vault for `starlee search` and
+        // `starlee_query`; the reader only shows attribution and a source link.
+        var reader: [String: Any] = [
+            "id": id,
+            "title": (metadata["title"] as? String) ?? capture?.title ?? "Untitled",
+            "type": (metadata["type"] as? String) ?? capture?.type ?? "note",
+            "filePath": (record["file_path"] as? String) ?? capture?.filePath ?? "",
+        ]
+        if let url = metadata["url"] as? String, !url.isEmpty {
+            reader["url"] = url
+        } else if let url = capture?.url?.absoluteString {
+            reader["url"] = url
+        }
+        if let author = metadata["author"] as? String, !author.isEmpty {
+            reader["author"] = author
+        }
+        if let published = metadata["published_at"] as? String, !published.isEmpty {
+            reader["publishedAt"] = published
+        }
+        if let capture {
+            reader["date"] = displayDate(capture.capturedAt, fallback: capture.capturedAtText)
+        }
+        if let topics = metadata["topics"] as? [String], !topics.isEmpty {
+            reader["topics"] = topics
+        }
+        return jsonObjectString(reader)
+    }
+
+    /// Confirm the permanent delete natively, then remove the capture and reload.
+    private func confirmAndDelete(id: String, title: String) {
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(title)” permanently?"
+        alert.informativeText =
+            "This removes the capture, its text or transcript, and all of its metadata from your brain and your local index. This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            _ = self.client.run(["delete", id])
+            DispatchQueue.main.async {
+                self.libraryWebView?.evaluateJavaScript(
+                    "if (window.closeStarleeReader) { window.closeStarleeReader(); }",
+                    completionHandler: nil
+                )
+                self.reload()
+            }
+        }
+    }
+
+    private func jsonObjectString(_ object: [String: Any]) -> String {
+        guard
+            JSONSerialization.isValidJSONObject(object),
+            let data = try? JSONSerialization.data(withJSONObject: object, options: []),
+            let json = String(data: data, encoding: .utf8)
+        else {
+            return #"{"error":"Could not render this capture."}"#
+        }
+        return json
     }
 
     private func updateActionButtons() {

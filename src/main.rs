@@ -2,6 +2,7 @@ mod bundle;
 mod capture;
 mod chunking;
 mod config;
+mod documents;
 mod embedding;
 mod engine;
 mod http;
@@ -11,6 +12,7 @@ mod model;
 mod public_fetch;
 mod sensor_assets;
 mod spotify;
+mod topics;
 mod vault;
 mod youtube;
 
@@ -51,6 +53,8 @@ enum Command {
         access: AccessArg,
         #[arg(long)]
         tag: Vec<String>,
+        #[arg(long = "topic")]
+        topic: Vec<String>,
     },
     CaptureUrl {
         url: String,
@@ -80,6 +84,27 @@ enum Command {
     },
     Get {
         id: String,
+    },
+    /// Permanently delete a capture from the vault and index by id.
+    Delete {
+        id: String,
+    },
+    /// List user topics across the corpus with assignment counts.
+    Topics,
+    /// Replace the topic set on a record (topics persist in frontmatter).
+    SetTopics {
+        id: String,
+        #[arg(long = "topic")]
+        topic: Vec<String>,
+    },
+    /// Rename a topic across every record that carries it.
+    RenameTopic {
+        from: String,
+        to: String,
+    },
+    /// Remove a topic from every record; the records themselves are kept.
+    DeleteTopic {
+        name: String,
     },
     Status,
     Doctor,
@@ -121,6 +146,12 @@ enum Command {
     Ingest {
         path: PathBuf,
     },
+    /// Import local documents (PDF, DOCX, TXT, MD) into the vault.
+    Import {
+        paths: Vec<PathBuf>,
+        #[arg(long = "topic")]
+        topic: Vec<String>,
+    },
     Serve,
     Mcp,
 }
@@ -157,6 +188,7 @@ fn main() -> Result<()> {
             r#type,
             access,
             tag,
+            topic,
         } => {
             let source_type = match r#type {
                 TypeArg::Article => SourceType::Article,
@@ -172,6 +204,7 @@ fn main() -> Result<()> {
             input.site = site;
             input.url = url;
             input.tags = tag;
+            input.topics = topic;
             serde_json::to_value(engine.capture(input)?)?
         }
         Command::CaptureUrl { url } => serde_json::to_value(engine.capture_public_url(&url)?)?,
@@ -196,6 +229,22 @@ fn main() -> Result<()> {
         Command::Recent { limit } => serde_json::to_value(engine.recent(limit)?)?,
         Command::List { limit } => serde_json::to_value(engine.recent(limit)?)?,
         Command::Get { id } => serde_json::to_value(engine.get_any(&id)?)?,
+        Command::Delete { id } => {
+            let deleted = engine.delete(&id)?;
+            serde_json::json!({"deleted": deleted, "id": id})
+        }
+        Command::Topics => serde_json::to_value(engine.list_topics()?)?,
+        Command::SetTopics { id, topic } => {
+            serde_json::to_value(engine.set_record_topics(&id, topic)?)?
+        }
+        Command::RenameTopic { from, to } => {
+            let changed = engine.rename_topic(&from, &to)?;
+            serde_json::json!({"changed": changed})
+        }
+        Command::DeleteTopic { name } => {
+            let changed = engine.delete_topic(&name)?;
+            serde_json::json!({"changed": changed})
+        }
         Command::Status => serde_json::to_value(engine.status()?)?,
         Command::Doctor => serde_json::to_value(engine.doctor()?)?,
         Command::Diagnostics {
@@ -269,6 +318,9 @@ fn main() -> Result<()> {
             include_public_bodies,
         } => serde_json::to_value(engine.export_bundle(&path, include_public_bodies)?)?,
         Command::Ingest { path } => serde_json::to_value(engine.ingest_bundle(&path)?)?,
+        Command::Import { paths, topic } => {
+            serde_json::to_value(engine.import_documents(&paths, topic)?)?
+        }
         Command::Serve => {
             engine.setup()?;
             let server = http::spawn(engine.clone(), engine.local_config()?)?;
@@ -382,6 +434,181 @@ mod integration_tests {
             engine.get(&captured.metadata.id)?.unwrap().body,
             captured.body
         );
+        Ok(())
+    }
+
+    fn capture_note(engine: &Engine, title: &str, text: &str) -> Result<crate::model::Record> {
+        engine.capture(CaptureInput::new(
+            title,
+            text,
+            SourceType::Note,
+            Access::Restricted,
+        ))
+    }
+
+    #[test]
+    fn topics_persist_in_frontmatter_and_survive_reindex() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let mut input = CaptureInput::new(
+            "Mitochondria",
+            "The powerhouse of the cell is a recurring exam topic.",
+            SourceType::Note,
+            Access::Restricted,
+        );
+        // Messy input: whitespace, duplicate (case-insensitive), and an empty entry.
+        input.topics = vec![
+            "  Biology 101 ".into(),
+            "biology 101".into(),
+            "".into(),
+            "Exams".into(),
+        ];
+        let record = engine.capture(input)?;
+        assert_eq!(record.metadata.topics, vec!["Biology 101", "Exams"]);
+
+        // The index mirror reflects the sanitized, de-duplicated topics.
+        let topics = engine.list_topics()?;
+        assert_eq!(topics.len(), 2);
+        assert!(
+            topics
+                .iter()
+                .any(|t| t.topic == "Biology 101" && t.count == 1)
+        );
+
+        // Topics are canonical in the Markdown, so a full reindex (which rebuilds
+        // the index purely from the vault) preserves them with zero loss.
+        engine.reindex(false)?;
+        let reread = engine.get(&record.metadata.id)?.unwrap();
+        assert_eq!(reread.metadata.topics, vec!["Biology 101", "Exams"]);
+        assert_eq!(engine.list_topics()?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn set_rename_and_delete_topic_propagate_through_vault_and_index() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let first = capture_note(&engine, "Cells", "Cell biology basics.")?;
+        let second = capture_note(&engine, "Genes", "Genetics basics.")?;
+
+        engine.set_record_topics(&first.metadata.id, vec!["Biology".into()])?;
+        engine.set_record_topics(&second.metadata.id, vec!["Biology".into()])?;
+        let topics = engine.list_topics()?;
+        assert_eq!(topics.len(), 1);
+        assert_eq!(topics[0].topic, "Biology");
+        assert_eq!(topics[0].count, 2);
+
+        // Rename everywhere.
+        assert_eq!(engine.rename_topic("biology", "Life Sciences")?, 2);
+        let renamed = engine.list_topics()?;
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(renamed[0].topic, "Life Sciences");
+        assert_eq!(renamed[0].count, 2);
+
+        // Deleting a topic strips it from records but keeps the records.
+        assert_eq!(engine.delete_topic("life sciences")?, 2);
+        assert!(engine.list_topics()?.is_empty());
+        assert!(engine.get(&first.metadata.id)?.is_some());
+        assert!(engine.get(&second.metadata.id)?.is_some());
+        assert!(
+            engine
+                .get(&first.metadata.id)?
+                .unwrap()
+                .metadata
+                .topics
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn delete_removes_record_from_vault_and_index_and_stays_consistent() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let keep = capture_note(&engine, "Keep me", "A searchable note about recall.")?;
+        let drop = capture_note(&engine, "Drop me", "Another searchable note about recall.")?;
+        assert_eq!(engine.status()?.capture_count, 2);
+
+        assert!(engine.delete(&drop.metadata.id)?);
+
+        // Gone from the vault file, the index, search, and the corpus count.
+        assert!(!PathBuf::from(&drop.file_path).exists());
+        assert!(engine.get(&drop.metadata.id)?.is_none());
+        assert!(engine.get(&keep.metadata.id)?.is_some());
+        let status = engine.status()?;
+        assert_eq!(status.capture_count, 1);
+        let hits = engine.search_scoped("recall", 10, SearchScope::Own)?;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, keep.metadata.id);
+
+        // Index matches a fresh rebuild from the vault: no orphaned chunks/vectors.
+        let (chunks_before, _) = (status.chunk_count, ());
+        let after = engine.reindex(false)?;
+        assert_eq!(after.capture_count, 1);
+        assert_eq!(after.chunk_count, chunks_before);
+
+        // Deleting an unknown id is a no-op, not an error.
+        assert!(!engine.delete("does-not-exist")?);
+        Ok(())
+    }
+
+    #[test]
+    fn recent_includes_author_and_topics_for_library_filtering() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let mut input = CaptureInput::new(
+            "Photosynthesis",
+            "Plants convert light into chemical energy.",
+            SourceType::Article,
+            Access::Public,
+        );
+        input.author = Some("Dr. Green".into());
+        input.topics = vec!["Biology".into(), "Plants".into()];
+        let record = engine.capture(input)?;
+
+        let hits = engine.recent(10)?;
+        let hit = hits
+            .iter()
+            .find(|hit| hit.id == record.metadata.id)
+            .expect("captured record appears in recent");
+        assert_eq!(hit.author.as_deref(), Some("Dr. Green"));
+        let mut topics = hit.topics.clone();
+        topics.sort();
+        assert_eq!(topics, vec!["Biology".to_owned(), "Plants".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
+    fn import_documents_ingests_dedupes_and_tags() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let lecture = temp.path().join("lecture1.txt");
+        std::fs::write(
+            &lecture,
+            "Photosynthesis converts light into chemical energy.",
+        )?;
+        let unsupported = temp.path().join("image.png");
+        std::fs::write(&unsupported, "not a real image")?;
+
+        let report =
+            engine.import_documents(&[lecture.clone(), unsupported], vec!["BIO 101".into()])?;
+        assert_eq!(report.imported.len(), 1);
+        assert_eq!(report.skipped.len(), 1);
+        assert!(report.skipped[0].reason.contains("unsupported"));
+
+        // Imported text is searchable and carries the batch topic.
+        assert_eq!(
+            engine
+                .search_scoped("photosynthesis", 5, SearchScope::Own)?
+                .len(),
+            1
+        );
+        assert!(engine.list_topics()?.iter().any(|t| t.topic == "BIO 101"));
+
+        // Re-importing identical content updates rather than duplicating.
+        let again = engine.import_documents(&[lecture], vec!["BIO 101".into()])?;
+        assert_eq!(again.imported.len(), 1);
+        assert_eq!(engine.status()?.capture_count, 1);
         Ok(())
     }
 

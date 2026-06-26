@@ -6,7 +6,7 @@ use std::{
     time::Instant,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
@@ -21,7 +21,7 @@ use crate::{
     model::{
         BridgeHealth, CaptureInput, CaptureTraceReport, ChromeSetupStatus, CorpusOverview,
         DoctorCheck, DoctorReport, GetResult, QueryResult, Record, RuntimeIdentity, SearchHit,
-        SearchScope, SetupReport, SourceType, SpotifySyncEvent, SpotifySyncLog, Status,
+        SearchScope, SetupReport, SourceType, SpotifySyncEvent, SpotifySyncLog, Status, TopicCount,
     },
     public_fetch, sensor_assets, spotify,
     spotify::{SpotifyConfigureReport, SpotifySyncReport, SpotifySyncStatus},
@@ -296,6 +296,149 @@ impl Engine {
             .map(PathBuf::from)
             .collect::<Vec<_>>();
         Ok(bundle::get(&paths, id)?.map(|record| GetResult::Borrowed { record }))
+    }
+
+    /// Permanently delete a capture by id, removing both the Markdown file and
+    /// every index row (chunks, FTS, vectors, topic mirror) for it. Returns
+    /// `true` if a record existed and was removed.
+    ///
+    /// The vault is canonical, so the Markdown file is removed first: if the
+    /// process dies between the two steps, the index still has a row pointing at
+    /// a missing file, and the next `reindex` (which rebuilds purely from the
+    /// vault) drops it. Removing the index row first would let a `reindex`
+    /// resurrect the record from the still-present file.
+    pub fn delete(&self, id: &str) -> Result<bool> {
+        let Some(record) = self.get(id)? else {
+            return Ok(false);
+        };
+        self.vault.delete(&record)?;
+        self.index.delete(id)?;
+        Ok(true)
+    }
+
+    /// All user topics across the corpus with their assignment counts.
+    pub fn list_topics(&self) -> Result<Vec<TopicCount>> {
+        self.index.all_topics()
+    }
+
+    /// Replace the topic set on a single record. Writes the canonical Markdown
+    /// frontmatter first, then refreshes the index mirror.
+    pub fn set_record_topics(&self, id: &str, topics: Vec<String>) -> Result<Record> {
+        let record = self
+            .get(id)?
+            .with_context(|| format!("no record with id {id}"))?;
+        self.rewrite_record_topics(&record, crate::topics::sanitize_topics(topics))
+    }
+
+    /// Rename a topic everywhere it appears. Returns the number of records
+    /// changed. A no-op if no record carries the source topic.
+    pub fn rename_topic(&self, from: &str, to: &str) -> Result<usize> {
+        let Some(to) = crate::topics::sanitize_topic(to) else {
+            bail!("new topic name is empty after sanitization");
+        };
+        let mut changed = 0;
+        for record in self.vault.records()? {
+            if record
+                .metadata
+                .topics
+                .iter()
+                .any(|topic| crate::topics::topics_match(topic, from))
+            {
+                let mut next: Vec<String> = record
+                    .metadata
+                    .topics
+                    .iter()
+                    .filter(|topic| !crate::topics::topics_match(topic, from))
+                    .cloned()
+                    .collect();
+                next.push(to.clone());
+                self.rewrite_record_topics(&record, crate::topics::sanitize_topics(next))?;
+                changed += 1;
+            }
+        }
+        Ok(changed)
+    }
+
+    /// Remove a topic from every record that carries it (the records themselves
+    /// are untouched). Returns the number of records changed.
+    pub fn delete_topic(&self, name: &str) -> Result<usize> {
+        let mut changed = 0;
+        for record in self.vault.records()? {
+            if record
+                .metadata
+                .topics
+                .iter()
+                .any(|topic| crate::topics::topics_match(topic, name))
+            {
+                let next: Vec<String> = record
+                    .metadata
+                    .topics
+                    .iter()
+                    .filter(|topic| !crate::topics::topics_match(topic, name))
+                    .cloned()
+                    .collect();
+                self.rewrite_record_topics(&record, crate::topics::sanitize_topics(next))?;
+                changed += 1;
+            }
+        }
+        Ok(changed)
+    }
+
+    fn rewrite_record_topics(&self, record: &Record, topics: Vec<String>) -> Result<Record> {
+        let input = record_to_input(record, topics);
+        let updated = self.vault.replace(record, input)?;
+        self.index.upsert(&updated, self.embedder.as_ref())?;
+        Ok(updated)
+    }
+
+    /// Import user documents (PDF/DOCX/TXT/MD) into the vault. Each file is
+    /// parsed locally, normalized into the standard Markdown contract, tagged
+    /// with `topics`, and indexed. A corrupt or unsupported file is skipped (its
+    /// reason recorded) without aborting the rest of the batch. Re-importing a
+    /// file whose extracted text is unchanged updates the existing record
+    /// instead of creating a duplicate (content-hash identity via the URL field).
+    pub fn import_documents(
+        &self,
+        paths: &[std::path::PathBuf],
+        topics: Vec<String>,
+    ) -> Result<crate::model::ImportReport> {
+        self.setup()?;
+        let topics = crate::topics::sanitize_topics(topics);
+        let mut imported = Vec::new();
+        let mut skipped = Vec::new();
+        for path in paths {
+            match self.import_one(path, &topics) {
+                Ok(record) => imported.push(crate::model::ImportedDocument {
+                    path: path.display().to_string(),
+                    id: record.metadata.id,
+                    title: record.metadata.title,
+                }),
+                Err(error) => skipped.push(crate::model::SkippedDocument {
+                    path: path.display().to_string(),
+                    reason: format!("{error:#}"),
+                }),
+            }
+        }
+        Ok(crate::model::ImportReport { imported, skipped })
+    }
+
+    fn import_one(&self, path: &std::path::Path, topics: &[String]) -> Result<Record> {
+        let document = crate::documents::extract_text(path)?;
+        let mut hasher = Sha256::new();
+        hasher.update(document.text.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+        let mut input = CaptureInput::new(
+            document.title,
+            document.text,
+            SourceType::Note,
+            crate::model::Access::Restricted,
+        );
+        // Content-addressed identity so re-importing identical text updates the
+        // existing record (mirrors canonical-URL recapture) instead of duping.
+        input.url = Some(format!("starlee-doc:{hash}"));
+        input.source = Some("upload".into());
+        input.topics = topics.to_vec();
+        self.capture(input)
     }
 
     pub fn reindex(&self, stale_embeddings_only: bool) -> Result<Status> {
@@ -1362,6 +1505,42 @@ fn token_fingerprint(value: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// Rebuild a `CaptureInput` from an existing record, substituting a new topic
+/// set. Used to rewrite frontmatter in place via `Vault::replace` without
+/// losing any other metadata. The existing summary is preserved so it is not
+/// recomputed from the body on rewrite.
+fn record_to_input(record: &Record, topics: Vec<String>) -> CaptureInput {
+    let metadata = &record.metadata;
+    CaptureInput {
+        title: metadata.title.clone(),
+        text: record.body.clone(),
+        source_type: metadata.source_type.clone(),
+        access: metadata.access.clone(),
+        author: metadata.author.clone(),
+        site: metadata.site.clone(),
+        source: metadata.source.clone(),
+        url: metadata.url.clone(),
+        consumed_at: metadata.consumed_at.clone(),
+        published_at: metadata.published_at.clone(),
+        duration: metadata.duration,
+        video_id: metadata.video_id.clone(),
+        summary: Some(metadata.summary.clone()),
+        tags: metadata.tags.clone(),
+        topics,
+        spotify_episode_id: metadata.spotify_episode_id.clone(),
+        spotify_show_id: metadata.spotify_show_id.clone(),
+        show: metadata.show.clone(),
+        listen_duration_s: metadata.listen_duration_s,
+        listen_progress_pct: metadata.listen_progress_pct,
+        transcript_status: metadata.transcript_status.clone(),
+        transcript_source: metadata.transcript_source.clone(),
+        transcript_reason: metadata.transcript_reason.clone(),
+        matched_youtube_id: metadata.matched_youtube_id.clone(),
+        linked_youtube_id: metadata.linked_youtube_id.clone(),
+        description: None,
+    }
 }
 
 fn spotify_event(

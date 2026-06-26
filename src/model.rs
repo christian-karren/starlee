@@ -53,6 +53,8 @@ pub struct Frontmatter {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
+    pub topics: Vec<String>,
+    #[serde(default)]
     pub spotify_episode_id: Option<String>,
     #[serde(default)]
     pub spotify_show_id: Option<String>,
@@ -103,6 +105,8 @@ pub struct CaptureInput {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
+    pub topics: Vec<String>,
+    #[serde(default)]
     pub spotify_episode_id: Option<String>,
     #[serde(default)]
     pub spotify_show_id: Option<String>,
@@ -148,6 +152,7 @@ impl CaptureInput {
             video_id: None,
             summary: None,
             tags: Vec::new(),
+            topics: Vec::new(),
             spotify_episode_id: None,
             spotify_show_id: None,
             show: None,
@@ -198,11 +203,15 @@ pub struct SearchHit {
     pub source_type: SourceType,
     #[serde(default)]
     pub site: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
     pub url: Option<String>,
     pub captured_at: String,
     #[serde(default)]
     pub consumed_at: Option<String>,
     pub access: Access,
+    #[serde(default)]
+    pub topics: Vec<String>,
     pub snippet: String,
     pub file_path: String,
     pub score: f64,
@@ -230,6 +239,31 @@ pub struct QueryChunk {
     pub chunk_index: usize,
     pub chunk_text: String,
     pub similarity: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TopicCount {
+    pub topic: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportReport {
+    pub imported: Vec<ImportedDocument>,
+    pub skipped: Vec<SkippedDocument>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportedDocument {
+    pub path: String,
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkippedDocument {
+    pub path: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -10,6 +10,21 @@
   --navy: #13284B;
   --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+
+  /* Polish tokens (make-interfaces-feel-better): one source of truth for the
+     timings/easing/depth used across the renderer. */
+  --dur-hover: 120ms;
+  --dur-press: 150ms;
+  --dur-enter: 360ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --shadow-border:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 1px 2px -1px rgba(0, 0, 0, 0.06),
+    0 2px 4px 0 rgba(0, 0, 0, 0.04);
+  --shadow-border-hover:
+    0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 1px 2px -1px rgba(0, 0, 0, 0.08),
+    0 2px 4px 0 rgba(0, 0, 0, 0.06);
 }
 
 * {
@@ -24,6 +39,9 @@ body,
   min-height: 100%;
   margin: 0;
   overflow: hidden;
+  /* Crisper, lighter text on macOS (applied once at the root). */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
@@ -54,7 +72,13 @@ body {
   padding: 38px 42px 36px;
 }
 
-.library-header,
+/* Header sits above the card grid so the Filter dropdown is not painted over
+   by the shelf below it (both were z-index:1, so the later-in-DOM shelf won). */
+.library-header {
+  position: relative;
+  z-index: 5;
+}
+
 .shelf-section {
   position: relative;
   z-index: 1;
@@ -72,6 +96,7 @@ h1 {
   line-height: 1;
   font-weight: 850;
   letter-spacing: 0;
+  text-wrap: balance;
 }
 
 h2 {
@@ -140,6 +165,7 @@ input::placeholder {
 
 time {
   font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .card-row {
@@ -153,7 +179,154 @@ time {
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
 
+.library-actions {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.action-btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 3px solid var(--black);
+  background: var(--white);
+  color: var(--black);
+  font: 750 13px var(--sans);
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow: 4px 4px 0 var(--black);
+  transition: transform 90ms ease, box-shadow 90ms ease, background 90ms ease;
+}
+
+.action-btn:hover {
+  background: var(--cream);
+}
+
+.action-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--black);
+}
+
+.action-btn.active {
+  background: var(--navy);
+  color: var(--white);
+}
+
+/* Settings "Advanced controls" disclosure for the background fine-tuning. */
+details.advanced {
+  margin-top: 14px;
+}
+
+details.advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--cream);
+  opacity: 0.8;
+}
+
+details.advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.advanced > summary::before {
+  content: "▸ ";
+}
+
+details.advanced[open] > summary::before {
+  content: "▾ ";
+}
+
+.filter-wrap {
+  position: relative;
+}
+
+.filter-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 15;
+  display: grid;
+  gap: 12px;
+  width: 280px;
+  padding: 16px;
+  border: 3px solid var(--black);
+  border-radius: 8px;
+  background: #fbf4e2;
+  color: var(--black);
+  box-shadow: 6px 6px 0 var(--black);
+}
+
+.filter-panel[hidden] {
+  display: none;
+}
+
+.filter-field {
+  display: grid;
+  gap: 5px;
+  font: 700 11px var(--sans);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(9, 5, 5, 0.66);
+}
+
+.filter-field select,
+.filter-field input {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 2px solid var(--black);
+  border-radius: 5px;
+  background: var(--white);
+  color: var(--black);
+  font: 600 13px var(--sans);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.filter-dates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.filter-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1.5px solid rgba(9, 5, 5, 0.16);
+}
+
+.filter-count {
+  font: 600 11px var(--mono);
+  color: rgba(9, 5, 5, 0.66);
+  font-variant-numeric: tabular-nums;
+}
+
+.filter-clear {
+  padding: 6px 12px;
+  border: 2px solid var(--black);
+  border-radius: 5px;
+  background: var(--white);
+  color: var(--black);
+  font: 700 12px var(--sans);
+  cursor: pointer;
+}
+
+.filter-clear:hover {
+  background: var(--cream);
+}
+
 .capture-card {
+  position: relative;
   width: 100%;
   aspect-ratio: 1;
   display: grid;
@@ -165,7 +338,44 @@ time {
   background: rgba(19, 40, 75, 0.85);
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
   color: var(--white);
-  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+/* Edit mode: reveal the per-card delete control. */
+.card-delete {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: none;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 2px solid var(--white);
+  border-radius: 999px;
+  background: #b3261e;
+  color: var(--white);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: transform 90ms ease, background 90ms ease;
+}
+
+.card-row.editing .card-delete {
+  display: flex;
+}
+
+.card-delete:hover {
+  background: #d4362d;
+  transform: scale(1.06);
+}
+
+.card-row.editing .capture-card {
+  cursor: default;
 }
 
 .capture-card:hover,
@@ -202,6 +412,7 @@ time {
   color: var(--cream);
   font-size: 12px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -216,9 +427,554 @@ time {
   color: var(--white);
 }
 
+/* --- Reader -------------------------------------------------------------- */
+
+.reader[hidden] {
+  display: none;
+}
+
+.reader {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.reader-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 8, 16, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.reader-panel {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 16px;
+  width: min(820px, 100%);
+  max-height: 100%;
+  padding: 26px 28px 24px;
+  border: 3px solid var(--black);
+  border-radius: 10px;
+  background: #fbf4e2;
+  color: var(--black);
+  box-shadow: 10px 10px 0 var(--black);
+}
+
+.reader-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.reader-titles {
+  min-width: 0;
+}
+
+.reader-titles h2 {
+  font-size: 24px;
+  font-weight: 820;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.reader-meta {
+  margin-top: 8px;
+  color: rgba(9, 5, 5, 0.66);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.reader-topics[hidden] {
+  display: none;
+}
+
+.topic-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1.5px solid var(--navy);
+  border-radius: 999px;
+  background: rgba(19, 40, 75, 0.08);
+  color: var(--navy);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.topic-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--navy);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.topic-remove:hover {
+  background: rgba(19, 40, 75, 0.18);
+}
+
+.topic-add {
+  min-width: 110px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1.5px dashed rgba(19, 40, 75, 0.5);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--navy);
+  font: 600 11px var(--sans);
+}
+
+.topic-add::placeholder {
+  color: rgba(19, 40, 75, 0.5);
+}
+
+.topic-add:focus {
+  outline: none;
+  border-style: solid;
+  border-color: var(--navy);
+}
+
+.reader-close {
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--black);
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--black);
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.reader-close:hover {
+  background: var(--cream);
+}
+
+.reader-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.reader-action {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 2px solid var(--black);
+  border-radius: 6px;
+  background: var(--white);
+  color: var(--black);
+  font: 700 12px var(--sans);
+  cursor: pointer;
+}
+
+.reader-action:hover {
+  background: var(--cream);
+}
+
+.reader-action-danger {
+  border-color: #8f1d16;
+  color: #8f1d16;
+}
+
+.reader-action-danger:hover {
+  background: #f4d8d4;
+}
+
+/* Primary call-to-action: send the reader to the original source. */
+.reader-action-primary {
+  order: -1;
+  min-height: 42px;
+  padding: 0 20px;
+  border-color: var(--navy);
+  background: var(--navy);
+  color: var(--white);
+  font-size: 14px;
+  font-weight: 820;
+  box-shadow: 3px 3px 0 var(--black);
+}
+
+.reader-action-primary:hover {
+  background: #0c1f3d;
+}
+
+.reader-action-primary:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--black);
+}
+
+/* Metadata-only reader: the body area shows a short note, not the article. */
+.reader-body.reader-body-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-style: dashed;
+  border-color: rgba(9, 5, 5, 0.2);
+  background: rgba(9, 5, 5, 0.03);
+  color: rgba(9, 5, 5, 0.55);
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.5;
+  text-align: center;
+  white-space: normal;
+}
+
+.reader-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px;
+  border: 2px solid rgba(9, 5, 5, 0.16);
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.62;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-wrap: pretty;
+}
+
+/* --- Onboarding ---------------------------------------------------------- */
+
+.onboarding[hidden] {
+  display: none;
+}
+
+.onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgba(5, 8, 16, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.onboarding-panel {
+  position: relative;
+  display: grid;
+  gap: 18px;
+  width: min(560px, 100%);
+  padding: 30px 32px 26px;
+  border: 3px solid var(--black);
+  border-radius: 12px;
+  background: #fbf4e2;
+  color: var(--black);
+  box-shadow: 10px 10px 0 var(--black);
+}
+
+.onb-progress {
+  display: flex;
+  gap: 8px;
+}
+
+.onb-dot {
+  width: 26px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(9, 5, 5, 0.18);
+}
+
+.onb-dot.active {
+  background: var(--navy);
+}
+
+.onb-step h1 {
+  font-size: 28px;
+  font-weight: 850;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+
+.onb-h2 {
+  margin-top: 18px;
+  font-size: 16px;
+  font-weight: 760;
+}
+
+.onb-lead {
+  margin-top: 10px;
+  font-size: 15px;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.onb-sub {
+  margin-top: 8px;
+  color: rgba(9, 5, 5, 0.62);
+  font-size: 13px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.onb-browsers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.onb-browser {
+  display: grid;
+  gap: 6px;
+  padding: 14px 10px;
+  border: 2px solid var(--black);
+  border-radius: 8px;
+  background: var(--white);
+  cursor: pointer;
+  box-shadow: 3px 3px 0 var(--black);
+  transition: transform 90ms ease, box-shadow 90ms ease;
+}
+
+.onb-browser:not(:disabled):hover {
+  background: var(--cream);
+}
+
+.onb-browser:not(:disabled):active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--black);
+}
+
+.onb-browser:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  box-shadow: none;
+}
+
+.onb-browser-name {
+  font-size: 15px;
+  font-weight: 780;
+}
+
+.onb-browser-state {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.onb-browser-state.ready {
+  color: #1f7a3d;
+}
+
+.onb-browser-state.soon {
+  color: rgba(9, 5, 5, 0.5);
+}
+
+.onb-note {
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.onb-points {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.onb-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1.5px solid rgba(9, 5, 5, 0.16);
+}
+
+.onb-nav {
+  display: flex;
+  gap: 10px;
+}
+
+.onb-primary {
+  min-height: 40px;
+  padding: 0 20px;
+  border: 2px solid var(--black);
+  border-radius: 7px;
+  background: var(--navy);
+  color: var(--white);
+  font: 750 14px var(--sans);
+  cursor: pointer;
+  box-shadow: 3px 3px 0 var(--black);
+}
+
+.onb-primary:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--black);
+}
+
+.onb-secondary,
+.onb-skip {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 2px solid var(--black);
+  border-radius: 7px;
+  background: var(--white);
+  color: var(--black);
+  font: 700 13px var(--sans);
+  cursor: pointer;
+}
+
+.onb-skip {
+  border-color: transparent;
+  background: transparent;
+  color: rgba(9, 5, 5, 0.55);
+  text-decoration: underline;
+}
+
+.onb-menubar-arrow {
+  position: absolute;
+  top: 12px;
+  right: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--cream);
+  font-size: 20px;
+  font-weight: 800;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+.onb-menubar-arrow span {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+/* --- Interaction & motion polish (make-interfaces-feel-better) ----------- */
+
+/* Extend small controls to a comfortable hit area without changing their look.
+   The card delete control overlaps only the card it sits on, which ignores
+   clicks in edit mode, so a 44px target is safe. */
+.card-delete::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
+.topic-remove {
+  position: relative;
+}
+
+.topic-remove::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  transform: translate(-50%, -50%);
+}
+
+/* A small tactile press on controls that lack the brutalist shadow-shift. */
+.reader-close,
+.topic-chip,
+.card-delete {
+  transition-property: transform, background, box-shadow;
+  transition-duration: var(--dur-press);
+  transition-timing-function: var(--ease-out);
+}
+
+.reader-close:active {
+  transform: scale(0.96);
+}
+
+/* Discrete entrances: split into the panel's semantic chunks and stagger them,
+   combining opacity, translate, and blur (one-shot keyframes are correct here). */
+@keyframes polishFadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.reader.open .reader-panel > * {
+  animation: polishFadeInUp var(--dur-enter) var(--ease-out) both;
+}
+
+.reader.open .reader-panel > *:nth-child(2) {
+  animation-delay: 70ms;
+}
+
+.reader.open .reader-panel > *:nth-child(3) {
+  animation-delay: 140ms;
+}
+
+.onb-step:not([hidden]) > * {
+  animation: polishFadeInUp var(--dur-enter) var(--ease-out) both;
+}
+
+.onb-step:not([hidden]) > *:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+.onb-step:not([hidden]) > *:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+.onb-step:not([hidden]) > *:nth-child(4) {
+  animation-delay: 180ms;
+}
+
+.onb-step:not([hidden]) > *:nth-child(n + 5) {
+  animation-delay: 220ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader.open .reader-panel > *,
+  .onb-step:not([hidden]) > * {
+    animation: none;
+  }
+}
+
 @media (max-width: 620px) {
   .library-header {
     grid-template-columns: 1fr;
+  }
+
+  .library-actions {
+    grid-column: 1;
   }
 
   .shelf-section {

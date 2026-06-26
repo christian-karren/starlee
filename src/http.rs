@@ -246,6 +246,64 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                 Err(error) => respond(request, StatusCode(400), json!({"error":error.to_string()})),
             }
         }
+        (&Method::Post, "/delete") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            let body = read_body(&mut request)?;
+            let value = serde_json::from_str::<serde_json::Value>(&body)?;
+            let Some(id) = value.get("id").and_then(serde_json::Value::as_str) else {
+                return respond(
+                    request,
+                    StatusCode(400),
+                    json!({"error":"missing record id"}),
+                );
+            };
+            respond(
+                request,
+                StatusCode(200),
+                json!({"deleted": engine.delete(id)?, "id": id}),
+            )
+        }
+        (&Method::Get, "/topics") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            respond(
+                request,
+                StatusCode(200),
+                json!({"topics": engine.list_topics()?}),
+            )
+        }
+        (&Method::Post, "/topics/set") => {
+            if !authorized(&request, &config.capture_token) {
+                return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
+            }
+            let body = read_body(&mut request)?;
+            let value = serde_json::from_str::<serde_json::Value>(&body)?;
+            let Some(id) = value.get("id").and_then(serde_json::Value::as_str) else {
+                return respond(
+                    request,
+                    StatusCode(400),
+                    json!({"error":"missing record id"}),
+                );
+            };
+            let topics = value
+                .get("topics")
+                .and_then(serde_json::Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_owned))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            respond(
+                request,
+                StatusCode(200),
+                serde_json::to_value(engine.set_record_topics(id, topics)?)?,
+            )
+        }
         _ => respond(request, StatusCode(404), json!({"error":"not found"})),
     }
 }
@@ -379,6 +437,32 @@ mod tests {
                 .len(),
             1
         );
+        drop(server);
+        Ok(())
+    }
+
+    #[test]
+    fn delete_endpoint_requires_token_and_removes_record() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = test_engine(temp.path());
+        let server = spawn(engine.clone(), test_config())?;
+        let record = engine.capture(crate::model::CaptureInput::new(
+            "Doomed",
+            "A note to be deleted.",
+            crate::model::SourceType::Note,
+            crate::model::Access::Restricted,
+        ))?;
+        let id = record.metadata.id.clone();
+        let body = serde_json::to_string(&json!({ "id": id }))?;
+
+        let unauthorized = post_path(&server.address, "/delete", &body, None)?;
+        assert!(unauthorized.starts_with("HTTP/1.1 401"));
+        assert!(engine.get(&id)?.is_some());
+
+        let authorized = post_path(&server.address, "/delete", &body, Some("secret-token"))?;
+        assert!(authorized.starts_with("HTTP/1.1 200"));
+        assert!(authorized.contains("\"deleted\":true"));
+        assert!(engine.get(&id)?.is_none());
         drop(server);
         Ok(())
     }

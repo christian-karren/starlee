@@ -10,7 +10,9 @@ use crate::{
     bundle::{BundleAudit, audit},
     chunking::{ChunkOptions, chunk_text},
     embedding::{EMBEDDING_DIMENSION, Embedder},
-    model::{Access, QueryChunk, Record, SearchHit, SpotifyReasonCount, SpotifySyncEvent},
+    model::{
+        Access, QueryChunk, Record, SearchHit, SpotifyReasonCount, SpotifySyncEvent, TopicCount,
+    },
 };
 
 mod schema;
@@ -81,6 +83,13 @@ impl Index {
                 serde_json::to_value(&record.metadata.access)?.as_str(), record.metadata.summary, record.file_path,
                 record.metadata.consumed_at]
         )?;
+        for topic in crate::topics::sanitize_topics(&record.metadata.topics) {
+            let key = topic.to_lowercase();
+            tx.execute(
+                "INSERT OR IGNORE INTO source_topics(source_id,topic,topic_key) VALUES(?1,?2,?3)",
+                params![record.metadata.id, topic, key],
+            )?;
+        }
         for (ord, (chunk, embedding)) in chunks.into_iter().zip(embeddings).enumerate() {
             if embedding.len() != EMBEDDING_DIMENSION {
                 bail!("embedding dimension mismatch for chunk {ord}");
@@ -183,6 +192,35 @@ impl Index {
             .map(PathBuf::from))
     }
 
+    /// Permanently remove a source row. The `ON DELETE CASCADE` on `chunks` and
+    /// `source_topics`, plus the `chunks_ad` trigger, clean up chunks, FTS rows,
+    /// vectors, and topic mirror entries in the same transaction. Returns `true`
+    /// if a row was removed.
+    pub fn delete(&self, id: &str) -> Result<bool> {
+        self.init()?;
+        let connection = self.connection()?;
+        let affected = connection.execute("DELETE FROM sources WHERE id=?1", [id])?;
+        Ok(affected > 0)
+    }
+
+    /// Distinct topics across the corpus with their assignment counts, most-used
+    /// first. Grouped case-insensitively via `topic_key`.
+    pub fn all_topics(&self) -> Result<Vec<TopicCount>> {
+        self.init()?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT topic, COUNT(*) AS n FROM source_topics
+             GROUP BY topic_key ORDER BY n DESC, topic ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(TopicCount {
+                topic: row.get(0)?,
+                count: row.get::<_, i64>(1)? as usize,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn get_by_url(&self, url: &str) -> Result<Option<PathBuf>> {
         self.init()?;
         let connection = self.connection()?;
@@ -200,18 +238,31 @@ impl Index {
         self.init()?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id,title,type,site,url,captured_at,access,summary,file_path,consumed_at
-             FROM sources ORDER BY COALESCE(consumed_at,captured_at) DESC LIMIT ?1",
+            "SELECT s.id,s.title,s.type,s.site,s.url,s.captured_at,s.access,s.summary,s.file_path,
+                    s.consumed_at,s.author,
+                    (SELECT GROUP_CONCAT(topic, char(10)) FROM source_topics st WHERE st.source_id = s.id) AS topics
+             FROM sources s ORDER BY COALESCE(s.consumed_at,s.captured_at) DESC LIMIT ?1",
         )?;
         let rows = statement.query_map([limit], |row| {
             let source_type: String = row.get(2)?;
             let access: String = row.get(6)?;
+            let topics = row
+                .get::<_, Option<String>>(11)?
+                .map(|joined| {
+                    joined
+                        .split('\n')
+                        .filter(|topic| !topic.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             Ok(SearchHit {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 source_type: serde_json::from_value(serde_json::Value::String(source_type))
                     .unwrap_or_default(),
                 site: row.get(3)?,
+                author: row.get(10)?,
                 url: row.get(4)?,
                 captured_at: row.get(5)?,
                 consumed_at: row.get(9)?,
@@ -220,6 +271,7 @@ impl Index {
                 } else {
                     Access::Restricted
                 },
+                topics,
                 snippet: row.get(7)?,
                 file_path: row.get(8)?,
                 score: 0.0,
@@ -870,6 +922,7 @@ mod tests {
                 access: Access::Restricted,
                 summary: String::new(),
                 tags: Vec::new(),
+                topics: Vec::new(),
                 spotify_episode_id: None,
                 spotify_show_id: None,
                 show: None,
