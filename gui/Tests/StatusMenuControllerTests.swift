@@ -7,11 +7,6 @@ final class StatusMenuControllerTests: XCTestCase {
 
     private var statusItems: [NSStatusItem] = []
 
-    override func setUpWithError() throws {
-        // NSStatusBar.system requires a window server. Skip all tests in headless CI.
-        try XCTSkipIf(NSScreen.screens.isEmpty, "Skipping StatusMenuController tests: no display (headless)")
-    }
-
     override func tearDown() {
         for item in statusItems {
             NSStatusBar.system.removeStatusItem(item)

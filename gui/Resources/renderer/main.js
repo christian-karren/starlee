@@ -11,7 +11,8 @@ const state = {
 const elements = {
   search: document.querySelector("#search-input"),
   row: document.querySelector("#card-row"),
-  empty: document.querySelector("#empty-state"),
+  noResults: document.querySelector("#no-results-state"),
+  emptyLibrary: document.querySelector("#empty-library-state"),
   background: document.querySelector("#pixel-dither-background"),
   editToggle: document.querySelector("#edit-toggle"),
   uploadButton: document.querySelector("#upload-button"),
@@ -127,7 +128,10 @@ function render() {
     elements.filterCount.textContent = `${captures.length} of ${state.captures.length}`;
   }
 
-  elements.empty.hidden = captures.length > 0;
+  const libraryEmpty = state.captures.length === 0;
+  const noResults = !libraryEmpty && captures.length === 0;
+  if (elements.emptyLibrary) elements.emptyLibrary.hidden = !libraryEmpty;
+  if (elements.noResults) elements.noResults.hidden = !noResults;
   elements.row.classList.toggle("editing", state.editMode);
 
   elements.row.innerHTML = captures
