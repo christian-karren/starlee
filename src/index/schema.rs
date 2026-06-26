@@ -8,7 +8,7 @@ use sqlite_vec::sqlite3_vec_init;
 
 static REGISTER_VEC: Once = Once::new();
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 4;
+pub const CURRENT_SCHEMA_VERSION: i64 = 5;
 const SCHEMA_VERSION_KEY: &str = "version";
 
 #[derive(Clone, Copy)]
@@ -39,6 +39,17 @@ const MIGRATIONS: &[Migration] = &[
         description: "add sync readiness placeholders",
         sql: "ALTER TABLE sources ADD COLUMN device_id TEXT;
               CREATE TABLE IF NOT EXISTS sync_state(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    },
+    Migration {
+        version: 5,
+        description: "mirror user topics for filtering",
+        sql: "CREATE TABLE IF NOT EXISTS source_topics (
+                  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                  topic TEXT NOT NULL,
+                  topic_key TEXT NOT NULL,
+                  PRIMARY KEY (source_id, topic_key)
+              );
+              CREATE INDEX IF NOT EXISTS source_topics_key_idx ON source_topics(topic_key);",
     },
 ];
 
@@ -90,6 +101,13 @@ pub(crate) fn create_base_schema(connection: &Connection) -> Result<()> {
         CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors USING vec0(
             embedding FLOAT[384]
         );
+        CREATE TABLE IF NOT EXISTS source_topics (
+            source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            topic TEXT NOT NULL,
+            topic_key TEXT NOT NULL,
+            PRIMARY KEY (source_id, topic_key)
+        );
+        CREATE INDEX IF NOT EXISTS source_topics_key_idx ON source_topics(topic_key);
         CREATE TABLE IF NOT EXISTS spotify_sync_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
