@@ -196,14 +196,18 @@ async function extractTranscriptViaApi(document, options) {
       status: "started",
       safe_metadata: { has_params: "true", player_response_source: context.source }
     });
-    const segments = await fetchInnertubeTranscript(context.innertube, document);
-    emitDiagnostic(options, segments.length > 0 ? "youtube_innertube_transcript_succeeded" : "youtube_innertube_transcript_failed", {
-      status: segments.length > 0 ? "ok" : "unavailable",
-      message: segments.length > 0 ? "Fetched transcript via get_transcript." : "get_transcript returned no segments.",
-      safe_metadata: { segment_count: String(segments.length) }
+    const transcript = await fetchInnertubeTranscript(context.innertube, document);
+    emitDiagnostic(options, transcript.segments.length > 0 ? "youtube_innertube_transcript_succeeded" : "youtube_innertube_transcript_failed", {
+      status: transcript.segments.length > 0 ? "ok" : "unavailable",
+      message: transcript.segments.length > 0 ? "Fetched transcript via get_transcript." : "get_transcript returned no segments.",
+      safe_metadata: {
+        segment_count: String(transcript.segments.length),
+        http_status: String(transcript.status),
+        authorized: String(transcript.authorized)
+      }
     });
-    if (segments.length > 0) {
-      return { segments, source: "innertube_transcript", reason: "innertube_transcript_fetched" };
+    if (transcript.segments.length > 0) {
+      return { segments: transcript.segments, source: "innertube_transcript", reason: "innertube_transcript_fetched" };
     }
   } else {
     emitDiagnostic(options, "youtube_innertube_transcript_failed", {
@@ -283,31 +287,76 @@ function extractInnertubeContext(html) {
 
 async function fetchInnertubeTranscript(innertube, document) {
   const { apiKey, clientVersion, transcriptParams, visitorData } = innertube;
-  if (!apiKey || !clientVersion || !transcriptParams) return [];
+  if (!apiKey || !clientVersion || !transcriptParams) {
+    return { segments: [], status: 0, authorized: false };
+  }
   const view = document.defaultView;
   const fetchFn = view?.fetch || (typeof fetch === "function" ? fetch : null);
-  if (!fetchFn) return [];
+  if (!fetchFn) return { segments: [], status: 0, authorized: false };
   const client = { clientName: "WEB", clientVersion, hl: "en", gl: "US" };
   if (visitorData) client.visitorData = visitorData;
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Youtube-Client-Name": "1",
+    "X-Youtube-Client-Version": clientVersion
+  };
+  if (visitorData) headers["X-Goog-Visitor-Id"] = visitorData;
+  // Authenticated innertube calls need a SAPISIDHASH Authorization header; cookies
+  // alone yield FAILED_PRECONDITION. The page's own JS adds this; we replicate it.
+  const auth = await sapisidHashAuthorization(document);
+  if (auth) {
+    headers["Authorization"] = auth;
+    headers["X-Origin"] = "https://www.youtube.com";
+  }
   let response;
   try {
     response = await fetchFn(`https://www.youtube.com/youtubei/v1/get_transcript?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ context: { client }, params: transcriptParams })
     });
   } catch {
-    return [];
+    return { segments: [], status: -1, authorized: Boolean(auth) };
   }
-  if (!response?.ok) return [];
+  if (!response?.ok) {
+    return { segments: [], status: response?.status ?? 0, authorized: Boolean(auth) };
+  }
   let data;
   try {
     data = await response.json();
   } catch {
-    return [];
+    return { segments: [], status: response.status, authorized: Boolean(auth) };
   }
-  return parseTranscriptSegments(data);
+  return { segments: parseTranscriptSegments(data), status: response.status, authorized: Boolean(auth) };
+}
+
+// Compute the SAPISIDHASH used by YouTube's web client for authenticated innertube
+// requests: SHA1("<unix_ts> <SAPISID> <origin>"). Reads SAPISID from document.cookie
+// (the page's own JS reads it the same way, so it is not httpOnly for this origin).
+// Returns null when unavailable so the request degrades to credentials-only.
+async function sapisidHashAuthorization(document) {
+  try {
+    const view = document.defaultView;
+    const subtle = view?.crypto?.subtle || (typeof crypto !== "undefined" ? crypto.subtle : null);
+    if (!subtle) return null;
+    const cookies = document.cookie || "";
+    const sapisid = cookieValue(cookies, "SAPISID") || cookieValue(cookies, "__Secure-3PAPISID");
+    if (!sapisid) return null;
+    const origin = "https://www.youtube.com";
+    const timestamp = Math.floor(Date.now() / 1000);
+    const bytes = new TextEncoder().encode(`${timestamp} ${sapisid} ${origin}`);
+    const digest = await subtle.digest("SHA-1", bytes);
+    const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `SAPISIDHASH ${timestamp}_${hex}`;
+  } catch {
+    return null;
+  }
+}
+
+function cookieValue(cookies, name) {
+  const match = cookies.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return match ? match[1] : null;
 }
 
 // Walk the get_transcript response for transcriptSegmentRenderer nodes, which
@@ -664,6 +713,9 @@ async function discoverTranscript(document, options = {}) {
   }
   panelOpened = transcriptPanelOpen(document);
   rowCount = transcriptRows(document).length;
+  // Capture the panel's element-tag fingerprint (no text) BEFORE closing it, so a
+  // panel that renders rows we failed to match reveals which selectors drifted.
+  const panelTags = panelOpened ? transcriptPanelFingerprint(document) : "";
   if (openedByUs) closeTranscriptPanel(document);
   if (panelOpened) {
     emitTranscriptDiagnostic(options, "transcript_panel_opened", {
@@ -672,7 +724,7 @@ async function discoverTranscript(document, options = {}) {
     }, seen);
     emitTranscriptDiagnostic(options, "transcript_rows_empty", {
       status: "unavailable",
-      safe_metadata: { row_count: String(rowCount), segment_count: "0" }
+      safe_metadata: { row_count: String(rowCount), segment_count: "0", panel_tags: panelTags }
     }, seen);
     return { reason: "transcript_rows_empty", panelOpened, rowCount, segments: [] };
   }
@@ -911,6 +963,30 @@ function transcriptRows(document) {
       "[data-purpose='transcript-segment']"
     ].join(", "))
   ];
+}
+
+// Redacted structural fingerprint of the transcript panel: the most common
+// element tag names and their counts (NO text content). Used to detect selector
+// drift when the panel visibly renders rows we failed to scrape.
+function transcriptPanelFingerprint(document) {
+  const panel = document.querySelector([
+    "ytd-transcript-renderer",
+    "ytd-transcript-search-panel-renderer",
+    "ytd-engagement-panel-section-list-renderer[target-id*='transcript']"
+  ].join(", "));
+  if (!panel) return "no_panel";
+  const counts = new Map();
+  for (const element of panel.querySelectorAll("*")) {
+    const tag = (element.localName || "").toLowerCase();
+    if (!tag) continue;
+    if (!(tag.includes("-") || tag === "div" || tag === "button" || tag === "span")) continue;
+    counts.set(tag, (counts.get(tag) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 12)
+    .map(([tag, count]) => `${tag}:${count}`)
+    .join(",") || "empty";
 }
 
 function transcriptUnavailableReason(document) {
