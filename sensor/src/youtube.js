@@ -3,8 +3,7 @@ import { htmlMeta, pageMetadata } from "./metadata.js";
 export const YOUTUBE_EXTRACTOR_VERSION = "youtube-dom-v3";
 
 export function isYouTubeWatch(document) {
-  const url = new URL(document.location.href);
-  return /(^|\.)youtube\.com$/.test(url.hostname) && url.pathname === "/watch" && Boolean(url.searchParams.get("v"));
+  return Boolean(videoIdFromLocation(document.location.href));
 }
 
 export async function extractYouTube(document, options = {}) {
@@ -189,14 +188,14 @@ function emitDiagnostic(options, event, detail = {}) {
 // Returns { segments, source, reason }; never throws. An empty result lets the
 // caller fall back to scraping the rendered transcript panel.
 async function extractTranscriptViaApi(document, options) {
-  const context = await loadYouTubeContext(document);
+  const context = await loadYouTubeContext(document, options);
 
   if (context.innertube.transcriptParams) {
     emitDiagnostic(options, "youtube_innertube_transcript_started", {
       status: "started",
       safe_metadata: { has_params: "true", player_response_source: context.source }
     });
-    const transcript = await fetchInnertubeTranscript(context.innertube, document);
+    const transcript = await fetchInnertubeTranscript(context.innertube, document, options);
     emitDiagnostic(options, transcript.segments.length > 0 ? "youtube_innertube_transcript_succeeded" : "youtube_innertube_transcript_failed", {
       status: transcript.segments.length > 0 ? "ok" : "unavailable",
       message: transcript.segments.length > 0 ? "Fetched transcript via get_transcript." : "get_transcript returned no segments.",
@@ -233,7 +232,7 @@ async function extractTranscriptViaApi(document, options) {
       status: "started",
       safe_metadata: { language: track.languageCode || "", kind: track.kind || "manual" }
     });
-    const segments = await fetchTimedText(track, document);
+    const segments = await fetchTimedText(track, document, options);
     emitDiagnostic(options, segments.length > 0 ? "youtube_timedtext_fetch_succeeded" : "youtube_timedtext_fetch_failed", {
       status: segments.length > 0 ? "ok" : "unavailable",
       message: segments.length > 0 ? "Fetched caption-track transcript." : "Caption-track fetch returned no segments.",
@@ -255,16 +254,36 @@ async function extractTranscriptViaApi(document, options) {
 // bootstrap <script> from the DOM after it runs, so we fetch the watch-page HTML
 // (server-rendered) which reliably carries the player response, the innertube API
 // key/client version, and the get_transcript params.
-async function loadYouTubeContext(document) {
+async function loadYouTubeContext(document, options = {}) {
+  const expectedId = videoIdFromLocation(document.location.href);
+  // The DOM player response can be stale after SPA navigation (or during an ad):
+  // an old ytInitialPlayerResponse for a *different* video may linger while the URL
+  // already points at the current one. Only trust the DOM copy if its videoId
+  // matches the URL; otherwise fall back to a fresh HTML fetch.
   let playerResponse = parsePlayerResponse(document);
+  if (playerResponse && !playerResponseMatchesVideo(playerResponse, expectedId)) {
+    playerResponse = null;
+  }
   let source = playerResponse ? "dom" : "none";
-  const html = await fetchPageHtml(document);
+  const html = await fetchPageHtml(document, options);
   if (!playerResponse && html) {
-    playerResponse = parsePlayerResponseFromText(html);
-    source = playerResponse ? "page_html" : "none";
+    const fromHtml = parsePlayerResponseFromText(html);
+    if (fromHtml && playerResponseMatchesVideo(fromHtml, expectedId)) {
+      playerResponse = fromHtml;
+      source = "page_html";
+    }
   }
   const innertube = extractInnertubeContext(html || documentHtml(document) || "");
   return { playerResponse, source, innertube };
+}
+
+function playerResponseMatchesVideo(playerResponse, expectedId) {
+  // When we cannot determine the expected id, do not reject (avoid false negatives).
+  if (!expectedId) return true;
+  const responseId = playerResponse?.videoDetails?.videoId;
+  // Some player responses omit videoDetails; accept those rather than discard a
+  // possibly-valid response, but reject a clear id mismatch.
+  return !responseId || responseId === expectedId;
 }
 
 function documentHtml(document) {
@@ -285,7 +304,7 @@ function extractInnertubeContext(html) {
   };
 }
 
-async function fetchInnertubeTranscript(innertube, document) {
+async function fetchInnertubeTranscript(innertube, document, options = {}) {
   const { apiKey, clientVersion, transcriptParams, visitorData } = innertube;
   if (!apiKey || !clientVersion || !transcriptParams) {
     return { segments: [], status: 0, authorized: false };
@@ -310,12 +329,12 @@ async function fetchInnertubeTranscript(innertube, document) {
   }
   let response;
   try {
-    response = await fetchFn(`https://www.youtube.com/youtubei/v1/get_transcript?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
+    response = await fetchWithTimeout(fetchFn, `https://www.youtube.com/youtubei/v1/get_transcript?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
       method: "POST",
       credentials: "include",
       headers,
       body: JSON.stringify({ context: { client }, params: transcriptParams })
-    });
+    }, view, options.transcriptApiTimeoutMs);
   } catch {
     return { segments: [], status: -1, authorized: Boolean(auth) };
   }
@@ -390,13 +409,13 @@ function parseTranscriptSegments(data) {
   return segments;
 }
 
-async function fetchPageHtml(document) {
+async function fetchPageHtml(document, options = {}) {
   const view = document.defaultView;
   const fetchFn = view?.fetch || (typeof fetch === "function" ? fetch : null);
   const url = document.location?.href;
   if (!fetchFn || !url) return null;
   try {
-    const response = await fetchFn(url, { credentials: "include" });
+    const response = await fetchWithTimeout(fetchFn, url, { credentials: "include" }, view, options.transcriptApiTimeoutMs);
     if (!response?.ok) return null;
     return await response.text();
   } catch {
@@ -450,7 +469,21 @@ function balancedJsonAt(text, start) {
 
 function captionTracksFromPlayerResponse(playerResponse) {
   const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-  return Array.isArray(tracks) ? tracks.filter((track) => track && track.baseUrl) : [];
+  // baseUrl comes from page-controlled player-response JSON and is fetched with
+  // credentials, so drop any track whose URL is not a trusted YouTube origin —
+  // otherwise a malicious page could exfiltrate cookies / trigger SSRF.
+  return Array.isArray(tracks)
+    ? tracks.filter((track) => track && isTrustedYouTubeUrl(track.baseUrl))
+    : [];
+}
+
+function isTrustedYouTubeUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl, "https://www.youtube.com");
+    return url.protocol === "https:" && /(^|\.)youtube\.com$/.test(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function pickCaptionTrack(tracks) {
@@ -465,13 +498,13 @@ function pickCaptionTrack(tracks) {
   return [...tracks].sort((left, right) => score(left) - score(right))[0];
 }
 
-async function fetchTimedText(track, document) {
+async function fetchTimedText(track, document, options = {}) {
   const view = document.defaultView;
   const fetchFn = view?.fetch || (typeof fetch === "function" ? fetch : null);
-  if (!fetchFn || !track?.baseUrl) return [];
+  if (!fetchFn || !track?.baseUrl || !isTrustedYouTubeUrl(track.baseUrl)) return [];
   let response;
   try {
-    response = await fetchFn(timedTextJson3Url(track.baseUrl), { credentials: "include" });
+    response = await fetchWithTimeout(fetchFn, timedTextJson3Url(track.baseUrl), { credentials: "include" }, view, options.transcriptApiTimeoutMs);
   } catch {
     return [];
   }
@@ -486,8 +519,24 @@ async function fetchTimedText(track, document) {
 }
 
 function timedTextJson3Url(baseUrl) {
-  if (/[?&]fmt=/.test(baseUrl)) return baseUrl;
-  return `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}fmt=json3`;
+  // Force json3, replacing any other format YouTube may have pinned on the URL.
+  const stripped = baseUrl.replace(/([?&])fmt=[^&]*/g, "$1").replace(/[?&]$/, "");
+  return `${stripped}${stripped.includes("?") ? "&" : "?"}fmt=json3`;
+}
+
+// Wraps fetch with an abort-based timeout so a hung connection can never stall the
+// whole capture (the DOM-discovery branch is time-boxed; the API fetches were not).
+async function fetchWithTimeout(fetchFn, url, options, view, timeoutMs) {
+  const effectiveTimeout = Number.isFinite(timeoutMs) ? timeoutMs : 8000;
+  const Controller = view?.AbortController || (typeof AbortController === "function" ? AbortController : null);
+  if (!Controller) return fetchFn(url, options);
+  const controller = new Controller();
+  const timer = setTimeout(() => controller.abort(), effectiveTimeout);
+  try {
+    return await fetchFn(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function parseJson3Transcript(data) {
@@ -511,7 +560,9 @@ function parseJson3Transcript(data) {
 export function parseTimestamp(value = "") {
   const parts = value.trim().split(":");
   if (parts.length < 2 || parts.length > 3) return Number.NaN;
-  if (parts.some((part) => !/^\d+(?:\.\d+)?$/.test(part.trim()))) return Number.NaN;
+  // Each component is an integer (1-3 digits); reject fractional or oversized parts
+  // so "1.5:30" or "999999:00" don't produce mis-timed segments.
+  if (parts.some((part) => !/^\d{1,3}$/.test(part.trim()))) return Number.NaN;
   const numbers = parts.map(Number);
   if (numbers.some((part) => !Number.isFinite(part))) return Number.NaN;
   return numbers.reduce((total, part) => total * 60 + part, 0);
@@ -556,19 +607,11 @@ function readTranscriptSegment(node) {
     return { t: parseTimestamp(timestampText), text: segmentText };
   }
   // Fallback for the view-model markup: timestamp and text are not in known
-  // containers. Find the child element whose text is exactly a "M:SS" stamp, then
-  // take the remainder of the segment's text as the line.
+  // containers, but the rendered row always leads with the "M:SS" stamp. Split on
+  // the LEADING stamp only — never a String.replace of an arbitrary occurrence,
+  // which would corrupt lines whose own text contains or looks like a timestamp.
   const full = cleanText(node.textContent || "");
-  const stampPattern = /^\d{1,2}:\d{2}(?::\d{2})?$/;
-  for (const element of node.querySelectorAll("*")) {
-    const candidate = cleanText(element.textContent || "");
-    if (!stampPattern.test(candidate)) continue;
-    let rest = full.startsWith(candidate) ? full.slice(candidate.length) : full.replace(candidate, "");
-    rest = cleanText(rest);
-    if (rest) return { t: parseTimestamp(candidate), text: rest };
-  }
-  // Last resort: split the segment's own text on the leading stamp.
-  const match = full.match(/^(\d{1,2}:\d{2}(?::\d{2})?)\s*([\s\S]+)$/);
+  const match = full.match(/^(\d{1,3}:\d{2}(?::\d{2})?)\s*([\s\S]+)$/);
   if (match) {
     return { t: parseTimestamp(match[1]), text: cleanText(match[2]) };
   }
@@ -587,7 +630,8 @@ async function discoverTranscript(document, options = {}) {
   // Tracks whether *we* opened the transcript panel, so we can close it again
   // afterward and leave the viewer's screen exactly as we found it.
   let openedByUs = false;
-  let panelOpened = transcriptPanelOpen(document);
+  const panelWasOpenInitially = transcriptPanelOpen(document);
+  let panelOpened = panelWasOpenInitially;
   let rowCount = transcriptRows(document).length;
   const attemptedControls = new WeakSet();
   const attemptedExpanders = new WeakSet();
@@ -632,6 +676,10 @@ async function discoverTranscript(document, options = {}) {
     panelOpened = transcriptPanelOpen(document);
     rowCount = transcriptRows(document).length;
     if (panelOpened) {
+      // If the panel became open after our click attempts (it was not open when we
+      // started), we are responsible for closing it again — even on the lazy-open
+      // path where the synchronous post-click check missed it.
+      if (clickAttempted && !panelWasOpenInitially) openedByUs = true;
       // The panel is open. Do NOT click anything else: clicking other
       // transcript-labeled controls toggles the panel shut and moves the page.
       // Detect a genuine "unavailable" message; otherwise just wait for the
@@ -1160,8 +1208,15 @@ function videoIdFromLocation(value) {
     if (/(^|\.)youtu\.be$/.test(url.hostname)) {
       return cleanVideoId(url.pathname.split("/").filter(Boolean)[0]);
     }
-    if (/(^|\.)youtube\.com$/.test(url.hostname) && url.pathname === "/watch") {
+    if (!/(^|\.)youtube\.com$/.test(url.hostname)) return "";
+    if (url.pathname === "/watch") {
       return cleanVideoId(url.searchParams.get("v"));
+    }
+    // Shorts, live permalinks, and embeds carry the id as the path segment after
+    // the type prefix; all have transcripts and are valid one-tap capture targets.
+    const segments = url.pathname.split("/").filter(Boolean);
+    if (segments.length === 2 && ["shorts", "live", "embed", "v"].includes(segments[0])) {
+      return cleanVideoId(segments[1]);
     }
   } catch {
     return "";
@@ -1173,9 +1228,11 @@ function canonicalYouTubeUrl(videoId) {
   return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
 }
 
-function cleanVideoId(value = "") {
-  const cleaned = String(value).trim();
-  return /^[A-Za-z0-9_-]{3,}$/.test(cleaned) ? cleaned : "";
+function cleanVideoId(value) {
+  // Guard against null/undefined (e.g. a missing `v` param): String(null) is the
+  // literal "null", which would otherwise pass the charset check as a fake id.
+  const cleaned = String(value ?? "").trim();
+  return /^[A-Za-z0-9_-]{3,64}$/.test(cleaned) ? cleaned : "";
 }
 
 function cleanText(value = "") {

@@ -59,11 +59,21 @@ test("extracts the new transcript-segment-view-model markup", async () => {
   assert.equal(payload.transcript_source, "rendered_dom");
 });
 
-test("detects only supported YouTube watch pages", () => {
-  assert.equal(isYouTubeWatch(new JSDOM("", { url: "https://www.youtube.com/watch?v=abc123" }).window.document), true);
-  assert.equal(isYouTubeWatch(new JSDOM("", { url: "https://music.youtube.com/watch?v=abc123" }).window.document), true);
-  assert.equal(isYouTubeWatch(new JSDOM("", { url: "https://www.youtube.com/shorts/abc123" }).window.document), false);
-  assert.equal(isYouTubeWatch(new JSDOM("", { url: "https://www.youtube.com/watch" }).window.document), false);
+test("detects supported YouTube video pages including Shorts, live, and youtu.be", () => {
+  const watch = (url) => isYouTubeWatch(new JSDOM("", { url }).window.document);
+  // Supported video surfaces — all carry transcripts.
+  assert.equal(watch("https://www.youtube.com/watch?v=abc123"), true);
+  assert.equal(watch("https://music.youtube.com/watch?v=abc123"), true);
+  assert.equal(watch("https://www.youtube.com/shorts/abc123def45"), true);
+  assert.equal(watch("https://www.youtube.com/live/abc123def45"), true);
+  assert.equal(watch("https://youtu.be/abc123def45"), true);
+  assert.equal(watch("https://www.youtube.com/watch?v=abc123&list=PL1&t=30s"), true);
+  // Rejected — no single video to transcribe, or not YouTube.
+  assert.equal(watch("https://www.youtube.com/watch"), false);
+  assert.equal(watch("https://www.youtube.com/playlist?list=PL1"), false);
+  assert.equal(watch("https://www.youtube.com/"), false);
+  assert.equal(watch("https://notyoutube.com/watch?v=abc123"), false);
+  assert.equal(watch("https://youtube.com.evil.com/watch?v=abc123"), false);
 });
 
 test("filters malformed and duplicate transcript segments", async () => {
@@ -728,4 +738,131 @@ test("returns explicit extractor failure for malformed watch pages", async () =>
   assert.equal(result.transcript_status, "unavailable");
   assert.equal(result.transcript_reason, "extractor_failure");
   assert.match(result.error, /title/i);
+});
+
+// ---------------------------------------------------------------------------
+// QA hardening regression tests (adversarial review findings)
+// ---------------------------------------------------------------------------
+
+test("parseTimestamp rejects fractional and oversized parts", () => {
+  assert.equal(parseTimestamp("1:02:03"), 3723);
+  assert.ok(Number.isNaN(parseTimestamp("1.5:30")));
+  assert.ok(Number.isNaN(parseTimestamp("999999:00")));
+  assert.ok(Number.isNaN(parseTimestamp("1:2:3:4")));
+});
+
+test("view-model: a caption line that itself looks like a timestamp is preserved", async () => {
+  // Regression for the String.replace corruption: stamp 0:05, spoken text "2:30".
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="Looks-like-timestamp demo">
+    <ytd-transcript-renderer>
+      <transcript-segment-view-model><div>0:05</div><div>2:30</div></transcript-segment-view-model>
+      <transcript-segment-view-model><div>0:09</div><div>meet me at 0:05 today</div></transcript-segment-view-model>
+    </ytd-transcript-renderer>`, { url: "https://www.youtube.com/watch?v=stamptext123" });
+  const payload = await extractYouTube(dom.window.document);
+  assert.deepEqual(payload.transcript, [
+    { t: 5, text: "2:30" },
+    { t: 9, text: "meet me at 0:05 today" }
+  ]);
+});
+
+test("captures a Shorts URL and canonicalizes to a watch URL", async () => {
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="Short demo">
+    <ytd-transcript-segment-renderer><span class="segment-timestamp">0:01</span><yt-formatted-string class="segment-text">short line</yt-formatted-string></ytd-transcript-segment-renderer>`,
+    { url: "https://www.youtube.com/shorts/short1234567" });
+  const payload = await extractYouTube(dom.window.document);
+  assert.equal(payload.transcript_status, "full");
+  assert.equal(payload.url, "https://www.youtube.com/watch?v=short1234567");
+});
+
+test("drops caption tracks whose baseUrl is not a YouTube origin (SSRF guard)", async () => {
+  const playerResponse = {
+    videoDetails: { videoId: "ssrf12345678" },
+    captions: { playerCaptionsTracklistRenderer: { captionTracks: [
+      { baseUrl: "https://evil.example/steal?fmt=json3", languageCode: "en" }
+    ] } }
+  };
+  const events = [];
+  const calls = [];
+  const dom = new JSDOM(`<title>Video</title><meta property="og:title" content="SSRF demo">
+    <script>var ytInitialPlayerResponse = ${JSON.stringify(playerResponse)};</script>`,
+    { url: "https://www.youtube.com/watch?v=ssrf12345678", pretendToBeVisual: true });
+  dom.window.fetch = async (url) => { calls.push(String(url)); return { ok: true, text: async () => "<html></html>", json: async () => ({}) }; };
+
+  const result = await extractYouTubeResult(dom.window.document, {
+    discoverTranscript: true, transcriptDiscoveryTimeoutMs: 200, onDiagnostic: (e) => events.push(e)
+  });
+
+  // No caption track survived the origin filter, so it never fetched evil.example.
+  assert.ok(!calls.some((u) => u.includes("evil.example")));
+  const found = events.find((e) => e.event === "youtube_caption_tracks_found");
+  assert.equal(found.safe_metadata.track_count, "0");
+  assert.equal(result.transcript_status, "unavailable");
+});
+
+test("ignores a stale DOM player response from a different video (SPA navigation)", async () => {
+  // DOM still holds video A's player response; the URL is video B.
+  const stale = {
+    videoDetails: { videoId: "AAAAAAAAAAA" },
+    captions: { playerCaptionsTracklistRenderer: { captionTracks: [
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=AAAAAAAAAAA&lang=en", languageCode: "en" }
+    ] } }
+  };
+  // Fresh HTML (re-fetched) carries video B's correct caption track.
+  const fresh = {
+    videoDetails: { videoId: "BBBBBBBBBBB" },
+    captions: { playerCaptionsTracklistRenderer: { captionTracks: [
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=BBBBBBBBBBB&lang=en", languageCode: "en" }
+    ] } }
+  };
+  const events = [];
+  const fetchedTimedText = [];
+  const dom = new JSDOM(`<title>Video</title><meta property="og:title" content="SPA demo">
+    <script>var ytInitialPlayerResponse = ${JSON.stringify(stale)};</script>`,
+    { url: "https://www.youtube.com/watch?v=BBBBBBBBBBB", pretendToBeVisual: true });
+  dom.window.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("timedtext")) {
+      fetchedTimedText.push(u);
+      return { ok: true, json: async () => ({ events: [{ tStartMs: 0, segs: [{ utf8: "video B line" }] }] }) };
+    }
+    return { ok: true, text: async () => `<script>var ytInitialPlayerResponse = ${JSON.stringify(fresh)};</script>` };
+  };
+
+  const result = await extractYouTubeResult(dom.window.document, {
+    discoverTranscript: true, transcriptDiscoveryTimeoutMs: 500, onDiagnostic: (e) => events.push(e)
+  });
+
+  // It must fetch video B's transcript, never video A's stale one.
+  assert.ok(fetchedTimedText.some((u) => u.includes("v=BBBBBBBBBBB")));
+  assert.ok(!fetchedTimedText.some((u) => u.includes("v=AAAAAAAAAAA")));
+  assert.deepEqual(result.segments, [{ t: 0, text: "video B line" }]);
+  const found = events.find((e) => e.event === "youtube_caption_tracks_found");
+  assert.equal(found.safe_metadata.player_response_source, "page_html");
+});
+
+test("a hung API fetch does not stall capture (abort timeout)", async () => {
+  // get_transcript never resolves; the abort timeout must let extraction proceed.
+  const html = `<script>ytcfg.set({"INNERTUBE_API_KEY":"K","INNERTUBE_CONTEXT_CLIENT_VERSION":"2.0"});</script>
+    <script>var ytInitialData = {"getTranscriptEndpoint":{"params":"P"}};</script>`;
+  const dom = new JSDOM(`<title>Video</title><meta property="og:title" content="Hang demo">`,
+    { url: "https://www.youtube.com/watch?v=hang12345678", pretendToBeVisual: true });
+  dom.window.fetch = async (url, opts) => {
+    if (String(url).includes("get_transcript")) {
+      // Resolve only when aborted, mimicking a hung request the controller cancels.
+      return new Promise((_resolve, reject) => {
+        if (opts && opts.signal) opts.signal.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    }
+    return { ok: true, text: async () => html };
+  };
+
+  const result = await extractYouTubeResult(dom.window.document, {
+    discoverTranscript: true, transcriptDiscoveryTimeoutMs: 200,
+    transcriptApiTimeoutMs: 60, onDiagnostic: () => {}
+  });
+  // Reaches a terminal state (metadata-only) instead of hanging forever.
+  assert.equal(result.ok, true);
+  assert.equal(result.transcript_status, "unavailable");
 });

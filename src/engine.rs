@@ -1831,6 +1831,42 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_event_intake_redacts_credential_shaped_values() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
+        let stored = engine.record_capture_diagnostic_event(CaptureDiagnosticEvent {
+            timestamp: Utc::now().to_rfc3339(),
+            component: "youtube_extractor".into(),
+            event: "youtube_innertube_transcript_failed".into(),
+            request_id: Some("req".into()),
+            status: Some("unavailable".into()),
+            source: Some("menu-bar".into()),
+            browser: Some("Chrome".into()),
+            // A future regression that leaked an auth header into the message:
+            message: Some("auth=SAPISIDHASH 1782_deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into()),
+            page: None,
+            safe_metadata: BTreeMap::from([
+                ("segment_count".into(), "0".into()),
+                // A 64-hex credential-shaped value under an innocuous key name.
+                (
+                    "fingerprint".into(),
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+                ),
+            ]),
+        })?;
+
+        assert_eq!(stored.message.as_deref(), Some("[redacted]"));
+        assert!(stored.safe_metadata.contains_key("segment_count"));
+        // The credential-shaped value is dropped even though its key is allowed.
+        assert!(!stored.safe_metadata.contains_key("fingerprint"));
+        let serialized = serde_json::to_string(&engine.capture_diagnostics(5)?)?;
+        assert!(!serialized.contains("SAPISIDHASH"));
+        assert!(!serialized.contains("deadbeef"));
+        assert!(!serialized.contains("0123456789abcdef"));
+        Ok(())
+    }
+
+    #[test]
     fn capture_request_failure_states_are_terminal() -> Result<()> {
         for status in [
             CAPTURE_STATUS_FAILED,

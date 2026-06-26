@@ -354,7 +354,7 @@ pub(crate) fn sanitize_capture_diagnostic_event(
     for (key, value) in event.safe_metadata {
         if let (Some(key), Some(value)) = (
             sanitize_metadata_key(&key),
-            sanitize_metadata_string(&value, 240),
+            sanitize_metadata_string(&value, 240).filter(|value| !contains_sensitive_token(value)),
         ) {
             safe_metadata.insert(key, value);
         }
@@ -380,10 +380,39 @@ pub(crate) fn sanitize_capture_diagnostic_event(
             .and_then(|value| sanitize_metadata_string(&value, 80)),
         message: event
             .message
-            .and_then(|value| sanitize_metadata_string(&value, 240)),
+            .and_then(|value| sanitize_metadata_string(&value, 240))
+            .map(|value| {
+                if contains_sensitive_token(&value) {
+                    "[redacted]".into()
+                } else {
+                    value
+                }
+            }),
         page: event.page.map(sanitize_page_metadata),
         safe_metadata,
     }
+}
+
+// Defense-in-depth: even though the extension never puts secrets into diagnostic
+// values or messages, drop/redact anything that looks like a credential so a future
+// regression cannot leak one. Catches SAPISIDHASH/Bearer headers and long hex runs
+// (40-char SHA-1, 64-char capture token).
+fn contains_sensitive_token(value: &str) -> bool {
+    if value.contains("SAPISIDHASH") || value.contains("Bearer ") {
+        return true;
+    }
+    let mut hex_run = 0usize;
+    for character in value.chars() {
+        if character.is_ascii_hexdigit() {
+            hex_run += 1;
+            if hex_run >= 40 {
+                return true;
+            }
+        } else {
+            hex_run = 0;
+        }
+    }
+    false
 }
 
 fn sanitize_metadata_key(value: &str) -> Option<String> {
@@ -401,6 +430,11 @@ fn sanitize_metadata_key(value: &str) -> Option<String> {
         "transcript_text",
         "embedding",
         "oauth",
+        "sapisid",
+        "bearer",
+        "secret",
+        "credential",
+        "password",
     ]
     .iter()
     .any(|forbidden| lower.contains(forbidden))
