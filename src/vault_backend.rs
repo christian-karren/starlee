@@ -104,8 +104,7 @@ impl VaultBackend for LocalFsBackend {
         // Write to a temp sibling then rename so a reader never observes a
         // half-written record.
         let temporary = path.with_extension("md.tmp");
-        fs::write(&temporary, bytes)
-            .with_context(|| format!("write {}", temporary.display()))?;
+        fs::write(&temporary, bytes).with_context(|| format!("write {}", temporary.display()))?;
         fs::rename(&temporary, &path).with_context(|| format!("commit {}", path.display()))?;
         Ok(())
     }

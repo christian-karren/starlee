@@ -288,7 +288,13 @@ fn aead_seal(key: &[u8; KEY_LEN], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8
     let mut nonce = [0u8; XNONCE_LEN];
     getrandom::fill(&mut nonce).context("generate nonce")?;
     let ciphertext = cipher
-        .encrypt(XNonce::from_slice(&nonce), Payload { msg: plaintext, aad })
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| anyhow!("AEAD encryption failed"))?;
     let mut out = Vec::with_capacity(XNONCE_LEN + ciphertext.len());
     out.extend_from_slice(&nonce);
@@ -303,7 +309,13 @@ fn aead_open(key: &[u8; KEY_LEN], blob: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     let (nonce, ciphertext) = blob.split_at(XNONCE_LEN);
     let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
     cipher
-        .decrypt(XNonce::from_slice(nonce), Payload { msg: ciphertext, aad })
+        .decrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| anyhow!("AEAD decryption failed"))
 }
 
@@ -501,7 +513,10 @@ mod tests {
             "plaintext marker leaked into ciphertext"
         );
         let key = object_key("the-record-id");
-        assert!(!key.contains("the-record-id"), "object key leaked record id");
+        assert!(
+            !key.contains("the-record-id"),
+            "object key leaked record id"
+        );
         Ok(())
     }
 
@@ -519,10 +534,15 @@ mod tests {
         // 20 bytes of entropy → 32 base32 chars (≥128 bits).
         assert_eq!(compact.len(), 32);
         assert!(
-            compact.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+            compact
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
             "recovery code must be base32"
         );
-        assert!(e.recovery_code.contains('-'), "recovery code should be grouped");
+        assert!(
+            e.recovery_code.contains('-'),
+            "recovery code should be grouped"
+        );
         Ok(())
     }
 

@@ -23,9 +23,30 @@ const ID_DOMAIN: &str = "starlee-id-v1\n";
 /// tracking/session state rather than identity. Matched case-insensitively.
 /// Any parameter whose name begins with `utm_` is also stripped.
 const TRACKING_PARAMS: &[&str] = &[
-    "gclid", "dclid", "gclsrc", "gbraid", "wbraid", "fbclid", "msclkid", "yclid", "twclid",
-    "igshid", "mc_cid", "mc_eid", "_hsenc", "_hsmi", "vero_id", "oly_anon_id", "oly_enc_id",
-    "_openstat", "ref", "ref_src", "ref_url", "referrer", "spm", "scm",
+    "gclid",
+    "dclid",
+    "gclsrc",
+    "gbraid",
+    "wbraid",
+    "fbclid",
+    "msclkid",
+    "yclid",
+    "twclid",
+    "igshid",
+    "mc_cid",
+    "mc_eid",
+    "_hsenc",
+    "_hsmi",
+    "vero_id",
+    "oly_anon_id",
+    "oly_enc_id",
+    "_openstat",
+    "ref",
+    "ref_src",
+    "ref_url",
+    "referrer",
+    "spm",
+    "scm",
 ];
 
 /// Compute the stable record ID for a capture.
@@ -134,7 +155,11 @@ mod tests {
     #[test]
     fn id_is_deterministic_for_the_same_url() {
         let a = record_id(Some("https://example.com/post"), "Title A", "body one");
-        let b = record_id(Some("https://example.com/post"), "Different title", "body two");
+        let b = record_id(
+            Some("https://example.com/post"),
+            "Different title",
+            "body two",
+        );
         // URL-keyed identity ignores title/body: same URL -> same ID.
         assert_eq!(a, b);
     }
@@ -204,7 +229,10 @@ mod tests {
 
     #[test]
     fn root_path_slash_is_preserved() {
-        assert_eq!(normalize_url("https://example.com/"), "https://example.com/");
+        assert_eq!(
+            normalize_url("https://example.com/"),
+            "https://example.com/"
+        );
     }
 
     #[test]

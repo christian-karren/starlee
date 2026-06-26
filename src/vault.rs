@@ -171,7 +171,11 @@ impl Vault {
     /// The absolute, user-facing path for a record (used as `Record.file_path`
     /// so consumers like the desktop "Reveal in Finder" action can open it).
     fn display_path(&self, rel: &VaultPath) -> String {
-        self.backend.root().join(rel.as_path()).display().to_string()
+        self.backend
+            .root()
+            .join(rel.as_path())
+            .display()
+            .to_string()
     }
 
     /// Map a path that may be absolute (as stored in `Record.file_path` / the
