@@ -248,6 +248,25 @@ pub struct TopicCount {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportReport {
+    pub imported: Vec<ImportedDocument>,
+    pub skipped: Vec<SkippedDocument>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportedDocument {
+    pub path: String,
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkippedDocument {
+    pub path: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpusOverview {
     pub total_captures: usize,
     pub earliest_capture: Option<String>,

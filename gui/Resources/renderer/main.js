@@ -14,6 +14,7 @@ const elements = {
   empty: document.querySelector("#empty-state"),
   background: document.querySelector("#pixel-dither-background"),
   editToggle: document.querySelector("#edit-toggle"),
+  uploadButton: document.querySelector("#upload-button"),
   filterToggle: document.querySelector("#filter-toggle"),
   filterPanel: document.querySelector("#filter-panel"),
   filterType: document.querySelector("#filter-type"),
@@ -314,6 +315,10 @@ elements.search.addEventListener("input", render);
 
 if (elements.editToggle) {
   elements.editToggle.addEventListener("click", () => setEditMode(!state.editMode));
+}
+
+if (elements.uploadButton) {
+  elements.uploadButton.addEventListener("click", () => postToHost({ action: "upload" }));
 }
 
 // --- Filters --------------------------------------------------------------

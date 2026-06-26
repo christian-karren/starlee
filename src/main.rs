@@ -2,6 +2,7 @@ mod bundle;
 mod capture;
 mod chunking;
 mod config;
+mod documents;
 mod embedding;
 mod engine;
 mod http;
@@ -144,6 +145,12 @@ enum Command {
     },
     Ingest {
         path: PathBuf,
+    },
+    /// Import local documents (PDF, DOCX, TXT, MD) into the vault.
+    Import {
+        paths: Vec<PathBuf>,
+        #[arg(long = "topic")]
+        topic: Vec<String>,
     },
     Serve,
     Mcp,
@@ -311,6 +318,9 @@ fn main() -> Result<()> {
             include_public_bodies,
         } => serde_json::to_value(engine.export_bundle(&path, include_public_bodies)?)?,
         Command::Ingest { path } => serde_json::to_value(engine.ingest_bundle(&path)?)?,
+        Command::Import { paths, topic } => {
+            serde_json::to_value(engine.import_documents(&paths, topic)?)?
+        }
         Command::Serve => {
             engine.setup()?;
             let server = http::spawn(engine.clone(), engine.local_config()?)?;
@@ -565,6 +575,40 @@ mod integration_tests {
         let mut topics = hit.topics.clone();
         topics.sort();
         assert_eq!(topics, vec!["Biology".to_owned(), "Plants".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
+    fn import_documents_ingests_dedupes_and_tags() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let lecture = temp.path().join("lecture1.txt");
+        std::fs::write(
+            &lecture,
+            "Photosynthesis converts light into chemical energy.",
+        )?;
+        let unsupported = temp.path().join("image.png");
+        std::fs::write(&unsupported, "not a real image")?;
+
+        let report =
+            engine.import_documents(&[lecture.clone(), unsupported], vec!["BIO 101".into()])?;
+        assert_eq!(report.imported.len(), 1);
+        assert_eq!(report.skipped.len(), 1);
+        assert!(report.skipped[0].reason.contains("unsupported"));
+
+        // Imported text is searchable and carries the batch topic.
+        assert_eq!(
+            engine
+                .search_scoped("photosynthesis", 5, SearchScope::Own)?
+                .len(),
+            1
+        );
+        assert!(engine.list_topics()?.iter().any(|t| t.topic == "BIO 101"));
+
+        // Re-importing identical content updates rather than duplicating.
+        let again = engine.import_documents(&[lecture], vec!["BIO 101".into()])?;
+        assert_eq!(again.imported.len(), 1);
+        assert_eq!(engine.status()?.capture_count, 1);
         Ok(())
     }
 

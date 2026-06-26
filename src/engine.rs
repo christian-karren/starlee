@@ -391,6 +391,56 @@ impl Engine {
         Ok(updated)
     }
 
+    /// Import user documents (PDF/DOCX/TXT/MD) into the vault. Each file is
+    /// parsed locally, normalized into the standard Markdown contract, tagged
+    /// with `topics`, and indexed. A corrupt or unsupported file is skipped (its
+    /// reason recorded) without aborting the rest of the batch. Re-importing a
+    /// file whose extracted text is unchanged updates the existing record
+    /// instead of creating a duplicate (content-hash identity via the URL field).
+    pub fn import_documents(
+        &self,
+        paths: &[std::path::PathBuf],
+        topics: Vec<String>,
+    ) -> Result<crate::model::ImportReport> {
+        self.setup()?;
+        let topics = crate::topics::sanitize_topics(topics);
+        let mut imported = Vec::new();
+        let mut skipped = Vec::new();
+        for path in paths {
+            match self.import_one(path, &topics) {
+                Ok(record) => imported.push(crate::model::ImportedDocument {
+                    path: path.display().to_string(),
+                    id: record.metadata.id,
+                    title: record.metadata.title,
+                }),
+                Err(error) => skipped.push(crate::model::SkippedDocument {
+                    path: path.display().to_string(),
+                    reason: format!("{error:#}"),
+                }),
+            }
+        }
+        Ok(crate::model::ImportReport { imported, skipped })
+    }
+
+    fn import_one(&self, path: &std::path::Path, topics: &[String]) -> Result<Record> {
+        let document = crate::documents::extract_text(path)?;
+        let mut hasher = Sha256::new();
+        hasher.update(document.text.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+        let mut input = CaptureInput::new(
+            document.title,
+            document.text,
+            SourceType::Note,
+            crate::model::Access::Restricted,
+        );
+        // Content-addressed identity so re-importing identical text updates the
+        // existing record (mirrors canonical-URL recapture) instead of duping.
+        input.url = Some(format!("starlee-doc:{hash}"));
+        input.source = Some("upload".into());
+        input.topics = topics.to_vec();
+        self.capture(input)
+    }
+
     pub fn reindex(&self, stale_embeddings_only: bool) -> Result<Status> {
         let records = self.vault.records()?;
         if stale_embeddings_only {

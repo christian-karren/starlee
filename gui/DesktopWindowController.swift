@@ -1336,9 +1336,79 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             if let id = body["id"] as? String {
                 setRecordTopics(id: id, topics: (body["topics"] as? [String]) ?? [])
             }
+        case "upload":
+            uploadDocuments()
         default:
             break
         }
+    }
+
+    /// Bulk-import user documents (PDF, Word, text, Markdown) with an optional
+    /// shared topic, then reload the Library. Parsing happens locally in the CLI.
+    private func uploadDocuments() {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        var types: [UTType] = [.pdf, .plainText, .text, .utf8PlainText]
+        for ext in ["docx", "md", "markdown"] {
+            if let type = UTType(filenameExtension: ext) { types.append(type) }
+        }
+        panel.allowedContentTypes = types
+        panel.message = "Choose PDF, Word, text, or Markdown files to add to your brain."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let self, !panel.urls.isEmpty else { return }
+            let urls = panel.urls
+            let topic = self.promptForBatchTopic(count: urls.count)
+            guard topic != nil else { return } // user cancelled the topic step
+            var arguments = ["import"]
+            arguments.append(contentsOf: urls.map { $0.path })
+            if let topic, !topic.isEmpty {
+                arguments.append("--topic")
+                arguments.append(topic)
+            }
+            self.progress.startAnimation(nil)
+            self.client.runAsync(arguments) { [weak self] output in
+                guard let self else { return }
+                self.reportImport(output: output, total: urls.count)
+                self.reload()
+            }
+        }
+    }
+
+    /// Returns the chosen topic (possibly empty for "no topic"), or nil if the
+    /// user cancelled the import entirely.
+    private func promptForBatchTopic(count: Int) -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Add a topic to \(count) document\(count == 1 ? "" : "s")?"
+        alert.informativeText = "Optional — leave blank to import without a topic."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Topic (optional)"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Import")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func reportImport(output: String, total: Int) {
+        guard
+            let data = output.data(using: .utf8),
+            let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        let imported = (value["imported"] as? [[String: Any]])?.count ?? 0
+        let skipped = value["skipped"] as? [[String: Any]] ?? []
+        guard !skipped.isEmpty else { return } // silent on full success; reload shows results
+        let reasons = skipped.prefix(5).compactMap { entry -> String? in
+            guard let path = entry["path"] as? String else { return nil }
+            let name = URL(fileURLWithPath: path).lastPathComponent
+            let reason = entry["reason"] as? String ?? "could not be read"
+            return "• \(name): \(reason)"
+        }
+        DialogPresenter.show(
+            title: "Imported \(imported) of \(total)",
+            message: "Some files were skipped:\n\n" + reasons.joined(separator: "\n")
+        )
     }
 
     /// Persist a record's topic set, then refresh the Library so cards and the
