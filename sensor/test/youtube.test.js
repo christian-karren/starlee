@@ -516,6 +516,7 @@ test("discovers transcript button behind expanded description", async () => {
 
   const result = await extractYouTubeResult(dom.window.document, {
     discoverTranscript: true,
+    allowVisibleFallbacks: true,
     transcriptDiscoveryTimeoutMs: 900,
     onDiagnostic: (event) => events.push(event)
   });
@@ -554,7 +555,8 @@ test("tries description expansion after transcript-labeled controls do not open 
 
   const result = await extractYouTubeResult(dom.window.document, {
     discoverTranscript: true,
-    transcriptDiscoveryTimeoutMs: 1200,
+    allowVisibleFallbacks: true,
+    transcriptDiscoveryTimeoutMs: 3500,
     onDiagnostic: (event) => events.push(event)
   });
 
@@ -593,7 +595,8 @@ test("tries overflow menu after transcript-labeled controls do not open panel", 
 
   const result = await extractYouTubeResult(dom.window.document, {
     discoverTranscript: true,
-    transcriptDiscoveryTimeoutMs: 1200,
+    allowVisibleFallbacks: true,
+    transcriptDiscoveryTimeoutMs: 3500,
     onDiagnostic: (event) => events.push(event)
   });
 
@@ -764,6 +767,39 @@ test("view-model: a caption line that itself looks like a timestamp is preserved
     { t: 5, text: "2:30" },
     { t: 9, text: "meet me at 0:05 today" }
   ]);
+});
+
+test("capture is invisible: no description-expand or overflow-menu clicks by default", async () => {
+  const events = [];
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="Invisible capture demo">
+    <button id="transcript">Show transcript</button>
+    <button id="more">More actions</button>`, {
+    url: "https://www.youtube.com/watch?v=invisible123",
+    pretendToBeVisual: true
+  });
+  let menuClicked = false;
+  dom.window.document.getElementById("more").addEventListener("click", () => { menuClicked = true; });
+  dom.window.document.getElementById("transcript").addEventListener("click", () => {
+    dom.window.document.body.insertAdjacentHTML("beforeend", `
+      <ytd-transcript-renderer>
+        <ytd-transcript-segment-renderer><span class="segment-timestamp">0:02</span><yt-formatted-string class="segment-text">invisible line</yt-formatted-string></ytd-transcript-segment-renderer>
+      </ytd-transcript-renderer>`);
+  });
+
+  const result = await extractYouTubeResult(dom.window.document, {
+    discoverTranscript: true,
+    transcriptDiscoveryTimeoutMs: 1500,
+    onDiagnostic: (event) => events.push(event)
+  });
+
+  assert.equal(result.transcript_status, "full");
+  // No visible fallback actions fired, and the overflow menu was never clicked.
+  assert.ok(!menuClicked, "overflow menu must not be clicked");
+  assert.ok(!events.some((e) => e.event === "transcript_menu_open_attempted"));
+  assert.ok(!events.some((e) => e.event === "transcript_description_expand_attempted"));
+  // The panel was cloaked during capture and removed afterward.
+  assert.equal(dom.window.document.getElementById("starlee-transcript-cloak"), null);
 });
 
 test("strips the screen-reader duration label from view-model segments", async () => {

@@ -668,9 +668,6 @@ async function discoverTranscript(document, options = {}) {
         elapsed_ms: String(Date.now() - startedAt)
       }
     });
-    // We already have the segment data in hand, so closing the panel (which
-    // removes the rendered rows from the DOM) does not cost us anything.
-    if (openedByUs) closeTranscriptPanel(document);
     return {
       reason: "rendered_transcript_segments_found",
       panelOpened: true,
@@ -680,12 +677,24 @@ async function discoverTranscript(document, options = {}) {
   };
 
   // Already rendered (e.g. the user opened the transcript themselves). Read it
-  // without clicking anything, and leave their open panel as-is.
+  // without clicking anything, and leave their open panel exactly as-is.
   const existing = extractRenderedTranscriptSegments(document);
   if (existing.length > 0) {
     return succeed(existing);
   }
 
+  // Cloak the transcript panel so opening/closing it is invisible to the viewer:
+  // off-screen positioning means no layout shift, opacity 0 means nothing is seen.
+  // We close it and remove the cloak in `finally`, leaving the screen unchanged.
+  const removeCloak = installTranscriptCloak(document);
+  try {
+    return await runTranscriptDiscovery();
+  } finally {
+    if (openedByUs) closeTranscriptPanel(document);
+    removeCloak();
+  }
+
+  async function runTranscriptDiscovery() {
   while (Date.now() < deadline) {
     const segments = extractRenderedTranscriptSegments(document);
     if (segments.length > 0) {
@@ -721,7 +730,6 @@ async function discoverTranscript(document, options = {}) {
             elapsed_ms: String(Date.now() - startedAt)
           }
         }, seen);
-        if (openedByUs) closeTranscriptPanel(document);
         return { reason: unavailable.reason, panelOpened, rowCount, segments: [] };
       }
       if (transcriptPanelLoading(document)) {
@@ -778,41 +786,54 @@ async function discoverTranscript(document, options = {}) {
           elapsed_ms: String(Date.now() - startedAt)
         }
       });
-      // If the panel opened, hand off to the next iteration's panel-open branch
-      // (so we never click again and toggle it shut). If it did NOT open, fall
-      // through to try description expansion / the overflow menu this round.
-      if (opened) continue;
-    }
-
-    const expander = firstDescriptionExpander(document, attemptedExpanders);
-    if (expander) {
-      attemptedExpanders.add(expander.node);
-      emitTranscriptDiagnostic(options, "transcript_description_expand_attempted", {
-        status: "started",
-        safe_metadata: {
-          control_category: expander.category,
-          label_hint: transcriptLabelHint(expander.label),
-          elapsed_ms: String(Date.now() - startedAt)
-        }
-      }, seen);
-      activateControl(expander.node);
-      await sleep(250);
+      // Always hand off to the next iteration: the panel-open branch reads the
+      // (cloaked) panel once it opens, and we never click another control that
+      // could toggle it shut.
+      void opened;
       continue;
     }
 
-    const menu = firstTranscriptMenuOpener(document, attemptedMenus);
-    if (menu) {
-      attemptedMenus.add(menu.node);
-      emitTranscriptDiagnostic(options, "transcript_menu_open_attempted", {
-        status: "started",
-        safe_metadata: {
-          control_category: menu.category,
-          label_hint: transcriptLabelHint(menu.label),
-          elapsed_ms: String(Date.now() - startedAt)
-        }
-      }, seen);
-      activateControl(menu.node);
-      await sleep(250);
+    // Description-expansion and the overflow ("...") menu are VISIBLE actions
+    // (the description grows; a Save/Report popup flashes), so they are disabled
+    // by default to keep capture invisible. They run only when a caller explicitly
+    // opts into visible discovery (used by tests).
+    if (options.allowVisibleFallbacks) {
+      const expander = firstDescriptionExpander(document, attemptedExpanders);
+      if (expander) {
+        attemptedExpanders.add(expander.node);
+        emitTranscriptDiagnostic(options, "transcript_description_expand_attempted", {
+          status: "started",
+          safe_metadata: {
+            control_category: expander.category,
+            label_hint: transcriptLabelHint(expander.label),
+            elapsed_ms: String(Date.now() - startedAt)
+          }
+        }, seen);
+        activateControl(expander.node);
+        await sleep(250);
+        continue;
+      }
+      const menu = firstTranscriptMenuOpener(document, attemptedMenus);
+      if (menu) {
+        attemptedMenus.add(menu.node);
+        emitTranscriptDiagnostic(options, "transcript_menu_open_attempted", {
+          status: "started",
+          safe_metadata: {
+            control_category: menu.category,
+            label_hint: transcriptLabelHint(menu.label),
+            elapsed_ms: String(Date.now() - startedAt)
+          }
+        }, seen);
+        activateControl(menu.node);
+        await sleep(250);
+        continue;
+      }
+    }
+
+    // We already clicked the transcript control; just wait for the cloaked panel
+    // to open rather than touching any other (visible) control.
+    if (clickAttempted) {
+      await sleep(200);
       continue;
     }
 
@@ -838,7 +859,6 @@ async function discoverTranscript(document, options = {}) {
   // panel that renders rows we failed to match reveals which selectors drifted.
   const panelTags = panelOpened ? transcriptPanelFingerprint(document) : "";
   const stillLoading = panelOpened ? transcriptPanelLoading(document) : false;
-  if (openedByUs) closeTranscriptPanel(document);
   if (panelOpened) {
     emitTranscriptDiagnostic(options, "transcript_panel_opened", {
       status: "ok",
@@ -883,6 +903,45 @@ async function discoverTranscript(document, options = {}) {
     rowCount,
     segments: []
   };
+  }
+}
+
+// Inject a stylesheet that renders the transcript engagement panel off-screen and
+// fully transparent. The panel still populates its rows (it is in the viewport and
+// in the DOM), but the viewer sees nothing and the page layout never shifts because
+// the panel is taken out of normal flow. Returns a cleanup function.
+function installTranscriptCloak(document) {
+  try {
+    const head = document.head || document.documentElement;
+    if (!head || typeof document.createElement !== "function") return () => {};
+    const style = document.createElement("style");
+    style.id = "starlee-transcript-cloak";
+    style.textContent = [
+      "ytd-engagement-panel-section-list-renderer[target-id*='transcript'],",
+      "ytd-engagement-panel-section-list-renderer[target-id*='transcript'] * {",
+      "  transition: none !important; animation: none !important;",
+      "}",
+      // position:fixed takes the panel out of normal flow (no layout shift);
+      // opacity:0 + a deep negative z-index make it invisible. It stays inside the
+      // viewport (top/left 0) with real dimensions so YouTube still renders its rows.
+      "ytd-engagement-panel-section-list-renderer[target-id*='transcript'] {",
+      "  position: fixed !important; top: 0 !important; left: 0 !important;",
+      "  width: 420px !important; height: 70vh !important;",
+      "  opacity: 0 !important; pointer-events: none !important;",
+      "  z-index: -2147483647 !important;",
+      "}"
+    ].join("\n");
+    head.appendChild(style);
+    return () => {
+      try {
+        style.remove();
+      } catch {
+        // ignore
+      }
+    };
+  } catch {
+    return () => {};
+  }
 }
 
 // Best-effort close of the transcript engagement panel so capturing leaves the
