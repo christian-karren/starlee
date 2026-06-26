@@ -153,7 +153,43 @@ time {
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
 
+.library-actions {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.action-btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 3px solid var(--black);
+  background: var(--white);
+  color: var(--black);
+  font: 750 13px var(--sans);
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow: 4px 4px 0 var(--black);
+  transition: transform 90ms ease, box-shadow 90ms ease, background 90ms ease;
+}
+
+.action-btn:hover {
+  background: var(--cream);
+}
+
+.action-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--black);
+}
+
+.action-btn.active {
+  background: var(--navy);
+  color: var(--white);
+}
+
 .capture-card {
+  position: relative;
   width: 100%;
   aspect-ratio: 1;
   display: grid;
@@ -165,7 +201,44 @@ time {
   background: rgba(19, 40, 75, 0.85);
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
   color: var(--white);
-  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+/* Edit mode: reveal the per-card delete control. */
+.card-delete {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: none;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 2px solid var(--white);
+  border-radius: 999px;
+  background: #b3261e;
+  color: var(--white);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: transform 90ms ease, background 90ms ease;
+}
+
+.card-row.editing .card-delete {
+  display: flex;
+}
+
+.card-delete:hover {
+  background: #d4362d;
+  transform: scale(1.06);
+}
+
+.card-row.editing .capture-card {
+  cursor: default;
 }
 
 .capture-card:hover,
@@ -216,9 +289,160 @@ time {
   color: var(--white);
 }
 
+/* --- Reader -------------------------------------------------------------- */
+
+.reader[hidden] {
+  display: none;
+}
+
+.reader {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.reader-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 8, 16, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.reader-panel {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 16px;
+  width: min(820px, 100%);
+  max-height: 100%;
+  padding: 26px 28px 24px;
+  border: 3px solid var(--black);
+  border-radius: 10px;
+  background: #fbf4e2;
+  color: var(--black);
+  box-shadow: 10px 10px 0 var(--black);
+}
+
+.reader-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.reader-titles {
+  min-width: 0;
+}
+
+.reader-titles h2 {
+  font-size: 24px;
+  font-weight: 820;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.reader-meta {
+  margin-top: 8px;
+  color: rgba(9, 5, 5, 0.66);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.reader-topics[hidden] {
+  display: none;
+}
+
+.topic-chip {
+  padding: 3px 9px;
+  border: 1.5px solid var(--navy);
+  border-radius: 999px;
+  background: rgba(19, 40, 75, 0.08);
+  color: var(--navy);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.reader-close {
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--black);
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--black);
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.reader-close:hover {
+  background: var(--cream);
+}
+
+.reader-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.reader-action {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 2px solid var(--black);
+  border-radius: 6px;
+  background: var(--white);
+  color: var(--black);
+  font: 700 12px var(--sans);
+  cursor: pointer;
+}
+
+.reader-action:hover {
+  background: var(--cream);
+}
+
+.reader-action-danger {
+  border-color: #8f1d16;
+  color: #8f1d16;
+}
+
+.reader-action-danger:hover {
+  background: #f4d8d4;
+}
+
+.reader-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px;
+  border: 2px solid rgba(9, 5, 5, 0.16);
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.62;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-wrap: pretty;
+}
+
 @media (max-width: 620px) {
   .library-header {
     grid-template-columns: 1fr;
+  }
+
+  .library-actions {
+    grid-column: 1;
   }
 
   .shelf-section {

@@ -1277,6 +1277,10 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             return
         }
         libraryWebViewLoaded = true
+        // WKWebView :hover states only update while the host window delivers
+        // mouse-moved events; without this the card hover border lagged or only
+        // appeared after a click (REQ-001).
+        webView.window?.acceptsMouseMovedEvents = true
         let payload = pendingLibraryPayload ?? libraryPayloadJSON()
         pendingLibraryPayload = nil
         webView.evaluateJavaScript("window.__starleeLibraryPayload = \(payload); if (window.renderStarleeLibrary) { window.renderStarleeLibrary(window.__starleeLibraryPayload); }", completionHandler: nil)
@@ -1307,9 +1311,112 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             copySupportBundle()
         case "import":
             importDocument()
+        case "open":
+            if let id = body["id"] as? String { presentReader(id: id) }
+        case "delete":
+            if let id = body["id"] as? String {
+                confirmAndDelete(id: id, title: (body["title"] as? String) ?? "this capture")
+            }
+        case "openURL":
+            if let urlString = body["url"] as? String, let url = URL(string: urlString) {
+                NSWorkspace.shared.open(url)
+            }
+        case "reveal":
+            if let path = body["path"] as? String, !path.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            }
         default:
             break
         }
+    }
+
+    /// Fetch the full record (metadata incl. topics + body) off the main thread,
+    /// then hand it to the renderer's reader overlay.
+    private func presentReader(id: String) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let result = self.client.runJSON(["get", id])
+            DispatchQueue.main.async {
+                let payload = self.readerPayloadJSON(id: id, result: result)
+                self.libraryWebView?.evaluateJavaScript(
+                    "if (window.renderStarleeReader) { window.renderStarleeReader(\(payload)); }",
+                    completionHandler: nil
+                )
+            }
+        }
+    }
+
+    private func readerPayloadJSON(id: String, result: [String: Any]?) -> String {
+        let capture = captures.first { $0.id == id }
+        guard
+            let record = result?["record"] as? [String: Any],
+            let metadata = record["metadata"] as? [String: Any]
+        else {
+            return jsonObjectString(["id": id, "error": "This record is no longer available."])
+        }
+        var reader: [String: Any] = [
+            "id": id,
+            "title": (metadata["title"] as? String) ?? capture?.title ?? "Untitled",
+            "type": displayType((metadata["type"] as? String) ?? capture?.type ?? ""),
+            "body": (record["body"] as? String) ?? "",
+            "filePath": (record["file_path"] as? String) ?? capture?.filePath ?? "",
+        ]
+        if let url = metadata["url"] as? String, !url.isEmpty {
+            reader["url"] = url
+        } else if let url = capture?.url?.absoluteString {
+            reader["url"] = url
+        }
+        if let author = metadata["author"] as? String, !author.isEmpty {
+            reader["author"] = author
+        }
+        if let capture {
+            reader["source"] = capture.source
+            reader["date"] = displayDate(capture.capturedAt, fallback: capture.capturedAtText)
+            if !capture.transcriptStatus.isEmpty {
+                reader["transcriptStatus"] = capture.transcriptStatus
+            }
+        }
+        if let topics = metadata["topics"] as? [String], !topics.isEmpty {
+            reader["topics"] = topics
+        }
+        if let wordCount = metadata["word_count"] as? Int {
+            reader["wordCount"] = wordCount
+        }
+        return jsonObjectString(reader)
+    }
+
+    /// Confirm the permanent delete natively, then remove the capture and reload.
+    private func confirmAndDelete(id: String, title: String) {
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(title)” permanently?"
+        alert.informativeText =
+            "This removes the capture, its text or transcript, and all of its metadata from your brain and your local index. This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            _ = self.client.run(["delete", id])
+            DispatchQueue.main.async {
+                self.libraryWebView?.evaluateJavaScript(
+                    "if (window.closeStarleeReader) { window.closeStarleeReader(); }",
+                    completionHandler: nil
+                )
+                self.reload()
+            }
+        }
+    }
+
+    private func jsonObjectString(_ object: [String: Any]) -> String {
+        guard
+            JSONSerialization.isValidJSONObject(object),
+            let data = try? JSONSerialization.data(withJSONObject: object, options: []),
+            let json = String(data: data, encoding: .utf8)
+        else {
+            return #"{"error":"Could not render this capture."}"#
+        }
+        return json
     }
 
     private func updateActionButtons() {
