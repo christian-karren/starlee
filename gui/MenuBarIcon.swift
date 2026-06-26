@@ -3,6 +3,17 @@ import AppKit
 enum MenuBarIcon {
     static let size = NSSize(width: 22, height: 22)
 
+    // Pure constants — number of animation frames for each state.
+    // Tested independently of AppKit rendering.
+    static let loadingFrameCount = 3
+    static let successFrameCount = 10
+
+    // Progress value [0, 1] for a given success-frame index.
+    static func pulseProgress(forIndex index: Int) -> CGFloat {
+        guard successFrameCount > 1 else { return 0 }
+        return CGFloat(index) / CGFloat(successFrameCount - 1)
+    }
+
     static func makeImage() -> NSImage? {
         let image = NSImage(size: size)
         addRepresentation(named: "StarleeMenuBarIcon-22", to: image)
