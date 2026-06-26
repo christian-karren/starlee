@@ -54,7 +54,13 @@ body {
   padding: 38px 42px 36px;
 }
 
-.library-header,
+/* Header sits above the card grid so the Filter dropdown is not painted over
+   by the shelf below it (both were z-index:1, so the later-in-DOM shelf won). */
+.library-header {
+  position: relative;
+  z-index: 5;
+}
+
 .shelf-section {
   position: relative;
   z-index: 1;
