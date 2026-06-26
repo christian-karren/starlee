@@ -13,6 +13,7 @@ mod model;
 mod public_fetch;
 mod sensor_assets;
 mod spotify;
+mod sync;
 mod topics;
 mod vault;
 mod vault_backend;
