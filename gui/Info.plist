@@ -9,4 +9,5 @@
   <key>CFBundleExecutable</key><string>StarleeMenuBar</string>
   <key>CFBundleIconFile</key><string>StarleeDesktopIcon</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>ATSApplicationFontsPath</key><string>Fonts</string>
 </dict></plist>

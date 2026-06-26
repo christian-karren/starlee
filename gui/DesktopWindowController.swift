@@ -2,6 +2,34 @@ import AppKit
 import UniformTypeIdentifiers
 import WebKit
 
+// "wght" axis tag as UInt32 cast to Int for NSDictionary key
+private let kInterWeightAxis: Int = 0x77676874
+
+private extension NSFont {
+    /// Returns InterVariable at the requested size and weight, falling back to
+    /// the system font if the bundled font isn't available yet.
+    static func inter(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        let w: Double
+        switch weight {
+        case .ultraLight: w = 100
+        case .thin:       w = 200
+        case .light:      w = 300
+        case .medium:     w = 500
+        case .semibold:   w = 600
+        case .bold:       w = 700
+        case .heavy:      w = 800
+        case .black:      w = 900
+        default:          w = 400
+        }
+        let desc = NSFontDescriptor(fontAttributes: [
+            .name: "InterVariable",
+            .variation: [kInterWeightAxis: w]
+        ])
+        return NSFont(descriptor: desc, size: size)
+            ?? .systemFont(ofSize: size, weight: weight)
+    }
+}
+
 final class DesktopWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, WKNavigationDelegate, WKScriptMessageHandler {
     private enum PrimaryView {
         case library
@@ -313,7 +341,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         titleBox.layer?.shadowRadius = 0
         titleBox.layer?.shadowOffset = NSSize(width: 6, height: -6)
 
-        titleLabel.font = .systemFont(ofSize: 34, weight: .heavy)
+        titleLabel.font = .inter(ofSize: 34, weight: .heavy)
         titleLabel.textColor = Self.starleeBlack
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleBox.addSubview(titleLabel)
@@ -336,7 +364,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         contentStack.addArrangedSubview(header)
         header.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
 
-        readinessLabel.font = .systemFont(ofSize: 13)
+        readinessLabel.font = .inter(ofSize: 13)
         readinessLabel.textColor = .secondaryLabelColor
         readinessLabel.isHidden = true
         contentStack.addArrangedSubview(readinessLabel)
@@ -598,10 +626,10 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         titleStack.orientation = .vertical
         titleStack.spacing = 4
         let title = NSTextField(labelWithString: "Background")
-        title.font = .systemFont(ofSize: 24, weight: .heavy)
+        title.font = .inter(ofSize: 24, weight: .heavy)
         title.textColor = Self.starleeWhite
         let subtitle = NSTextField(labelWithString: subtitleText(for: kind))
-        subtitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        subtitle.font = .inter(ofSize: 13, weight: .semibold)
         subtitle.textColor = Self.starleeCream
         titleStack.addArrangedSubview(title)
         titleStack.addArrangedSubview(subtitle)
@@ -652,7 +680,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 
     private func captionLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text.uppercased())
-        label.font = .systemFont(ofSize: 11, weight: .heavy)
+        label.font = .inter(ofSize: 11, weight: .heavy)
         label.textColor = Self.starleeCream
         return label
     }
@@ -689,7 +717,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                 string: look.name,
                 attributes: [
                     .foregroundColor: Self.starleeWhite,
-                    .font: NSFont.systemFont(ofSize: 12, weight: .heavy)
+                    .font: NSFont.inter(ofSize: 12, weight: .heavy)
                 ]
             )
         } else {
@@ -697,7 +725,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                 string: look.name,
                 attributes: [
                     .foregroundColor: Self.starleeBlack,
-                    .font: NSFont.systemFont(ofSize: 12, weight: .bold)
+                    .font: NSFont.inter(ofSize: 12, weight: .bold)
                 ]
             )
         }
@@ -734,7 +762,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         row.alignment = .centerY
         row.spacing = 12
         let finishLabel = NSTextField(labelWithString: "Finish")
-        finishLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        finishLabel.font = .inter(ofSize: 12, weight: .bold)
         finishLabel.textColor = Self.starleeWhite
         finishLabel.widthAnchor.constraint(equalToConstant: 110).isActive = true
         let segmented = NSSegmentedControl(
@@ -861,7 +889,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         well.widthAnchor.constraint(equalToConstant: 38).isActive = true
         well.heightAnchor.constraint(equalToConstant: 24).isActive = true
         let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.font = .inter(ofSize: 12, weight: .semibold)
         label.textColor = Self.starleeCream
         row.addArrangedSubview(well)
         row.addArrangedSubview(label)
@@ -918,7 +946,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         modeRow.alignment = .centerY
         modeRow.spacing = 12
         let modeLabel = NSTextField(labelWithString: "Mode")
-        modeLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        modeLabel.font = .inter(ofSize: 12, weight: .bold)
         modeLabel.textColor = Self.starleeWhite
         modeLabel.widthAnchor.constraint(equalToConstant: 110).isActive = true
         let segmented = NSSegmentedControl(labels: ["Panes", "Blur only"], trackingMode: .selectOne, target: self, action: #selector(selectGlassMode(_:)))
@@ -968,7 +996,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         row.spacing = 8
 
         let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 12, weight: .bold)
+        label.font = .inter(ofSize: 12, weight: .bold)
         label.textColor = Self.starleeWhite
         label.widthAnchor.constraint(equalToConstant: 110).isActive = true
 
@@ -995,7 +1023,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         row.spacing = 8
 
         let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 12, weight: .bold)
+        label.font = .inter(ofSize: 12, weight: .bold)
         label.textColor = Self.starleeWhite
         label.widthAnchor.constraint(equalToConstant: 110).isActive = true
 
@@ -1003,7 +1031,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         slider.widthAnchor.constraint(equalToConstant: 190).isActive = true
 
         let valueLabel = NSTextField(labelWithString: formattedFluidValue(value))
-        valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .bold)
+        valueLabel.font = .inter(ofSize: 12, weight: .bold)
         valueLabel.textColor = Self.starleeCream
         valueLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
 
@@ -1049,16 +1077,16 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         text.orientation = .vertical
         text.spacing = 4
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 18, weight: .heavy)
+        titleLabel.font = .inter(ofSize: 18, weight: .heavy)
         titleLabel.textColor = Self.starleeWhite
         let detailLabel = NSTextField(wrappingLabelWithString: detail.isEmpty ? "No detail available." : detail)
-        detailLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        detailLabel.font = .inter(ofSize: 12, weight: .semibold)
         detailLabel.textColor = Self.starleeCream
         text.addArrangedSubview(titleLabel)
         text.addArrangedSubview(detailLabel)
 
         let statusLabel = NSTextField(labelWithString: status)
-        statusLabel.font = .systemFont(ofSize: 12, weight: .heavy)
+        statusLabel.font = .inter(ofSize: 12, weight: .heavy)
         statusLabel.textColor = statusColor(status)
 
         stack.addArrangedSubview(text)
@@ -1274,7 +1302,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let cell = NSTableCellView()
         let field = NSTextField(labelWithString: value)
         field.lineBreakMode = .byTruncatingTail
-        field.font = .systemFont(ofSize: identifier == "title" ? 13 : 12)
+        field.font = .inter(ofSize: identifier == "title" ? 13 : 12)
         field.textColor = identifier == "title" ? .labelColor : .secondaryLabelColor
         field.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(field)
@@ -1731,14 +1759,14 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         button.layer?.borderWidth = 2
         button.layer?.cornerRadius = 0
         button.contentTintColor = Self.starleeBlack
-        button.font = .systemFont(ofSize: 12, weight: .bold)
+        button.font = .inter(ofSize: 12, weight: .bold)
         button.heightAnchor.constraint(equalToConstant: 26).isActive = true
         button.widthAnchor.constraint(greaterThanOrEqualToConstant: 74).isActive = true
         button.attributedTitle = NSAttributedString(
             string: button.title,
             attributes: [
                 .foregroundColor: Self.starleeBlack,
-                .font: NSFont.systemFont(ofSize: 12, weight: .bold)
+                .font: NSFont.inter(ofSize: 12, weight: .bold)
             ]
         )
     }
@@ -1992,10 +2020,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 /// background image into the surface.
 private final class SidebarBoxButton: NSButton {
     static var labelFont: NSFont {
-        NSFont(name: "Avenir Next Condensed Heavy", size: 26)
-            ?? NSFont(name: "Avenir Next Heavy", size: 24)
-            ?? NSFont(name: "Helvetica Neue Condensed Black", size: 24)
-            ?? .systemFont(ofSize: 24, weight: .heavy)
+        .inter(ofSize: 22, weight: .heavy)
     }
 
     // Surface tokens mirror the Library article cards (.capture-card):
