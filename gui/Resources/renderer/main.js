@@ -303,7 +303,10 @@ window.renderStarleeLibrary = (payload) => {
   applyBackgroundSettings(payload?.backgroundSettings);
   populateFilterOptions();
   render();
+  if (payload?.showOnboarding) onboarding.maybeShow();
 };
+
+window.showStarleeOnboarding = () => onboarding.show();
 
 window.applyStarleeBackgroundSettings = (settings) => {
   applyBackgroundSettings(settings);
@@ -436,6 +439,89 @@ document.addEventListener("keydown", (event) => {
     window.closeStarleeReader();
   }
 });
+
+// --- Onboarding -----------------------------------------------------------
+
+const onboarding = (() => {
+  const root = document.querySelector("#onboarding");
+  const steps = root ? Array.from(root.querySelectorAll(".onb-step")) : [];
+  const dots = root ? Array.from(root.querySelectorAll("[data-step-dot]")) : [];
+  const backButton = document.querySelector("#onb-back");
+  const nextButton = document.querySelector("#onb-next");
+  const skipButton = document.querySelector("#onb-skip");
+  const browserNote = document.querySelector("#onb-browser-note");
+  let step = 0;
+  let suppressed = false; // don't auto-reopen after dismiss within a session
+
+  function paint() {
+    steps.forEach((section) => {
+      section.hidden = Number(section.dataset.step) !== step;
+    });
+    dots.forEach((dot) => {
+      dot.classList.toggle("active", Number(dot.dataset.stepDot) === step);
+    });
+    if (backButton) backButton.hidden = step === 0;
+    if (nextButton) nextButton.textContent = step === steps.length - 1 ? "Get started" : "Next";
+  }
+
+  function show() {
+    if (!root) return;
+    step = 0;
+    if (browserNote) browserNote.hidden = true;
+    root.hidden = false;
+    paint();
+  }
+
+  function maybeShow() {
+    // Only open from a closed state — a Library reload re-invokes
+    // renderStarleeLibrary, and without this guard it would reset the user's
+    // progress back to step 1 mid-flow.
+    if (!suppressed && root && root.hidden) show();
+  }
+
+  function finish() {
+    if (!root) return;
+    suppressed = true;
+    root.hidden = true;
+    postToHost({ action: "onboardingDone" });
+  }
+
+  if (root) {
+    nextButton?.addEventListener("click", () => {
+      if (step >= steps.length - 1) {
+        finish();
+      } else {
+        step += 1;
+        paint();
+      }
+    });
+    backButton?.addEventListener("click", () => {
+      step = Math.max(0, step - 1);
+      paint();
+    });
+    skipButton?.addEventListener("click", finish);
+
+    root.querySelectorAll("[data-browser]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const browser = button.dataset.browser;
+        if (browser === "chrome") {
+          postToHost({ action: "openBrowserSetup" });
+          if (browserNote) {
+            browserNote.hidden = false;
+            browserNote.textContent =
+              "Opening Chrome setup — load the unpacked extension, then come back.";
+          }
+        }
+      });
+    });
+
+    root.querySelector('[data-action="codex"]')?.addEventListener("click", () => {
+      postToHost({ action: "codexGuide" });
+    });
+  }
+
+  return { show, maybeShow, finish };
+})();
 
 if (window.__starleeLibraryPayload) {
   window.renderStarleeLibrary(window.__starleeLibraryPayload);

@@ -76,6 +76,65 @@
           <div id="reader-body" class="reader-body" tabindex="0"></div>
         </div>
       </div>
+
+      <div id="onboarding" class="onboarding" hidden role="dialog" aria-modal="true" aria-labelledby="onb-title">
+        <div class="onboarding-panel">
+          <div class="onb-progress" aria-hidden="true">
+            <span class="onb-dot" data-step-dot="0"></span>
+            <span class="onb-dot" data-step-dot="1"></span>
+            <span class="onb-dot" data-step-dot="2"></span>
+          </div>
+
+          <section class="onb-step" data-step="0">
+            <h1 id="onb-title">Welcome to Starlee</h1>
+            <p class="onb-lead">Starlee is your private, lifelong memory — everything you read and watch, captured and searchable. Let’s get the pieces in place.</p>
+            <h2 class="onb-h2">1 · Add the browser extension</h2>
+            <p class="onb-sub">Pick your browser. The extension is how you save articles and YouTube videos with one click.</p>
+            <div class="onb-browsers">
+              <button class="onb-browser" type="button" data-browser="chrome">
+                <span class="onb-browser-name">Chrome</span>
+                <span class="onb-browser-state ready">Ready</span>
+              </button>
+              <button class="onb-browser" type="button" data-browser="safari" disabled>
+                <span class="onb-browser-name">Safari</span>
+                <span class="onb-browser-state soon">Coming soon</span>
+              </button>
+              <button class="onb-browser" type="button" data-browser="firefox" disabled>
+                <span class="onb-browser-name">Firefox</span>
+                <span class="onb-browser-state soon">Coming soon</span>
+              </button>
+            </div>
+            <p id="onb-browser-note" class="onb-note" hidden></p>
+          </section>
+
+          <section class="onb-step" data-step="1" hidden>
+            <h1>2 · Connect Codex</h1>
+            <p class="onb-lead">Install the Starlee Codex plugin so you can ask questions and get answers grounded in everything you’ve saved.</p>
+            <button class="onb-primary" type="button" data-action="codex">Open Codex setup</button>
+            <p class="onb-sub">Optional, but it’s where the magic happens — you can also do this later from Settings.</p>
+          </section>
+
+          <section class="onb-step" data-step="2" hidden>
+            <h1>3 · You’re all set</h1>
+            <p class="onb-lead">The Starlee icon lives up in your menu bar — it’s always there.</p>
+            <ul class="onb-points">
+              <li><strong>Capture:</strong> click the menu-bar icon on any article or video to save it.</li>
+              <li><strong>Recall:</strong> ask Codex anything about what you’ve saved.</li>
+              <li><strong>Browse:</strong> open this app to read, filter, and organize your Library.</li>
+            </ul>
+            <p class="onb-lead">Over the years this becomes a record of everything you’ve ever learned — something you can pass on one day.</p>
+          </section>
+
+          <div class="onb-foot">
+            <button id="onb-skip" class="onb-skip" type="button">Skip for now</button>
+            <div class="onb-nav">
+              <button id="onb-back" class="onb-secondary" type="button" hidden>Back</button>
+              <button id="onb-next" class="onb-primary" type="button">Next</button>
+            </div>
+          </div>
+        </div>
+        <div class="onb-menubar-arrow" aria-hidden="true">▲<span>Starlee lives here</span></div>
+      </div>
     </div>
     <script src="./pixel-dither-background.js"></script>
     <script src="./flow-background.js"></script>

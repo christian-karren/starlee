@@ -106,6 +106,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let readinessLabel = NSTextField(wrappingLabelWithString: "")
     private let searchField = NSSearchField()
+    private static let onboardingCompleteKey = "StarleeOnboardingComplete"
     private let tableView = NSTableView()
     private var libraryWebView: WKWebView?
     private var libraryWebViewLoaded = false
@@ -1194,6 +1195,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             "monthLabel": monthLabel,
             "totalCount": captures.count,
             "readiness": readiness,
+            "showOnboarding": !UserDefaults.standard.bool(forKey: Self.onboardingCompleteKey),
             "backgroundSettings": fluidBackground.webPayload,
             "captures": monthCaptures.map { capture in
                 [
@@ -1338,6 +1340,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             }
         case "upload":
             uploadDocuments()
+        case "onboardingDone":
+            UserDefaults.standard.set(true, forKey: Self.onboardingCompleteKey)
         default:
             break
         }
