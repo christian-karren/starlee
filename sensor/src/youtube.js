@@ -94,11 +94,11 @@ export async function extractYouTubeResult(document, options = {}) {
     // player response. This needs no transcript-panel UI, captures auto-generated
     // captions too, and is invisible to the viewer — so it does not depend on
     // fragile DOM selectors or the panel rendering in time.
-    const caption = await extractTranscriptViaCaptionTrack(document, options);
-    if (caption.segments.length > 0) {
-      segments = caption.segments;
-      transcriptSource = "caption_track";
-      transcriptReason = "caption_track_fetched";
+    const api = await extractTranscriptViaApi(document, options);
+    if (api.segments.length > 0) {
+      segments = api.segments;
+      transcriptSource = api.source;
+      transcriptReason = api.reason;
     } else {
       // FALLBACK: open and scrape the rendered transcript panel (non-disruptive).
       const rowCount0 = transcriptRows(document).length;
@@ -108,7 +108,7 @@ export async function extractYouTubeResult(document, options = {}) {
           initial_segment_count: "0",
           initial_row_count: String(rowCount0),
           panel_open: String(transcriptPanelOpen(document)),
-          caption_track_reason: caption.reason
+          api_reason: api.reason
         }
       });
       const discovery = await discoverTranscript(document, options);
@@ -180,65 +180,165 @@ function emitDiagnostic(options, event, detail = {}) {
 // referenced by the player response). This is the reliable, invisible path: it
 // covers auto-generated captions, needs no UI interaction, and does not depend on
 // the transcript panel rendering. Returns { segments, reason }; never throws.
-async function extractTranscriptViaCaptionTrack(document, options) {
-  const { playerResponse, source } = await loadPlayerResponse(document);
-  if (!playerResponse) {
-    emitDiagnostic(options, "youtube_caption_tracks_found", {
-      status: "unavailable",
-      message: "No player response found in page or page HTML.",
-      safe_metadata: { track_count: "0", player_response_source: source }
+// Fetch the transcript as data, trying the most reliable source first:
+//   1. innertube get_transcript — the authenticated API YouTube's own transcript
+//      panel uses. Runs in the content script's real session, so the botguard/pot
+//      context is present; returns clean JSON segments, fully invisible.
+//   2. caption-track timedtext — best-effort; YouTube pot-gates this for some
+//      (auto-caption) videos, so it can come back empty.
+// Returns { segments, source, reason }; never throws. An empty result lets the
+// caller fall back to scraping the rendered transcript panel.
+async function extractTranscriptViaApi(document, options) {
+  const context = await loadYouTubeContext(document);
+
+  if (context.innertube.transcriptParams) {
+    emitDiagnostic(options, "youtube_innertube_transcript_started", {
+      status: "started",
+      safe_metadata: { has_params: "true", player_response_source: context.source }
     });
-    return { segments: [], reason: "player_response_unavailable" };
+    const segments = await fetchInnertubeTranscript(context.innertube, document);
+    emitDiagnostic(options, segments.length > 0 ? "youtube_innertube_transcript_succeeded" : "youtube_innertube_transcript_failed", {
+      status: segments.length > 0 ? "ok" : "unavailable",
+      message: segments.length > 0 ? "Fetched transcript via get_transcript." : "get_transcript returned no segments.",
+      safe_metadata: { segment_count: String(segments.length) }
+    });
+    if (segments.length > 0) {
+      return { segments, source: "innertube_transcript", reason: "innertube_transcript_fetched" };
+    }
+  } else {
+    emitDiagnostic(options, "youtube_innertube_transcript_failed", {
+      status: "unavailable",
+      message: "No transcript params present in page.",
+      safe_metadata: { has_params: "false", player_response_source: context.source }
+    });
   }
-  const tracks = captionTracksFromPlayerResponse(playerResponse);
+
+  const tracks = captionTracksFromPlayerResponse(context.playerResponse);
   emitDiagnostic(options, "youtube_caption_tracks_found", {
     status: tracks.length > 0 ? "ok" : "unavailable",
     message: tracks.length > 0 ? "Caption tracks present in player response." : "No caption tracks in player response.",
     safe_metadata: {
       track_count: String(tracks.length),
       languages: tracks.map((track) => track.languageCode).filter(Boolean).slice(0, 8).join(","),
-      player_response_source: source
+      player_response_source: context.source
     }
   });
   const track = pickCaptionTrack(tracks);
-  if (!track) {
-    return { segments: [], reason: "caption_track_unavailable" };
-  }
-  emitDiagnostic(options, "youtube_timedtext_fetch_started", {
-    status: "started",
-    safe_metadata: { language: track.languageCode || "", kind: track.kind || "manual" }
-  });
-  const segments = await fetchTimedText(track, document);
-  emitDiagnostic(options, segments.length > 0 ? "youtube_timedtext_fetch_succeeded" : "youtube_timedtext_fetch_failed", {
-    status: segments.length > 0 ? "ok" : "unavailable",
-    message: segments.length > 0 ? "Fetched caption-track transcript." : "Caption-track fetch returned no segments.",
-    safe_metadata: {
-      segment_count: String(segments.length),
-      language: track.languageCode || "",
-      kind: track.kind || "manual"
+  if (track) {
+    emitDiagnostic(options, "youtube_timedtext_fetch_started", {
+      status: "started",
+      safe_metadata: { language: track.languageCode || "", kind: track.kind || "manual" }
+    });
+    const segments = await fetchTimedText(track, document);
+    emitDiagnostic(options, segments.length > 0 ? "youtube_timedtext_fetch_succeeded" : "youtube_timedtext_fetch_failed", {
+      status: segments.length > 0 ? "ok" : "unavailable",
+      message: segments.length > 0 ? "Fetched caption-track transcript." : "Caption-track fetch returned no segments.",
+      safe_metadata: { segment_count: String(segments.length), language: track.languageCode || "", kind: track.kind || "manual" }
+    });
+    if (segments.length > 0) {
+      return { segments, source: "caption_track", reason: "caption_track_fetched" };
     }
-  });
+  }
   return {
-    segments,
-    reason: segments.length > 0 ? "caption_track_fetched" : "caption_track_empty"
+    segments: [],
+    source: "unavailable",
+    reason: tracks.length > 0 ? "caption_track_empty" : "transcript_api_unavailable"
   };
 }
 
-// Obtain the player response (which carries the caption tracks). The content
-// script runs in an isolated world, so it cannot read window.ytInitialPlayerResponse,
-// and YouTube often removes the inline bootstrap <script> from the DOM after it
-// runs. So: try the live DOM first (fast, no network), then fall back to fetching
-// the watch page HTML, whose server-rendered ytInitialPlayerResponse reliably
-// includes the caption tracks.
-async function loadPlayerResponse(document) {
-  const fromDom = parsePlayerResponse(document);
-  if (fromDom) return { playerResponse: fromDom, source: "dom" };
+// Load the data the transcript APIs need. The content script's isolated world
+// cannot read window.ytInitialPlayerResponse, and YouTube removes the inline
+// bootstrap <script> from the DOM after it runs, so we fetch the watch-page HTML
+// (server-rendered) which reliably carries the player response, the innertube API
+// key/client version, and the get_transcript params.
+async function loadYouTubeContext(document) {
+  let playerResponse = parsePlayerResponse(document);
+  let source = playerResponse ? "dom" : "none";
   const html = await fetchPageHtml(document);
-  if (html) {
-    const fromHtml = parsePlayerResponseFromText(html);
-    if (fromHtml) return { playerResponse: fromHtml, source: "page_html" };
+  if (!playerResponse && html) {
+    playerResponse = parsePlayerResponseFromText(html);
+    source = playerResponse ? "page_html" : "none";
   }
-  return { playerResponse: null, source: "none" };
+  const innertube = extractInnertubeContext(html || documentHtml(document) || "");
+  return { playerResponse, source, innertube };
+}
+
+function documentHtml(document) {
+  try {
+    return document.documentElement?.outerHTML || null;
+  } catch {
+    return null;
+  }
+}
+
+function extractInnertubeContext(html) {
+  const match = (pattern) => (html.match(pattern) || [])[1];
+  return {
+    apiKey: match(/"INNERTUBE_API_KEY":"([^"]+)"/),
+    clientVersion: match(/"INNERTUBE_CONTEXT_CLIENT_VERSION":"([^"]+)"/) || match(/"clientVersion":"([^"]+)"/),
+    transcriptParams: match(/"getTranscriptEndpoint":\{"params":"([^"]+)"/),
+    visitorData: match(/"VISITOR_DATA":"([^"]+)"/) || match(/"visitorData":"([^"]+)"/)
+  };
+}
+
+async function fetchInnertubeTranscript(innertube, document) {
+  const { apiKey, clientVersion, transcriptParams, visitorData } = innertube;
+  if (!apiKey || !clientVersion || !transcriptParams) return [];
+  const view = document.defaultView;
+  const fetchFn = view?.fetch || (typeof fetch === "function" ? fetch : null);
+  if (!fetchFn) return [];
+  const client = { clientName: "WEB", clientVersion, hl: "en", gl: "US" };
+  if (visitorData) client.visitorData = visitorData;
+  let response;
+  try {
+    response = await fetchFn(`https://www.youtube.com/youtubei/v1/get_transcript?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context: { client }, params: transcriptParams })
+    });
+  } catch {
+    return [];
+  }
+  if (!response?.ok) return [];
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    return [];
+  }
+  return parseTranscriptSegments(data);
+}
+
+// Walk the get_transcript response for transcriptSegmentRenderer nodes, which
+// carry startMs and a snippet of runs. Order by start time and de-duplicate.
+function parseTranscriptSegments(data) {
+  const seen = new Set();
+  const segments = [];
+  const walk = (node) => {
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    const renderer = node.transcriptSegmentRenderer;
+    if (renderer) {
+      const t = Number(renderer.startMs) / 1000;
+      const runs = renderer.snippet?.runs || [];
+      const segmentText = cleanText(runs.map((run) => run.text || "").join(""));
+      if (Number.isFinite(t) && segmentText) {
+        const key = `${Math.floor(t * 1000)}:${segmentText}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          segments.push({ t, text: segmentText });
+        }
+      }
+    }
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk(data);
+  segments.sort((left, right) => left.t - right.t);
+  return segments;
 }
 
 async function fetchPageHtml(document) {

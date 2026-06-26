@@ -80,17 +80,21 @@ test("captures transcript invisibly from the caption track (primary path)", asyn
   });
   const fetched = [];
   dom.window.fetch = async (url) => {
-    fetched.push(url);
-    return {
-      ok: true,
-      json: async () => ({
-        events: [
-          { tStartMs: 0, segs: [{ utf8: "Hello " }, { utf8: "world" }] },
-          { tStartMs: 4000, segs: [{ utf8: "second line" }] },
-          { tStartMs: 8000, segs: [{ utf8: "\n" }] }
-        ]
-      })
-    };
+    fetched.push(String(url));
+    if (String(url).includes("timedtext")) {
+      return {
+        ok: true,
+        json: async () => ({
+          events: [
+            { tStartMs: 0, segs: [{ utf8: "Hello " }, { utf8: "world" }] },
+            { tStartMs: 4000, segs: [{ utf8: "second line" }] },
+            { tStartMs: 8000, segs: [{ utf8: "\n" }] }
+          ]
+        })
+      };
+    }
+    // Watch-page HTML (no innertube transcript params here, so it uses timedtext).
+    return { ok: true, text: async () => "<html></html>" };
   };
 
   const result = await extractYouTubeResult(dom.window.document, {
@@ -107,12 +111,55 @@ test("captures transcript invisibly from the caption track (primary path)", asyn
     { t: 4, text: "second line" }
   ]);
   // Preferred the English track and requested machine-readable json3.
-  assert.equal(fetched.length, 1);
-  assert.ok(fetched[0].includes("lang=en"));
-  assert.ok(fetched[0].includes("fmt=json3"));
+  const timedtext = fetched.find((url) => url.includes("timedtext"));
+  assert.ok(timedtext.includes("lang=en"));
+  assert.ok(timedtext.includes("fmt=json3"));
   // Fully invisible: no transcript panel interaction at all.
   assert.ok(!events.some((event) => event.event.startsWith("transcript_button")));
   assert.ok(events.some((event) => event.event === "youtube_timedtext_fetch_succeeded"));
+});
+
+test("captures transcript via innertube get_transcript (primary API path)", async () => {
+  const transcriptResponse = {
+    actions: [{ updateEngagementPanelAction: { content: { transcriptRenderer: { content: { transcriptSearchPanelRenderer: { body: { transcriptSegmentListRenderer: { initialSegments: [
+      { transcriptSegmentRenderer: { startMs: "0", snippet: { runs: [{ text: "First " }, { text: "line" }] } } },
+      { transcriptSegmentRenderer: { startMs: "5000", snippet: { runs: [{ text: "Second line" }] } } }
+    ] } } } } } } } }]
+  };
+  const html = `<script>ytcfg.set({"INNERTUBE_API_KEY":"KEY123","INNERTUBE_CONTEXT_CLIENT_VERSION":"2.20260101"});</script>
+    <script>var ytInitialData = {"engagementPanels":[{"getTranscriptEndpoint":{"params":"PARAMS123"}}]};</script>`;
+  const events = [];
+  const calls = [];
+  const dom = new JSDOM(`<title>Video</title>
+    <meta property="og:title" content="Innertube demo">`, {
+    url: "https://www.youtube.com/watch?v=api123",
+    pretendToBeVisual: true
+  });
+  dom.window.fetch = async (url, opts) => {
+    calls.push({ url: String(url), method: opts && opts.method });
+    if (String(url).includes("get_transcript")) {
+      return { ok: true, json: async () => transcriptResponse };
+    }
+    return { ok: true, text: async () => html };
+  };
+
+  const result = await extractYouTubeResult(dom.window.document, {
+    discoverTranscript: true,
+    transcriptDiscoveryTimeoutMs: 1000,
+    onDiagnostic: (event) => events.push(event)
+  });
+
+  assert.equal(result.transcript_source, "innertube_transcript");
+  assert.equal(result.transcript_status, "full");
+  assert.deepEqual(result.segments, [
+    { t: 0, text: "First line" },
+    { t: 5, text: "Second line" }
+  ]);
+  const post = calls.find((call) => call.url.includes("get_transcript"));
+  assert.ok(post && post.method === "POST");
+  assert.ok(post.url.includes("key=KEY123"));
+  assert.ok(!events.some((event) => event.event.startsWith("transcript_button")));
+  assert.ok(events.some((event) => event.event === "youtube_innertube_transcript_succeeded"));
 });
 
 test("fetches the watch-page HTML to recover caption tracks when the DOM lacks them", async () => {
