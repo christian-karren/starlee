@@ -106,6 +106,7 @@ pub fn search(
                     source_type: serde_json::from_value(serde_json::Value::String(source_type))
                         .unwrap_or_default(),
                     site,
+                    author: None,
                     url,
                     captured_at,
                     consumed_at: None,
@@ -114,6 +115,7 @@ pub fn search(
                     } else {
                         Access::Restricted
                     },
+                    topics: Vec::new(),
                     snippet: summary,
                     file_path: format!("{}#source", path.display()),
                     score: 0.0,

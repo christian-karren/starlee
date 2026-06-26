@@ -543,6 +543,32 @@ mod integration_tests {
     }
 
     #[test]
+    fn recent_includes_author_and_topics_for_library_filtering() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));
+        let mut input = CaptureInput::new(
+            "Photosynthesis",
+            "Plants convert light into chemical energy.",
+            SourceType::Article,
+            Access::Public,
+        );
+        input.author = Some("Dr. Green".into());
+        input.topics = vec!["Biology".into(), "Plants".into()];
+        let record = engine.capture(input)?;
+
+        let hits = engine.recent(10)?;
+        let hit = hits
+            .iter()
+            .find(|hit| hit.id == record.metadata.id)
+            .expect("captured record appears in recent");
+        assert_eq!(hit.author.as_deref(), Some("Dr. Green"));
+        let mut topics = hit.topics.clone();
+        topics.sort();
+        assert_eq!(topics, vec!["Biology".to_owned(), "Plants".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
     fn onboarding_report_does_not_expose_capture_token() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(TestEmbedder));

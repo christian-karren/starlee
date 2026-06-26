@@ -203,11 +203,15 @@ pub struct SearchHit {
     pub source_type: SourceType,
     #[serde(default)]
     pub site: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
     pub url: Option<String>,
     pub captured_at: String,
     #[serde(default)]
     pub consumed_at: Option<String>,
     pub access: Access,
+    #[serde(default)]
+    pub topics: Vec<String>,
     pub snippet: String,
     pub file_path: String,
     pub score: f64,

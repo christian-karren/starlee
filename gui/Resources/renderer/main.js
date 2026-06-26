@@ -5,6 +5,7 @@ const state = {
   readiness: "",
   backgroundSettings: window.starleeDefaultPixelDitherSettings,
   editMode: false,
+  filters: { type: "", author: "", topic: "", from: "", to: "" },
 };
 
 const elements = {
@@ -13,6 +14,15 @@ const elements = {
   empty: document.querySelector("#empty-state"),
   background: document.querySelector("#pixel-dither-background"),
   editToggle: document.querySelector("#edit-toggle"),
+  filterToggle: document.querySelector("#filter-toggle"),
+  filterPanel: document.querySelector("#filter-panel"),
+  filterType: document.querySelector("#filter-type"),
+  filterAuthor: document.querySelector("#filter-author"),
+  filterTopic: document.querySelector("#filter-topic"),
+  filterFrom: document.querySelector("#filter-from"),
+  filterTo: document.querySelector("#filter-to"),
+  filterClear: document.querySelector("#filter-clear"),
+  filterCount: document.querySelector("#filter-count"),
   reader: document.querySelector("#reader"),
   readerTitle: document.querySelector("#reader-title"),
   readerMeta: document.querySelector("#reader-meta"),
@@ -20,6 +30,8 @@ const elements = {
   readerActions: document.querySelector("#reader-actions"),
   readerBody: document.querySelector("#reader-body"),
 };
+
+const TYPE_LABELS = { article: "Article", youtube: "YouTube", note: "Note", spotify_episode: "Spotify", document: "Document" };
 
 const pixelBackground = window.createStarleeBackground(
   elements.background,
@@ -45,15 +57,74 @@ function postToHost(message) {
 
 function matchesQuery(capture, query) {
   if (!query) return true;
-  return [capture.title, capture.source, capture.type, capture.snippet]
+  return [capture.title, capture.source, capture.type, capture.snippet, (capture.topics || []).join(" ")]
     .join(" ")
     .toLowerCase()
     .includes(query);
 }
 
+function dayOf(capture) {
+  return String(capture.capturedAt || "").slice(0, 10); // YYYY-MM-DD (ISO sorts lexically)
+}
+
+function matchesFilters(capture) {
+  const f = state.filters;
+  if (f.type && capture.type !== f.type) return false;
+  if (f.author && (capture.author || "") !== f.author) return false;
+  if (f.topic && !(capture.topics || []).includes(f.topic)) return false;
+  const day = dayOf(capture);
+  if (f.from && (!day || day < f.from)) return false;
+  if (f.to && (!day || day > f.to)) return false;
+  return true;
+}
+
+function activeFilterCount() {
+  const f = state.filters;
+  return ["type", "author", "topic", "from", "to"].filter((key) => f[key]).length;
+}
+
+function fillSelect(select, values, currentValue) {
+  if (!select) return;
+  const placeholder = select.querySelector('option[value=""]');
+  select.innerHTML = "";
+  if (placeholder) select.appendChild(placeholder);
+  values.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = TYPE_LABELS[value] || value;
+    select.appendChild(option);
+  });
+  // Keep the current selection if it still exists, else reset.
+  select.value = values.includes(currentValue) ? currentValue : "";
+  if (select.value !== currentValue) {
+    return false;
+  }
+  return true;
+}
+
+function populateFilterOptions() {
+  const types = [...new Set(state.captures.map((c) => c.type).filter(Boolean))].sort();
+  const authors = [...new Set(state.captures.map((c) => c.author).filter(Boolean))].sort();
+  const topics = [...new Set(state.captures.flatMap((c) => c.topics || []).filter(Boolean))].sort();
+  if (!fillSelect(elements.filterType, types, state.filters.type)) state.filters.type = "";
+  if (!fillSelect(elements.filterAuthor, authors, state.filters.author)) state.filters.author = "";
+  if (!fillSelect(elements.filterTopic, topics, state.filters.topic)) state.filters.topic = "";
+}
+
 function render() {
   const query = elements.search.value.trim().toLowerCase();
-  const captures = state.captures.filter((capture) => matchesQuery(capture, query));
+  const captures = state.captures.filter(
+    (capture) => matchesQuery(capture, query) && matchesFilters(capture)
+  );
+
+  const activeCount = activeFilterCount();
+  if (elements.filterToggle) {
+    elements.filterToggle.classList.toggle("active", activeCount > 0);
+    elements.filterToggle.textContent = activeCount > 0 ? `Filter (${activeCount})` : "Filter";
+  }
+  if (elements.filterCount) {
+    elements.filterCount.textContent = `${captures.length} of ${state.captures.length}`;
+  }
 
   elements.empty.hidden = captures.length > 0;
   elements.row.classList.toggle("editing", state.editMode);
@@ -196,6 +267,7 @@ window.renderStarleeLibrary = (payload) => {
   state.totalCount = Number(payload?.totalCount ?? state.captures.length);
   state.readiness = payload?.readiness || "Ready";
   applyBackgroundSettings(payload?.backgroundSettings);
+  populateFilterOptions();
   render();
 };
 
@@ -210,6 +282,51 @@ elements.search.addEventListener("input", render);
 if (elements.editToggle) {
   elements.editToggle.addEventListener("click", () => setEditMode(!state.editMode));
 }
+
+// --- Filters --------------------------------------------------------------
+
+function setFilterPanelOpen(open) {
+  if (!elements.filterPanel || !elements.filterToggle) return;
+  elements.filterPanel.hidden = !open;
+  elements.filterToggle.setAttribute("aria-expanded", String(open));
+}
+
+if (elements.filterToggle) {
+  elements.filterToggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setFilterPanelOpen(elements.filterPanel.hidden);
+  });
+}
+
+function bindFilterControl(element, key) {
+  if (!element) return;
+  element.addEventListener("input", () => {
+    state.filters[key] = element.value;
+    render();
+  });
+}
+
+bindFilterControl(elements.filterType, "type");
+bindFilterControl(elements.filterAuthor, "author");
+bindFilterControl(elements.filterTopic, "topic");
+bindFilterControl(elements.filterFrom, "from");
+bindFilterControl(elements.filterTo, "to");
+
+if (elements.filterClear) {
+  elements.filterClear.addEventListener("click", () => {
+    state.filters = { type: "", author: "", topic: "", from: "", to: "" };
+    [elements.filterType, elements.filterAuthor, elements.filterTopic, elements.filterFrom, elements.filterTo]
+      .forEach((control) => { if (control) control.value = ""; });
+    render();
+  });
+}
+
+// Close the filter panel when clicking outside it.
+document.addEventListener("click", (event) => {
+  if (!elements.filterPanel || elements.filterPanel.hidden) return;
+  if (event.target.closest(".filter-wrap")) return;
+  setFilterPanelOpen(false);
+});
 
 // Delegated clicks on the card grid: delete button vs. open card.
 elements.row.addEventListener("click", (event) => {

@@ -238,18 +238,31 @@ impl Index {
         self.init()?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id,title,type,site,url,captured_at,access,summary,file_path,consumed_at
-             FROM sources ORDER BY COALESCE(consumed_at,captured_at) DESC LIMIT ?1",
+            "SELECT s.id,s.title,s.type,s.site,s.url,s.captured_at,s.access,s.summary,s.file_path,
+                    s.consumed_at,s.author,
+                    (SELECT GROUP_CONCAT(topic, char(10)) FROM source_topics st WHERE st.source_id = s.id) AS topics
+             FROM sources s ORDER BY COALESCE(s.consumed_at,s.captured_at) DESC LIMIT ?1",
         )?;
         let rows = statement.query_map([limit], |row| {
             let source_type: String = row.get(2)?;
             let access: String = row.get(6)?;
+            let topics = row
+                .get::<_, Option<String>>(11)?
+                .map(|joined| {
+                    joined
+                        .split('\n')
+                        .filter(|topic| !topic.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             Ok(SearchHit {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 source_type: serde_json::from_value(serde_json::Value::String(source_type))
                     .unwrap_or_default(),
                 site: row.get(3)?,
+                author: row.get(10)?,
                 url: row.get(4)?,
                 captured_at: row.get(5)?,
                 consumed_at: row.get(9)?,
@@ -258,6 +271,7 @@ impl Index {
                 } else {
                     Access::Restricted
                 },
+                topics,
                 snippet: row.get(7)?,
                 file_path: row.get(8)?,
                 score: 0.0,

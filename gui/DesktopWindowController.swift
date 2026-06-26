@@ -13,11 +13,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let title: String
         let type: String
         let site: String?
+        let author: String?
         let url: URL?
         let capturedAt: Date?
         let capturedAtText: String
         let filePath: String
         let snippet: String
+        let topics: [String]
 
         var monthKey: String {
             guard let capturedAt else { return "undated" }
@@ -1094,11 +1096,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             title: title,
             type: value["type"] as? String ?? "note",
             site: value["site"] as? String,
+            author: (value["author"] as? String).flatMap { $0.isEmpty ? nil : $0 },
             url: urlString.flatMap(URL.init(string:)),
             capturedAt: parseDate(dateText),
             capturedAtText: dateText,
             filePath: value["file_path"] as? String ?? "",
-            snippet: value["snippet"] as? String ?? ""
+            snippet: value["snippet"] as? String ?? "",
+            topics: (value["topics"] as? [String]) ?? []
         )
     }
 
@@ -1197,10 +1201,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                     "title": capture.title,
                     "type": capture.type,
                     "source": capture.source,
+                    "author": capture.author ?? "",
                     "date": displayDate(capture.capturedAt, fallback: capture.capturedAtText),
+                    "capturedAt": capture.capturedAtText,
                     "snippet": capture.snippet,
                     "url": capture.url?.absoluteString ?? "",
-                    "filePath": capture.filePath
+                    "filePath": capture.filePath,
+                    "topics": capture.topics
                 ]
             }
         ]
