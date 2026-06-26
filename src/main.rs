@@ -6,14 +6,17 @@ mod documents;
 mod embedding;
 mod engine;
 mod http;
+mod identity;
 mod index;
 mod mcp;
 mod model;
 mod public_fetch;
 mod sensor_assets;
 mod spotify;
+mod sync;
 mod topics;
 mod vault;
+mod vault_backend;
 mod youtube;
 
 use std::{path::PathBuf, sync::Arc};

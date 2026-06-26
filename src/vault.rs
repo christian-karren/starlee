@@ -1,26 +1,25 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Utc};
-use sha2::{Digest, Sha256};
 
 use crate::model::{CaptureInput, Frontmatter, Record, SourceType};
+use crate::vault_backend::{LocalFsBackend, VaultBackend, VaultPath};
 
 pub struct Vault {
-    root: PathBuf,
+    backend: Box<dyn VaultBackend>,
 }
 
 impl Vault {
+    /// Construct a vault backed by the local filesystem rooted at `root`.
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            backend: Box::new(LocalFsBackend::new(root)),
+        }
     }
 
     pub fn init(&self) -> Result<()> {
-        fs::create_dir_all(&self.root)
-            .with_context(|| format!("create vault {}", self.root.display()))
+        self.backend.init()
     }
 
     pub fn write(&self, input: CaptureInput) -> Result<Record> {
@@ -33,8 +32,7 @@ impl Vault {
 
         self.init()?;
         let now = Utc::now();
-        let year = self.root.join(now.year().to_string());
-        fs::create_dir_all(&year)?;
+        let year = now.year().to_string();
         let (id, file_name) = if matches!(input.source_type, SourceType::SpotifyEpisode) {
             let episode_id = input
                 .spotify_episode_id
@@ -46,34 +44,25 @@ impl Vault {
                 format!("{}-spotify-{episode_id}.md", now.format("%Y-%m-%d")),
             )
         } else {
-            let mut hasher = Sha256::new();
-            hasher.update(input.url.as_deref().unwrap_or(&input.title));
-            hasher.update(now.timestamp_nanos_opt().unwrap_or_default().to_le_bytes());
-            let digest = format!("{:x}", hasher.finalize());
-            let id = format!(
-                "{}-{}-{}",
-                now.format("%Y-%m%d"),
-                &digest[..6],
-                &digest[6..12]
-            );
+            // Stable, content-addressed identity (PRD REQ-001): derived from the
+            // canonical URL (or title+body for note-only captures), never from
+            // wall-clock time, so the same source captured on any device shares
+            // one ID and converges on sync instead of duplicating.
+            let id = crate::identity::record_id(input.url.as_deref(), &input.title, &input.text);
             (id.clone(), format!("{}-{}.md", id, slugify(&input.title)))
         };
-        let path = year.join(file_name);
-        self.write_record(path, id, input, now)
+        let rel = VaultPath::parse(&format!("{year}/{file_name}"))?;
+        self.write_record(rel, id, input, now)
     }
 
     pub fn replace(&self, existing: &Record, input: CaptureInput) -> Result<Record> {
-        self.write_record(
-            PathBuf::from(&existing.file_path),
-            existing.metadata.id.clone(),
-            input,
-            Utc::now(),
-        )
+        let rel = self.to_logical(Path::new(&existing.file_path))?;
+        self.write_record(rel, existing.metadata.id.clone(), input, Utc::now())
     }
 
     fn write_record(
         &self,
-        path: PathBuf,
+        rel: VaultPath,
         id: String,
         input: CaptureInput,
         captured_at: chrono::DateTime<Utc>,
@@ -83,9 +72,6 @@ impl Vault {
         }
         if input.text.trim().is_empty() {
             bail!("text cannot be empty")
-        }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
         }
         let summary = input
             .summary
@@ -133,18 +119,22 @@ impl Vault {
             })
             .unwrap_or_default();
         let document = format!("---\n{}---\n\n{}{}\n", yaml, description, input.text.trim());
-        let temporary = path.with_extension("md.tmp");
-        fs::write(&temporary, document)?;
-        fs::rename(&temporary, &path)?;
+        self.backend.write(&rel, document.as_bytes())?;
         Ok(Record {
             metadata,
             body: input.text.trim().to_owned(),
-            file_path: path.display().to_string(),
+            file_path: self.display_path(&rel),
         })
     }
 
     pub fn read(&self, path: &Path) -> Result<Record> {
-        let text = fs::read_to_string(path)?;
+        let rel = self.to_logical(path)?;
+        self.read_logical(&rel)
+    }
+
+    fn read_logical(&self, rel: &VaultPath) -> Result<Record> {
+        let bytes = self.backend.read(rel)?;
+        let text = String::from_utf8(bytes).context("vault record is not valid UTF-8")?;
         let rest = text
             .strip_prefix("---\n")
             .context("missing YAML frontmatter")?;
@@ -155,29 +145,16 @@ impl Vault {
         Ok(Record {
             metadata,
             body: strip_nonqueryable_description(body).trim().to_owned(),
-            file_path: path.display().to_string(),
+            file_path: self.display_path(rel),
         })
     }
 
     pub fn records(&self) -> Result<Vec<Record>> {
-        let mut paths = Vec::new();
-        if !self.root.exists() {
-            return Ok(Vec::new());
-        }
-        for year in fs::read_dir(&self.root)? {
-            let year = year?.path();
-            if !year.is_dir() {
-                continue;
-            }
-            for entry in fs::read_dir(year)? {
-                let path = entry?.path();
-                if path.extension().and_then(|v| v.to_str()) == Some("md") {
-                    paths.push(path);
-                }
-            }
-        }
-        paths.sort();
-        paths.into_iter().map(|path| self.read(&path)).collect()
+        self.backend
+            .list()?
+            .into_iter()
+            .map(|rel| self.read_logical(&rel))
+            .collect()
     }
 
     /// Permanently delete a record's Markdown file from the vault.
@@ -187,21 +164,41 @@ impl Vault {
     /// whose `file_path` was tampered with to point elsewhere (e.g. via `..`
     /// traversal) is refused rather than deleting an arbitrary file.
     pub fn delete(&self, record: &Record) -> Result<bool> {
-        let safe = self.resolve_within_root(Path::new(&record.file_path))?;
-        match fs::remove_file(&safe) {
-            Ok(()) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(error).with_context(|| format!("delete {}", safe.display())),
-        }
+        let rel = self.to_logical_secure(Path::new(&record.file_path))?;
+        self.backend.remove(&rel)
     }
 
-    /// Resolve `path` to a canonical location and confirm it is inside the vault
-    /// root. Fails closed on any path that escapes the root.
-    fn resolve_within_root(&self, path: &Path) -> Result<PathBuf> {
+    /// The absolute, user-facing path for a record (used as `Record.file_path`
+    /// so consumers like the desktop "Reveal in Finder" action can open it).
+    fn display_path(&self, rel: &VaultPath) -> String {
+        self.backend
+            .root()
+            .join(rel.as_path())
+            .display()
+            .to_string()
+    }
+
+    /// Map a path that may be absolute (as stored in `Record.file_path` / the
+    /// index) back to a logical [`VaultPath`]. Lenient: used on read/write paths
+    /// that originate from the vault itself.
+    fn to_logical(&self, path: &Path) -> Result<VaultPath> {
+        let root = self.backend.root();
+        let relative = match path.strip_prefix(root) {
+            Ok(stripped) => stripped.to_path_buf(),
+            Err(_) => path.to_path_buf(),
+        };
+        VaultPath::parse(&relative.to_string_lossy())
+    }
+
+    /// Like [`Self::to_logical`] but fails closed if the path resolves outside
+    /// the vault root, collapsing any `..` segments first. Used for deletion so
+    /// a tampered `file_path` can never remove an arbitrary file.
+    fn to_logical_secure(&self, path: &Path) -> Result<VaultPath> {
         let root = self
-            .root
+            .backend
+            .root()
             .canonicalize()
-            .with_context(|| format!("resolve vault root {}", self.root.display()))?;
+            .with_context(|| format!("resolve vault root {}", self.backend.root().display()))?;
         let resolved = if path.exists() {
             path.canonicalize()
                 .with_context(|| format!("resolve {}", path.display()))?
@@ -223,7 +220,10 @@ impl Vault {
                 resolved.display()
             );
         }
-        Ok(resolved)
+        let relative = resolved
+            .strip_prefix(&root)
+            .with_context(|| format!("relativize {}", resolved.display()))?;
+        VaultPath::parse(&relative.to_string_lossy())
     }
 }
 
@@ -276,6 +276,8 @@ fn strip_nonqueryable_description(body: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]

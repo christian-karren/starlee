@@ -7,11 +7,15 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
+argon2 = "0.5"
 bytemuck = "1"
+chacha20poly1305 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
+data-encoding = "2"
 fastembed = { version = "5.17", default-features = false, features = ["hf-hub-native-tls", "ort-download-binaries-native-tls"] }
 getrandom = "0.4"
+hkdf = "0.12"
 pdf-extract = "0.7"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
@@ -24,6 +28,7 @@ sqlite-vec = "=0.1.7-alpha.2"
 tiny_http = "0.12"
 ureq = { version = "3.3", features = ["json"] }
 url = "2"
+zeroize = { version = "1", features = ["zeroize_derive"] }
 
 [dev-dependencies]
 tempfile = "3"
