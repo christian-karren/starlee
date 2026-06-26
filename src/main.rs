@@ -15,6 +15,7 @@ mod sensor_assets;
 mod spotify;
 mod topics;
 mod vault;
+mod vault_backend;
 mod youtube;
 
 use std::{path::PathBuf, sync::Arc};
