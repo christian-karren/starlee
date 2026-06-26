@@ -9,6 +9,7 @@ test:
 	cargo fmt --check
 	cargo test
 	cargo clippy --all-targets -- -D warnings
+	./scripts/test-gui.sh
 
 release:
 	cd sensor && npm install && npm run build && npm test
