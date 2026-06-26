@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test",
+    "test:integration": "node --test test/integration/*.test.js",
     "package:chrome": "../scripts/package-chrome-extension.sh",
     "inspect:chrome": "../scripts/inspect-chrome-extension-package.sh",
     "package:safari": "../scripts/package-safari-extension.sh",
