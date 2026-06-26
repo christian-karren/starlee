@@ -766,6 +766,23 @@ test("view-model: a caption line that itself looks like a timestamp is preserved
   ]);
 });
 
+test("strips the screen-reader duration label from view-model segments", async () => {
+  // The view-model timestamp element renders both the visible stamp and a
+  // screen-reader duration ("1 minute, 8 seconds") that concatenates into the text.
+  const dom = new JSDOM(`<title>Video</title><meta property="og:title" content="Duration label demo">
+    <ytd-transcript-renderer>
+      <transcript-segment-view-model><div>0:09<span>9 seconds</span></div><div>but SP says</div></transcript-segment-view-model>
+      <transcript-segment-view-model><div>1:08<span>1 minute, 8 seconds</span></div><div>in very rough shape</div></transcript-segment-view-model>
+      <transcript-segment-view-model><div>3:00<span>3 minutes</span></div><div>given those constraints</div></transcript-segment-view-model>
+    </ytd-transcript-renderer>`, { url: "https://www.youtube.com/watch?v=duration1234" });
+  const payload = await extractYouTube(dom.window.document);
+  assert.deepEqual(payload.transcript, [
+    { t: 9, text: "but SP says" },
+    { t: 68, text: "in very rough shape" },
+    { t: 180, text: "given those constraints" }
+  ]);
+});
+
 test("captures a Shorts URL and canonicalizes to a watch URL", async () => {
   const dom = new JSDOM(`<title>Video</title>
     <meta property="og:title" content="Short demo">

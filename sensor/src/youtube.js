@@ -613,9 +613,32 @@ function readTranscriptSegment(node) {
   const full = cleanText(node.textContent || "");
   const match = full.match(/^(\d{1,3}:\d{2}(?::\d{2})?)\s*([\s\S]+)$/);
   if (match) {
-    return { t: parseTimestamp(match[1]), text: cleanText(match[2]) };
+    const t = parseTimestamp(match[1]);
+    return { t, text: cleanText(stripDurationLabel(match[2], t)) };
   }
   return { t: Number.NaN, text: "" };
+}
+
+// The view-model timestamp element also renders a screen-reader duration label
+// ("1 minute, 8 seconds") right after the visible stamp, which concatenates into
+// the segment text. Strip that leading label, but ONLY when it exactly equals the
+// segment's timestamp, so a spoken line that genuinely starts with a duration is
+// never truncated.
+function stripDurationLabel(text, seconds) {
+  const label = text.match(/^(?:\d+\s*hours?\s*,?\s*)?(?:\d+\s*minutes?\s*,?\s*)?(?:\d+\s*seconds?)?/i);
+  if (label && label[0] && durationLabelToSeconds(label[0]) === seconds) {
+    return text.slice(label[0].length);
+  }
+  return text;
+}
+
+function durationLabelToSeconds(label) {
+  const hours = label.match(/(\d+)\s*hours?/i);
+  const minutes = label.match(/(\d+)\s*minutes?/i);
+  const secs = label.match(/(\d+)\s*seconds?/i);
+  return (hours ? Number(hours[1]) * 3600 : 0) +
+    (minutes ? Number(minutes[1]) * 60 : 0) +
+    (secs ? Number(secs[1]) : 0);
 }
 
 async function discoverTranscript(document, options = {}) {
