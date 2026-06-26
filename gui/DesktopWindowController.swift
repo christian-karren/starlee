@@ -1332,8 +1332,28 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             if let path = body["path"] as? String, !path.isEmpty {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
             }
+        case "setTopics":
+            if let id = body["id"] as? String {
+                setRecordTopics(id: id, topics: (body["topics"] as? [String]) ?? [])
+            }
         default:
             break
+        }
+    }
+
+    /// Persist a record's topic set, then refresh the Library so cards and the
+    /// filter facets reflect the change. The reader updates its chips
+    /// optimistically, so it is left open and untouched.
+    private func setRecordTopics(id: String, topics: [String]) {
+        var arguments = ["set-topics", id]
+        for topic in topics {
+            arguments.append("--topic")
+            arguments.append(topic)
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            _ = self.client.run(arguments)
+            DispatchQueue.main.async { self.reload() }
         }
     }
 

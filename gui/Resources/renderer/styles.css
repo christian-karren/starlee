@@ -448,6 +448,9 @@ time {
 }
 
 .topic-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 3px 9px;
   border: 1.5px solid var(--navy);
   border-radius: 999px;
@@ -455,6 +458,48 @@ time {
   color: var(--navy);
   font-size: 11px;
   font-weight: 700;
+}
+
+.topic-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--navy);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.topic-remove:hover {
+  background: rgba(19, 40, 75, 0.18);
+}
+
+.topic-add {
+  min-width: 110px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1.5px dashed rgba(19, 40, 75, 0.5);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--navy);
+  font: 600 11px var(--sans);
+}
+
+.topic-add::placeholder {
+  color: rgba(19, 40, 75, 0.5);
+}
+
+.topic-add:focus {
+  outline: none;
+  border-style: solid;
+  border-color: var(--navy);
 }
 
 .reader-close {

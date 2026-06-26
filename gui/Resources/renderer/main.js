@@ -207,16 +207,49 @@ function renderReaderActions(record) {
   elements.readerActions.innerHTML = actions.join("");
 }
 
-function renderReaderTopics(topics) {
-  if (!Array.isArray(topics) || topics.length === 0) {
-    elements.readerTopics.innerHTML = "";
-    elements.readerTopics.hidden = true;
-    return;
+// Mirror of the Rust topic sanitizer (src/topics.rs) so optimistic UI matches.
+function sanitizeTopic(raw) {
+  let out = "";
+  for (const ch of String(raw ?? "")) {
+    const code = ch.codePointAt(0);
+    out += code < 32 || code === 127 ? " " : ch;
   }
+  return out.replace(/\s+/g, " ").trim().slice(0, 64).trim();
+}
+
+function sanitizeTopics(list) {
+  const seen = new Set();
+  const out = [];
+  (list || []).forEach((raw) => {
+    const topic = sanitizeTopic(raw);
+    if (topic && !seen.has(topic.toLowerCase())) {
+      seen.add(topic.toLowerCase());
+      out.push(topic);
+    }
+  });
+  return out;
+}
+
+function renderReaderTopics(topics) {
   elements.readerTopics.hidden = false;
-  elements.readerTopics.innerHTML = topics
-    .map((topic) => `<span class="topic-chip">${escapeHtml(topic)}</span>`)
+  const chips = (topics || [])
+    .map(
+      (topic) => `
+        <span class="topic-chip topic-chip-editable">${escapeHtml(topic)}<button
+          class="topic-remove" type="button" data-remove-topic="${escapeHtml(topic)}"
+          aria-label="Remove topic ${escapeHtml(topic)}">×</button></span>`
+    )
     .join("");
+  elements.readerTopics.innerHTML = `${chips}<input class="topic-add" id="topic-add-input"
+    type="text" placeholder="Add topic…" aria-label="Add a topic" maxlength="64">`;
+}
+
+function commitReaderTopics(topics) {
+  if (!currentReaderRecord) return;
+  const clean = sanitizeTopics(topics);
+  currentReaderRecord.topics = clean;
+  renderReaderTopics(clean);
+  postToHost({ action: "setTopics", id: currentReaderRecord.id, topics: clean });
 }
 
 let currentReaderRecord = null;
@@ -369,9 +402,28 @@ elements.reader.addEventListener("click", (event) => {
     postToHost({ action: "reveal", path: reveal.dataset.reveal });
     return;
   }
+  const removeTopic = event.target.closest("[data-remove-topic]");
+  if (removeTopic && currentReaderRecord) {
+    const next = (currentReaderRecord.topics || []).filter(
+      (topic) => topic !== removeTopic.dataset.removeTopic
+    );
+    commitReaderTopics(next);
+    return;
+  }
   if (event.target.closest("[data-reader-delete]") && currentReaderRecord) {
     requestDelete(currentReaderRecord.id, currentReaderRecord.title);
   }
+});
+
+// Add a topic from the reader's "Add topic…" field.
+elements.reader.addEventListener("keydown", (event) => {
+  if (event.target.id !== "topic-add-input" || event.key !== "Enter") return;
+  event.preventDefault();
+  const value = event.target.value;
+  event.target.value = "";
+  if (!currentReaderRecord) return;
+  commitReaderTopics([...(currentReaderRecord.topics || []), value]);
+  requestAnimationFrame(() => document.querySelector("#topic-add-input")?.focus());
 });
 
 document.addEventListener("keydown", (event) => {
