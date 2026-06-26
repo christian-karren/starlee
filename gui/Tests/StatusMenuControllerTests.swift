@@ -13,8 +13,8 @@ private let hasWindowServer: Bool = {
 
 final class StatusMenuControllerTests: XCTestCase {
 
-    override func setUp() throws {
-        try super.setUp()
+    override func setUpWithError() throws {
+        try super.setUpWithError()
         try XCTSkipUnless(hasWindowServer, "No window server — skipping StatusMenuController tests")
     }
 
