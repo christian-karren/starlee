@@ -3,7 +3,22 @@ import AppKit
 
 // StatusMenuController, StarleeClient, NotificationController are compiled into the same binary.
 
+// NSStatusBar.system.statusItem() requires a window server connection (CGSConnectionByID).
+// Skip all tests in this suite when running headless (CI without a display).
+private let hasWindowServer: Bool = {
+    ProcessInfo.processInfo.environment["DISPLAY"] != nil
+        || ProcessInfo.processInfo.environment["TERM_PROGRAM"] != nil
+        || NSScreen.screens.isEmpty == false
+}()
+
 final class StatusMenuControllerTests: XCTestCase {
+
+    override func setUp() {
+        super.setUp()
+        guard hasWindowServer else {
+            throw XCTSkip("No window server — skipping StatusMenuController tests")
+        }
+    }
 
     private var statusItems: [NSStatusItem] = []
 
