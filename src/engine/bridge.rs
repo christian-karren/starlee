@@ -8,7 +8,10 @@ use crate::config::{
     CaptureDiagnosticEvent, CaptureRequestPageMetadata, ExtensionState, LocalConfig,
 };
 
-pub const CAPTURE_REQUEST_TTL: Duration = Duration::from_secs(10);
+// Generous enough to let the browser open the YouTube transcript panel and wait
+// out a slow transcript load (which can take several seconds) before the request
+// is considered stale.
+pub const CAPTURE_REQUEST_TTL: Duration = Duration::from_secs(25);
 pub const EXTENSION_HEARTBEAT_FRESHNESS: Duration = Duration::from_secs(5 * 60);
 const CAPTURE_DIAGNOSTIC_LIMIT: usize = 120;
 
@@ -271,6 +274,9 @@ pub(crate) fn youtube_reason_action(reason: &str) -> &'static str {
         }
         "transcript_rows_empty" => {
             "The transcript panel opened but rendered no lines. Reload the YouTube tab, open the transcript once, then capture again."
+        }
+        "transcript_panel_still_loading" => {
+            "The transcript was still loading when capture finished. Reload the tab, wait for the video to settle, then capture again."
         }
         "transcript_panel_not_opened" => {
             "Starlee found the transcript control but the panel did not open. Open the transcript once manually, then capture again."

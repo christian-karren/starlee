@@ -576,7 +576,9 @@ function readTranscriptSegment(node) {
 }
 
 async function discoverTranscript(document, options = {}) {
-  const timeoutMs = options.transcriptDiscoveryTimeoutMs ?? 5000;
+  // The transcript panel fetches its rows asynchronously and can show a loading
+  // spinner for several seconds; wait long enough for slow loads to resolve.
+  const timeoutMs = options.transcriptDiscoveryTimeoutMs ?? 12000;
   const deadline = Date.now() + timeoutMs;
   const startedAt = Date.now();
   const seen = new Set();
@@ -650,6 +652,12 @@ async function discoverTranscript(document, options = {}) {
         }, seen);
         if (openedByUs) closeTranscriptPanel(document);
         return { reason: unavailable.reason, panelOpened, rowCount, segments: [] };
+      }
+      if (transcriptPanelLoading(document)) {
+        emitTranscriptDiagnostic(options, "transcript_panel_loading", {
+          status: "loading",
+          safe_metadata: { elapsed_ms: String(Date.now() - startedAt) }
+        }, seen);
       }
       await sleep(150);
       continue;
@@ -758,6 +766,7 @@ async function discoverTranscript(document, options = {}) {
   // Capture the panel's element-tag fingerprint (no text) BEFORE closing it, so a
   // panel that renders rows we failed to match reveals which selectors drifted.
   const panelTags = panelOpened ? transcriptPanelFingerprint(document) : "";
+  const stillLoading = panelOpened ? transcriptPanelLoading(document) : false;
   if (openedByUs) closeTranscriptPanel(document);
   if (panelOpened) {
     emitTranscriptDiagnostic(options, "transcript_panel_opened", {
@@ -766,9 +775,19 @@ async function discoverTranscript(document, options = {}) {
     }, seen);
     emitTranscriptDiagnostic(options, "transcript_rows_empty", {
       status: "unavailable",
-      safe_metadata: { row_count: String(rowCount), segment_count: "0", panel_tags: panelTags }
+      safe_metadata: {
+        row_count: String(rowCount),
+        segment_count: "0",
+        panel_tags: panelTags,
+        is_loading: String(stillLoading)
+      }
     }, seen);
-    return { reason: "transcript_rows_empty", panelOpened, rowCount, segments: [] };
+    return {
+      reason: stillLoading ? "transcript_panel_still_loading" : "transcript_rows_empty",
+      panelOpened,
+      rowCount,
+      segments: []
+    };
   }
   if (clickAttempted) {
     emitTranscriptDiagnostic(options, "transcript_panel_not_opened", {
@@ -1006,6 +1025,18 @@ function transcriptRows(document) {
       "[data-purpose='transcript-segment']"
     ].join(", "))
   ];
+}
+
+// True when the transcript panel is showing a loading spinner — i.e. YouTube is
+// still fetching the rows, so we should keep waiting rather than conclude empty.
+function transcriptPanelLoading(document) {
+  const panel = document.querySelector([
+    "ytd-transcript-renderer",
+    "ytd-transcript-search-panel-renderer",
+    "ytd-engagement-panel-section-list-renderer[target-id*='transcript']"
+  ].join(", "));
+  if (!panel) return false;
+  return Boolean(panel.querySelector("tp-yt-paper-spinner, yt-content-loading-renderer, [class*='spinner'], [class*='loading']"));
 }
 
 // Redacted structural fingerprint of the transcript panel: the most common
