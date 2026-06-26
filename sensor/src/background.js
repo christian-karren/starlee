@@ -10,8 +10,11 @@ import {
 } from "./background-handoff.js";
 
 const DEFAULT_PORT = 47291;
-const DEFAULT_POLL_MINUTES = 1;
+// Alarm at the MV3 minimum so a fully-evicted worker re-wakes quickly and finds a
+// still-pending capture request (paired with the engine's longer request TTL).
+const DEFAULT_POLL_MINUTES = 0.5;
 const FALLBACK_POLL_SECONDS = 3;
+const KEEPALIVE_PORT = "starlee-keepalive";
 const BADGE_CLEAR_MS = 3500;
 const ALARM_NAME = "starlee-poll";
 const HELLO_REFRESH_MS = 5000;
@@ -71,6 +74,22 @@ function handleMessage(message, _sender, sendResponse) {
 chrome.action.onClicked.addListener(async (tab) => {
   const result = await captureTab(tab);
   await showResult(result);
+});
+
+// Top-level listeners so a re-spawned service worker rewires itself immediately on
+// any wake (browser start, install, alarm, or keep-alive reconnect) — never inside
+// an async function, which would miss events that woke the worker.
+chrome.runtime.onStartup?.addListener?.(startLocalBridge);
+chrome.runtime.onInstalled?.addListener?.(startLocalBridge);
+chrome.alarms?.onAlarm?.addListener?.((alarm) => {
+  if (alarm.name === ALARM_NAME) pollCaptureRequest();
+});
+chrome.runtime.onConnect?.addListener?.((port) => {
+  if (port.name === KEEPALIVE_PORT) {
+    // Holding the port open defers worker eviction; it auto-closes after ~5 min
+    // and keepAlive() reconnects, so the worker stays warm and keeps polling.
+    port.onDisconnect.addListener(() => {});
+  }
 });
 
 startLocalBridge();
@@ -169,15 +188,28 @@ async function captureTab(tab) {
 }
 
 async function startLocalBridge() {
+  // Always (re)arm the alarm and keep-alive, even if a poll loop is already running
+  // in this worker instance, so a freshly-woken worker is fully wired.
+  chrome.alarms?.create?.(ALARM_NAME, { periodInMinutes: DEFAULT_POLL_MINUTES });
+  keepAlive();
   if (polling) return;
   polling = true;
   await hello();
   await pollCaptureRequest();
-  chrome.alarms?.create?.(ALARM_NAME, { periodInMinutes: DEFAULT_POLL_MINUTES });
-  chrome.alarms?.onAlarm?.addListener((alarm) => {
-    if (alarm.name === ALARM_NAME) pollCaptureRequest();
-  });
   setInterval(pollCaptureRequest, FALLBACK_POLL_SECONDS * 1000);
+}
+
+// Self-connecting keep-alive: an open runtime port resets the worker's idle timer.
+// MV3 force-closes ports after ~5 minutes, so reconnect on disconnect to stay warm.
+function keepAlive() {
+  try {
+    const port = chrome.runtime.connect({ name: KEEPALIVE_PORT });
+    port.onDisconnect.addListener(() => {
+      keepAlive();
+    });
+  } catch {
+    // connect can throw if no receiver yet; the alarm still re-wakes the worker.
+  }
 }
 
 async function hello(_options = {}) {
