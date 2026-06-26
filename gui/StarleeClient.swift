@@ -20,6 +20,18 @@ struct CaptureRequestStatusResult {
 final class StarleeClient {
     private var engineProcess: Process?
     let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Starlee")
+    let session: URLSession
+
+    /// Injected for testing; defaults to the shared session in production.
+    /// - Set `overrideConfig` to a dictionary to inject a fake config.
+    /// - Set `blockDiskConfig` to true to make `localConfig()` always return nil
+    ///   (simulates missing config without reading from disk).
+    var overrideConfig: [String: Any]? = nil
+    var blockDiskConfig: Bool = false
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
 
     func run(_ arguments: [String]) -> String {
         let process = Process()
@@ -57,6 +69,8 @@ final class StarleeClient {
     }
 
     func localConfig() -> [String: Any]? {
+        if blockDiskConfig { return nil }
+        if let override = overrideConfig { return override }
         let url = home.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -144,7 +158,7 @@ final class StarleeClient {
 
         let semaphore = DispatchSemaphore(value: 0)
         var result = PostResult(ok: false, message: "No response from Starlee.")
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        session.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }
             if let error {
                 result = PostResult(ok: false, message: error.localizedDescription)
@@ -174,7 +188,7 @@ final class StarleeClient {
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["source": source])
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        session.dataTask(with: request) { data, response, error in
             let result: CaptureRequestPostResult
             if let error {
                 result = CaptureRequestPostResult(ok: false, message: error.localizedDescription, requestId: nil)
@@ -211,7 +225,7 @@ final class StarleeClient {
         request.timeoutInterval = 5
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        session.dataTask(with: request) { data, response, error in
             let result: CaptureRequestStatusResult
             if let error {
                 result = CaptureRequestStatusResult(ok: false, status: nil, message: error.localizedDescription)

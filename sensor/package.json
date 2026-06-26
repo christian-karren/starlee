@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test 'test/*.test.js'",
+    "test:integration": "node --test test/integration/*.test.js",
     "test:e2e": "playwright test",
     "package:chrome": "../scripts/package-chrome-extension.sh",
     "inspect:chrome": "../scripts/inspect-chrome-extension-package.sh",
