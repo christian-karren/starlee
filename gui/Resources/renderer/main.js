@@ -6,7 +6,6 @@ const state = {
   backgroundSettings: window.starleeDefaultPixelDitherSettings,
   editMode: false,
   sortMode: "newest",
-  filters: { type: "", author: "", topic: "", from: "", to: "" },
 };
 
 const elements = {
@@ -17,17 +16,9 @@ const elements = {
   background: document.querySelector("#pixel-dither-background"),
   editToggle: document.querySelector("#edit-toggle"),
   uploadButton: document.querySelector("#upload-button"),
+  settingsButton: document.querySelector("#settings-button"),
   sortToggle: document.querySelector("#sort-toggle"),
   sortPanel: document.querySelector("#sort-panel"),
-  filterToggle: document.querySelector("#filter-toggle"),
-  filterPanel: document.querySelector("#filter-panel"),
-  filterType: document.querySelector("#filter-type"),
-  filterAuthor: document.querySelector("#filter-author"),
-  filterTopic: document.querySelector("#filter-topic"),
-  filterFrom: document.querySelector("#filter-from"),
-  filterTo: document.querySelector("#filter-to"),
-  filterClear: document.querySelector("#filter-clear"),
-  filterCount: document.querySelector("#filter-count"),
   reader: document.querySelector("#reader"),
   readerTitle: document.querySelector("#reader-title"),
   readerMeta: document.querySelector("#reader-meta"),
@@ -35,8 +26,6 @@ const elements = {
   readerActions: document.querySelector("#reader-actions"),
   readerBody: document.querySelector("#reader-body"),
 };
-
-const TYPE_LABELS = { article: "Article", youtube: "YouTube", note: "Note", spotify_episode: "Spotify", document: "Document" };
 
 const pixelBackground = window.createStarleeBackground(
   elements.background,
@@ -68,10 +57,6 @@ function matchesQuery(capture, query) {
     .includes(query);
 }
 
-function dayOf(capture) {
-  return String(capture.capturedAt || "").slice(0, 10); // YYYY-MM-DD (ISO sorts lexically)
-}
-
 function sortValue(value) {
   return String(value || "").trim().toLocaleLowerCase();
 }
@@ -101,66 +86,11 @@ function sortedCaptures(captures) {
   return sorted;
 }
 
-function matchesFilters(capture) {
-  const f = state.filters;
-  if (f.type && capture.type !== f.type) return false;
-  if (f.author && (capture.author || "") !== f.author) return false;
-  if (f.topic && !(capture.topics || []).includes(f.topic)) return false;
-  const day = dayOf(capture);
-  if (f.from && (!day || day < f.from)) return false;
-  if (f.to && (!day || day > f.to)) return false;
-  return true;
-}
-
-function activeFilterCount() {
-  const f = state.filters;
-  return ["type", "author", "topic", "from", "to"].filter((key) => f[key]).length;
-}
-
-function fillSelect(select, values, currentValue) {
-  if (!select) return;
-  const placeholder = select.querySelector('option[value=""]');
-  select.innerHTML = "";
-  if (placeholder) select.appendChild(placeholder);
-  values.forEach((value) => {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = TYPE_LABELS[value] || value;
-    select.appendChild(option);
-  });
-  // Keep the current selection if it still exists, else reset.
-  select.value = values.includes(currentValue) ? currentValue : "";
-  if (select.value !== currentValue) {
-    return false;
-  }
-  return true;
-}
-
-function populateFilterOptions() {
-  const types = [...new Set(state.captures.map((c) => c.type).filter(Boolean))].sort();
-  const authors = [...new Set(state.captures.map((c) => c.author).filter(Boolean))].sort();
-  const topics = [...new Set(state.captures.flatMap((c) => c.topics || []).filter(Boolean))].sort();
-  if (!fillSelect(elements.filterType, types, state.filters.type)) state.filters.type = "";
-  if (!fillSelect(elements.filterAuthor, authors, state.filters.author)) state.filters.author = "";
-  if (!fillSelect(elements.filterTopic, topics, state.filters.topic)) state.filters.topic = "";
-}
-
 function render() {
   const query = elements.search.value.trim().toLowerCase();
-  const captures = state.captures.filter(
-    (capture) => matchesQuery(capture, query) && matchesFilters(capture)
-  );
+  const captures = state.captures.filter((capture) => matchesQuery(capture, query));
   const visibleCaptures = sortedCaptures(captures);
 
-  const activeCount = activeFilterCount();
-  if (elements.filterToggle) {
-    elements.filterToggle.classList.toggle("active", activeCount > 0);
-    if (activeCount > 0) {
-      elements.filterToggle.dataset.count = String(activeCount);
-    } else {
-      delete elements.filterToggle.dataset.count;
-    }
-  }
   if (elements.sortToggle) {
     elements.sortToggle.classList.toggle("active", state.sortMode !== "newest");
     elements.sortToggle.title = `Sort the library (${sortLabel(state.sortMode)})`;
@@ -170,10 +100,6 @@ function render() {
       button.setAttribute("aria-pressed", String(button.dataset.sort === state.sortMode));
     });
   }
-  if (elements.filterCount) {
-    elements.filterCount.textContent = `${visibleCaptures.length} of ${state.captures.length}`;
-  }
-
   const libraryEmpty = state.captures.length === 0;
   const noResults = !libraryEmpty && visibleCaptures.length === 0;
   if (elements.emptyLibrary) elements.emptyLibrary.hidden = !libraryEmpty;
@@ -275,49 +201,15 @@ function renderReaderActions(record) {
   elements.readerActions.innerHTML = actions.join("");
 }
 
-// Mirror of the Rust topic sanitizer (src/topics.rs) so optimistic UI matches.
-function sanitizeTopic(raw) {
-  let out = "";
-  for (const ch of String(raw ?? "")) {
-    const code = ch.codePointAt(0);
-    out += code < 32 || code === 127 ? " " : ch;
-  }
-  return out.replace(/\s+/g, " ").trim().slice(0, 64).trim();
-}
-
-function sanitizeTopics(list) {
-  const seen = new Set();
-  const out = [];
-  (list || []).forEach((raw) => {
-    const topic = sanitizeTopic(raw);
-    if (topic && !seen.has(topic.toLowerCase())) {
-      seen.add(topic.toLowerCase());
-      out.push(topic);
-    }
-  });
-  return out;
-}
-
 function renderReaderTopics(topics) {
-  elements.readerTopics.hidden = false;
+  elements.readerTopics.hidden = !(topics || []).length;
   const chips = (topics || [])
     .map(
       (topic) => `
-        <span class="topic-chip topic-chip-editable">${escapeHtml(topic)}<button
-          class="topic-remove" type="button" data-remove-topic="${escapeHtml(topic)}"
-          aria-label="Remove topic ${escapeHtml(topic)}">×</button></span>`
+        <span class="topic-chip">${escapeHtml(topic)}</span>`
     )
     .join("");
-  elements.readerTopics.innerHTML = `${chips}<input class="topic-add" id="topic-add-input"
-    type="text" placeholder="Add topic…" aria-label="Add a topic" maxlength="64">`;
-}
-
-function commitReaderTopics(topics) {
-  if (!currentReaderRecord) return;
-  const clean = sanitizeTopics(topics);
-  currentReaderRecord.topics = clean;
-  renderReaderTopics(clean);
-  postToHost({ action: "setTopics", id: currentReaderRecord.id, topics: clean });
+  elements.readerTopics.innerHTML = chips;
 }
 
 let currentReaderRecord = null;
@@ -374,7 +266,6 @@ window.renderStarleeLibrary = (payload) => {
   state.totalCount = Number(payload?.totalCount ?? state.captures.length);
   state.readiness = payload?.readiness || "Ready";
   applyBackgroundSettings(payload?.backgroundSettings);
-  populateFilterOptions();
   render();
   if (payload?.showOnboarding) onboarding.maybeShow();
 };
@@ -397,13 +288,16 @@ if (elements.uploadButton) {
   elements.uploadButton.addEventListener("click", () => postToHost({ action: "upload" }));
 }
 
+if (elements.settingsButton) {
+  elements.settingsButton.addEventListener("click", () => postToHost({ action: "settings" }));
+}
+
 // --- Sort -----------------------------------------------------------------
 
 function setSortPanelOpen(open) {
   if (!elements.sortPanel || !elements.sortToggle) return;
   elements.sortPanel.hidden = !open;
   elements.sortToggle.setAttribute("aria-expanded", String(open));
-  if (open) setFilterPanelOpen(false);
 }
 
 if (elements.sortToggle) {
@@ -423,49 +317,9 @@ if (elements.sortPanel) {
   });
 }
 
-// --- Filters --------------------------------------------------------------
-
-function setFilterPanelOpen(open) {
-  if (!elements.filterPanel || !elements.filterToggle) return;
-  elements.filterPanel.hidden = !open;
-  elements.filterToggle.setAttribute("aria-expanded", String(open));
-  if (open) setSortPanelOpen(false);
-}
-
-if (elements.filterToggle) {
-  elements.filterToggle.addEventListener("click", (event) => {
-    event.stopPropagation();
-    setFilterPanelOpen(elements.filterPanel.hidden);
-  });
-}
-
-function bindFilterControl(element, key) {
-  if (!element) return;
-  element.addEventListener("input", () => {
-    state.filters[key] = element.value;
-    render();
-  });
-}
-
-bindFilterControl(elements.filterType, "type");
-bindFilterControl(elements.filterAuthor, "author");
-bindFilterControl(elements.filterTopic, "topic");
-bindFilterControl(elements.filterFrom, "from");
-bindFilterControl(elements.filterTo, "to");
-
-if (elements.filterClear) {
-  elements.filterClear.addEventListener("click", () => {
-    state.filters = { type: "", author: "", topic: "", from: "", to: "" };
-    [elements.filterType, elements.filterAuthor, elements.filterTopic, elements.filterFrom, elements.filterTo]
-      .forEach((control) => { if (control) control.value = ""; });
-    render();
-  });
-}
-
 // Close popovers when clicking outside them.
 document.addEventListener("click", (event) => {
-  if (event.target.closest(".filter-wrap") || event.target.closest(".sort-wrap")) return;
-  setFilterPanelOpen(false);
+  if (event.target.closest(".sort-wrap")) return;
   setSortPanelOpen(false);
 });
 
@@ -510,28 +364,9 @@ elements.reader.addEventListener("click", (event) => {
     postToHost({ action: "reveal", path: reveal.dataset.reveal });
     return;
   }
-  const removeTopic = event.target.closest("[data-remove-topic]");
-  if (removeTopic && currentReaderRecord) {
-    const next = (currentReaderRecord.topics || []).filter(
-      (topic) => topic !== removeTopic.dataset.removeTopic
-    );
-    commitReaderTopics(next);
-    return;
-  }
   if (event.target.closest("[data-reader-delete]") && currentReaderRecord) {
     requestDelete(currentReaderRecord.id, currentReaderRecord.title);
   }
-});
-
-// Add a topic from the reader's "Add topic…" field.
-elements.reader.addEventListener("keydown", (event) => {
-  if (event.target.id !== "topic-add-input" || event.key !== "Enter") return;
-  event.preventDefault();
-  const value = event.target.value;
-  event.target.value = "";
-  if (!currentReaderRecord) return;
-  commitReaderTopics([...(currentReaderRecord.topics || []), value]);
-  requestAnimationFrame(() => document.querySelector("#topic-add-input")?.focus());
 });
 
 document.addEventListener("keydown", (event) => {

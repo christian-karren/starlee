@@ -5,6 +5,15 @@ import WebKit
 // "wght" axis tag as UInt32 cast to Int for NSDictionary key
 private let kInterWeightAxis: Int = 0x77676874
 
+private enum SidebarScope: Hashable {
+    case all
+    case year(String)
+    case month(String)
+    case topic(String)
+    case company(String)
+    case settings
+}
+
 private extension NSFont {
     /// Returns InterVariable at the requested size and weight, falling back to
     /// the system font if the bundled font isn't available yet.
@@ -48,6 +57,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let filePath: String
         let snippet: String
         let topics: [String]
+        let taxonomyTopics: [String]
+        let companies: [String]
 
         var monthKey: String {
             guard let capturedAt else { return "undated" }
@@ -99,6 +110,18 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let captures: [LibraryCapture]
     }
 
+    private struct NavNode {
+        let id: String
+        let label: String
+        let count: Int?
+        let scope: SidebarScope?
+        let children: [NavNode]
+
+        var hasChildren: Bool {
+            !children.isEmpty
+        }
+    }
+
     private let client: StarleeClient
     private weak var menuController: StatusMenuController?
     private let fluidBackgroundStore = FluidBackgroundSettingsStore()
@@ -107,15 +130,13 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private var captures: [LibraryCapture] = []
     private var groups: [MonthGroup] = []
     private var filteredCaptures: [LibraryCapture] = []
-    private var selectedMonthID: String?
+    private var selectedSidebarScope: SidebarScope = .all
+    private var expandedSidebarNodeIDs: Set<String> = ["my-library", "time", "topics", "companies"]
     private lazy var fluidBackground = fluidBackgroundStore.load()
 
-    private let sidebarBackground = SidebarHoleBackgroundView()
-    private let libraryButton = SidebarBoxButton(title: "Library")
-    private let settingsButton = SidebarBoxButton(title: "Settings")
-    private let monthStack = NSStackView()
-    private var monthButtons: [String: NSButton] = [:]
-    private weak var sidebarDivider: NSView?
+    private let sidebarBackground = SidebarBackgroundView()
+    private let sidebarStack = NSStackView()
+    private var sidebarRows: [SidebarScope: SidebarTreeRowButton] = [:]
     private var appBackgroundWebView: WKWebView?
     private weak var contentSurface: NSView?
     private weak var pixelColorWell: NSColorWell?
@@ -144,6 +165,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private var settingsWebViewLoaded = false
     private var pendingSettingsPayload: String?
     private var automaticRefreshTimer: Timer?
+    private static let sidebarExpandedNodeIDsKey = "StarleeSidebarExpandedNodeIDs"
     private var isReloading = false
     private let openButton = NSButton(title: "Open Original", target: nil, action: nil)
     private let revealButton = NSButton(title: "Reveal File", target: nil, action: nil)
@@ -158,6 +180,10 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     init(client: StarleeClient, menuController: StatusMenuController) {
         self.client = client
         self.menuController = menuController
+        let savedExpandedIDs = UserDefaults.standard.stringArray(forKey: Self.sidebarExpandedNodeIDsKey)
+        if let savedExpandedIDs, !savedExpandedIDs.isEmpty {
+            expandedSidebarNodeIDs.formUnion(savedExpandedIDs)
+        }
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -246,10 +272,6 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 
     private func makeSidebar() -> NSView {
-        // Solid-black sidebar that knocks out button-shaped holes so the
-        // full-window app background WebView (behind the split view) shows
-        // through the three nav plaques only — the black field elsewhere stays
-        // intact. See SidebarHoleBackgroundView.
         let sidebar = sidebarBackground
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         sidebar.wantsLayer = true
@@ -257,8 +279,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .width
-        stack.spacing = 28
-        stack.edgeInsets = NSEdgeInsets(top: 30, left: 20, bottom: 20, right: 20)
+        stack.spacing = 16
+        stack.edgeInsets = NSEdgeInsets(top: 24, left: 18, bottom: 18, right: 18)
         stack.translatesAutoresizingMaskIntoConstraints = false
         sidebar.addSubview(stack)
 
@@ -267,31 +289,15 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             .flatMap(NSImage.init(contentsOf:))
         wordmark.imageScaling = .scaleProportionallyUpOrDown
         wordmark.translatesAutoresizingMaskIntoConstraints = false
-        wordmark.heightAnchor.constraint(equalToConstant: 106).isActive = true
+        wordmark.heightAnchor.constraint(equalToConstant: 84).isActive = true
         stack.addArrangedSubview(wordmark)
 
-        configureSidebarButton(libraryButton, action: #selector(showLibrary))
-        configureSidebarButton(settingsButton, action: #selector(showSettings))
-
-        let navStack = NSStackView(views: [libraryButton, settingsButton])
-        navStack.orientation = .vertical
-        navStack.alignment = .width
-        navStack.spacing = 22
-        stack.addArrangedSubview(navStack)
-
-        let divider = NSView()
-        divider.wantsLayer = true
-        divider.layer?.backgroundColor = NSColor(calibratedRed: 0.949, green: 0.890, blue: 0.714, alpha: 0.86).cgColor
-        divider.translatesAutoresizingMaskIntoConstraints = false
-        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        divider.isHidden = true
-        stack.addArrangedSubview(divider)
-        sidebarDivider = divider
-
-        monthStack.orientation = .vertical
-        monthStack.alignment = .width
-        monthStack.spacing = 22
-        stack.addArrangedSubview(monthStack)
+        sidebarStack.orientation = .vertical
+        sidebarStack.alignment = .leading
+        sidebarStack.spacing = 3
+        sidebarStack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 4)
+        sidebarStack.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(sidebarStack)
         stack.addArrangedSubview(NSView())
 
         NSLayoutConstraint.activate([
@@ -300,17 +306,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             stack.topAnchor.constraint(equalTo: sidebar.topAnchor),
             stack.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor)
         ])
-        refreshSidebarHoles()
+        rebuildSidebarTree()
         return sidebar
-    }
-
-    /// Tells the sidebar which button plaques to cut background-revealing holes
-    /// behind. Called after the nav buttons exist and whenever the month
-    /// buttons are rebuilt.
-    private func refreshSidebarHoles() {
-        var buttons: [SidebarBoxButton] = [libraryButton, settingsButton]
-        buttons.append(contentsOf: monthButtons.values.compactMap { $0 as? SidebarBoxButton })
-        sidebarBackground.knockoutButtons = buttons
     }
 
     private func makeMainPane() -> NSView {
@@ -381,11 +378,6 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             contentStack.bottomAnchor.constraint(equalTo: main.bottomAnchor)
         ])
         return main
-    }
-
-    private func configureSidebarButton(_ button: NSButton, action: Selector) {
-        button.target = self
-        button.action = action
     }
 
     private func configureTable() {
@@ -1118,17 +1110,14 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             guard let self else { return }
             let doctor = self.client.runJSON(["doctor"])
             let recent = self.client.runJSONArray(["recent", "--limit", "500"]) ?? []
-            let captures = recent.map(Self.capture(from:))
+            let captures = self.enrichTaxonomy(recent.map(Self.capture(from:)))
             DispatchQueue.main.async {
                 self.doctor = doctor
                 self.captures = captures
                 self.groups = Self.monthGroups(from: captures)
-                if self.selectedMonthID == nil || self.groups.contains(where: { $0.id == self.selectedMonthID }) == false {
-                    self.selectedMonthID = self.groups.first?.id
-                }
                 self.progress.stopAnimation(nil)
                 self.isReloading = false
-                self.rebuildMonthButtons()
+                self.rebuildSidebarTree()
                 self.render()
             }
         }
@@ -1159,7 +1148,118 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             capturedAtText: dateText,
             filePath: value["file_path"] as? String ?? "",
             snippet: value["snippet"] as? String ?? "",
-            topics: (value["topics"] as? [String]) ?? []
+            topics: (value["topics"] as? [String]) ?? [],
+            taxonomyTopics: [],
+            companies: []
+        )
+    }
+
+    private func enrichTaxonomy(_ captures: [LibraryCapture]) -> [LibraryCapture] {
+        let payload = captures.map { capture in
+            [
+                "id": capture.id,
+                "title": capture.title,
+                "source": capture.source,
+                "site": capture.site ?? "",
+                "author": capture.author ?? "",
+                "snippet": capture.snippet,
+                "topics": capture.topics
+            ] as [String: Any]
+        }
+        guard
+            let scriptURL = Bundle.main.url(forResource: "extract_taxonomy", withExtension: "py", subdirectory: "taxonomy"),
+            JSONSerialization.isValidJSONObject(payload),
+            let input = try? JSONSerialization.data(withJSONObject: payload, options: [])
+        else {
+            return captures.map(enrichTaxonomyFallback)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [scriptURL.path]
+        let stdin = Pipe()
+        let stdout = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            stdin.fileHandleForWriting.write(input)
+            try? stdin.fileHandleForWriting.close()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                return captures.map(enrichTaxonomyFallback)
+            }
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            guard
+                let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let items = value["items"] as? [[String: Any]]
+            else {
+                return captures.map(enrichTaxonomyFallback)
+            }
+            let byID = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (String, ([String], [String]))? in
+                guard let id = item["id"] as? String else { return nil }
+                return (id, ((item["topics"] as? [String]) ?? [], (item["companies"] as? [String]) ?? []))
+            })
+            return captures.map { capture in
+                let generated = byID[capture.id]
+                return LibraryCapture(
+                    id: capture.id,
+                    title: capture.title,
+                    type: capture.type,
+                    site: capture.site,
+                    author: capture.author,
+                    url: capture.url,
+                    capturedAt: capture.capturedAt,
+                    capturedAtText: capture.capturedAtText,
+                    filePath: capture.filePath,
+                    snippet: capture.snippet,
+                    topics: capture.topics,
+                    taxonomyTopics: generated?.0 ?? enrichTaxonomyFallback(capture).taxonomyTopics,
+                    companies: generated?.1 ?? enrichTaxonomyFallback(capture).companies
+                )
+            }
+        } catch {
+            return captures.map(enrichTaxonomyFallback)
+        }
+    }
+
+    private func enrichTaxonomyFallback(_ capture: LibraryCapture) -> LibraryCapture {
+        let text = " " + ([capture.title, capture.source, capture.author ?? "", capture.site ?? "", capture.snippet] + capture.topics)
+            .joined(separator: " ")
+            .lowercased() + " "
+        var topics: [String] = []
+        func add(_ topic: String, when needles: [String]) {
+            guard needles.contains(where: { text.contains($0) }), !topics.contains(topic) else { return }
+            topics.append(topic)
+        }
+        add("Tech / AI", when: [" ai ", "artificial intelligence", "machine learning", "model", "llm", "openai", "anthropic", "claude", "chatgpt"])
+        add("Tech / Enterprise SaaS", when: ["figma", "salesforce", "enterprise software", "enterprise", "saas", "b2b software", "design tool"])
+        add("Tech / Semiconductors", when: ["semiconductor", "chip", "chips", "gpu", "nvidia", "tsmc", "amd", "foundry", "wafer"])
+        add("Tech / Fintech", when: ["fintech", "stripe", "payments", "banking", "neobank", "lending", "stablecoin"])
+        add("Tech / Consumer Hardware", when: ["iphone", "ipad", "apple watch", "vision pro", "wearable", "consumer hardware", "device"])
+        add("Tech / Robotics", when: ["robot", "robots", "robotics", "humanoid", "autonomous", "drone"])
+        add("Tech / Digital Advertising", when: ["advertising", "adtech", "ads", "digital ads", "performance marketing", "targeting"])
+        add("Tech / E-commerce", when: ["e-commerce", "ecommerce", "shopify", "marketplace", "online shopping", "merchant"])
+        add("Tech / Cybersecurity", when: ["cybersecurity", "security", "ransomware", "malware", "phishing", "zero trust", "breach"])
+        let knownCompanies = ["AMD", "Adobe", "Airbnb", "Amazon", "Anthropic", "Apple", "Cursor", "Databricks", "Figma", "Google", "Intel", "Meta", "Microsoft", "Netflix", "NVIDIA", "OpenAI", "Palantir", "Salesforce", "Shopify", "SpaceX", "Stripe", "Tesla", "TSMC"]
+        let companies = knownCompanies.filter { company in
+            text.range(of: #"(?<![A-Za-z0-9])\#(NSRegularExpression.escapedPattern(for: company))(?![A-Za-z0-9])"#, options: [.regularExpression, .caseInsensitive]) != nil
+        }
+        return LibraryCapture(
+            id: capture.id,
+            title: capture.title,
+            type: capture.type,
+            site: capture.site,
+            author: capture.author,
+            url: capture.url,
+            capturedAt: capture.capturedAt,
+            capturedAtText: capture.capturedAtText,
+            filePath: capture.filePath,
+            snippet: capture.snippet,
+            topics: capture.topics,
+            taxonomyTopics: topics.isEmpty ? ["General"] : topics,
+            companies: companies
         )
     }
 
@@ -1188,48 +1288,120 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         return iso.date(from: value)
     }
 
-    private func rebuildMonthButtons() {
-        monthStack.arrangedSubviews.forEach { view in
-            monthStack.removeArrangedSubview(view)
+    private func rebuildSidebarTree() {
+        sidebarStack.arrangedSubviews.forEach { view in
+            sidebarStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        monthButtons.removeAll()
-        sidebarDivider?.isHidden = groups.isEmpty
-        if groups.isEmpty {
-            refreshSidebarHoles()
-            return
+        sidebarRows.removeAll()
+        renderSidebarNodes(sidebarTree(), indent: 0)
+        sidebarBackground.needsDisplay = true
+    }
+
+    private func renderSidebarNodes(_ nodes: [NavNode], indent: Int) {
+        for node in nodes {
+            let expanded = expandedSidebarNodeIDs.contains(node.id)
+            let row = SidebarTreeRowButton(
+                label: node.label,
+                count: node.count,
+                indent: indent,
+                hasChildren: node.hasChildren,
+                isExpanded: expanded,
+                isSectionHeader: node.scope == nil && !node.hasChildren,
+                isPrimaryLibrary: node.id == "my-library"
+            )
+            row.identifier = NSUserInterfaceItemIdentifier(node.id)
+            row.scope = node.scope
+            row.target = self
+            row.action = #selector(selectSidebarNode(_:))
+            row.setSelected(node.scope == selectedSidebarScope)
+            sidebarStack.addArrangedSubview(row)
+            if let scope = node.scope {
+                sidebarRows[scope] = row
+            }
+            if node.hasChildren && expanded {
+                renderSidebarNodes(node.children, indent: indent + 1)
+            }
         }
-        for group in groups {
-            let button = SidebarBoxButton(title: group.label)
-            button.target = self
-            button.action = #selector(selectMonth(_:))
-            button.identifier = NSUserInterfaceItemIdentifier(group.id)
-            monthButtons[group.id] = button
-            monthStack.addArrangedSubview(button)
+    }
+
+    private func sidebarTree() -> [NavNode] {
+        [
+            NavNode(id: "my-library", label: "My Library", count: captures.count, scope: .all, children: [
+                NavNode(id: "time", label: "Time", count: nil, scope: nil, children: timeNodes()),
+                NavNode(id: "topics", label: "Topics", count: nil, scope: nil, children: topicNodes()),
+                NavNode(id: "companies", label: "Companies", count: nil, scope: nil, children: companyNodes())
+            ])
+        ]
+    }
+
+    private func timeNodes() -> [NavNode] {
+        let yearFormatter = DateFormatter()
+        yearFormatter.calendar = Calendar(identifier: .gregorian)
+        yearFormatter.locale = Locale(identifier: "en_US_POSIX")
+        yearFormatter.dateFormat = "yyyy"
+        let groupedByYear = Dictionary(grouping: groups) { group -> String in
+            guard let first = group.captures.first?.capturedAt else { return "Undated" }
+            return yearFormatter.string(from: first)
         }
-        refreshSidebarHoles()
+        return groupedByYear.map { year, monthGroups in
+            let children = monthGroups.sorted { $0.id > $1.id }.map { group in
+                NavNode(id: "month:\(group.id)", label: group.label, count: group.captures.count, scope: .month(group.id), children: [])
+            }
+            return NavNode(id: "year:\(year)", label: year, count: monthGroups.reduce(0) { $0 + $1.captures.count }, scope: .year(year), children: children)
+        }
+        .sorted { $0.label > $1.label }
+    }
+
+    private func topicNodes() -> [NavNode] {
+        let topics = captures.flatMap(\.taxonomyTopics)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let counts = Dictionary(grouping: topics, by: { $0 }).mapValues(\.count)
+        let roots = Set(topics.map { $0.components(separatedBy: " / ").first ?? $0 })
+        return roots.sorted().map { root in
+            let children = counts.keys
+                .filter { $0.hasPrefix(root + " / ") }
+                .sorted { lhs, rhs in
+                    counts[lhs, default: 0] == counts[rhs, default: 0]
+                        ? lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+                        : counts[lhs, default: 0] > counts[rhs, default: 0]
+                }
+                .map { topic -> NavNode in
+                    let label = topic.components(separatedBy: " / ").last ?? topic
+                    return NavNode(id: "topic:\(topic)", label: label, count: counts[topic], scope: .topic(topic), children: [])
+                }
+            let rootCount = captures.filter { capture in
+                capture.taxonomyTopics.contains { $0 == root || $0.hasPrefix(root + " / ") }
+            }.count
+            return NavNode(id: "topic:\(root)", label: root, count: rootCount, scope: .topic(root), children: children)
+        }
+    }
+
+    private func companyNodes() -> [NavNode] {
+        let companies = captures.flatMap(\.companies)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let counts = Dictionary(grouping: companies, by: { $0 }).mapValues(\.count)
+        return counts.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .map { company in
+                NavNode(id: "company:\(company)", label: company, count: counts[company], scope: .company(company), children: [])
+            }
     }
 
     private func updateSidebarSelection() {
-        libraryButton.state = primaryView == .library ? .on : .off
-        settingsButton.state = primaryView == .settings ? .on : .off
-        libraryButton.setSelected(primaryView == .library)
-        settingsButton.setSelected(primaryView == .settings)
-        for (id, button) in monthButtons {
-            let isSelected = primaryView == .library && id == selectedMonthID
-            button.state = isSelected ? .on : .off
-            (button as? SidebarBoxButton)?.setSelected(isSelected)
-            button.isEnabled = true
+        for (scope, row) in sidebarRows {
+            row.setSelected(scope == selectedSidebarScope)
         }
     }
 
     private func applyFilters() {
-        let monthCaptures = groups.first { $0.id == selectedMonthID }?.captures ?? captures
+        let scopedCaptures = capturesForSelectedScope()
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if query.isEmpty {
-            filteredCaptures = monthCaptures
+            filteredCaptures = scopedCaptures
         } else {
-            filteredCaptures = monthCaptures.filter { capture in
+            filteredCaptures = scopedCaptures.filter { capture in
                 [capture.title, capture.source, capture.type, capture.snippet]
                     .joined(separator: " ")
                     .lowercased()
@@ -1239,18 +1411,44 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         tableView.reloadData()
     }
 
+    private func capturesForSelectedScope() -> [LibraryCapture] {
+        switch selectedSidebarScope {
+        case .all:
+            return captures
+        case .year(let year):
+            let formatter = DateFormatter()
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy"
+            return captures.filter { capture in
+                guard let capturedAt = capture.capturedAt else { return year == "Undated" }
+                return formatter.string(from: capturedAt) == year
+            }
+        case .month(let id):
+            return groups.first { $0.id == id }?.captures ?? captures
+        case .topic(let topic):
+            return captures.filter { capture in
+                capture.taxonomyTopics.contains { $0 == topic || $0.hasPrefix(topic + " / ") }
+            }
+        case .company(let company):
+            return captures.filter { $0.companies.contains(company) }
+        case .settings:
+            return captures
+        }
+    }
+
     private func libraryPayloadJSON() -> String {
-        let monthCaptures = groups.first { $0.id == selectedMonthID }?.captures ?? captures
+        let scopedCaptures = capturesForSelectedScope()
         let ready = doctor?["ok"] as? Bool == true
         let readiness = ready ? "Ready" : "Needs setup"
-        let monthLabel = groups.first { $0.id == selectedMonthID }?.label ?? "All captures"
+        let monthLabel = selectedScopeLabel()
         let payload: [String: Any] = [
             "monthLabel": monthLabel,
             "totalCount": captures.count,
             "readiness": readiness,
             "showOnboarding": !UserDefaults.standard.bool(forKey: Self.onboardingCompleteKey),
             "backgroundSettings": fluidBackground.webPayload,
-            "captures": monthCaptures.map { capture in
+            "captures": scopedCaptures.map { capture in
                 [
                     "id": capture.id,
                     "title": capture.title,
@@ -1262,7 +1460,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                     "snippet": capture.snippet,
                     "url": capture.url?.absoluteString ?? "",
                     "filePath": capture.filePath,
-                    "topics": capture.topics
+                    "topics": capture.taxonomyTopics,
+                    "companies": capture.companies
                 ]
             }
         ]
@@ -1274,6 +1473,23 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             return #"{"monthLabel":"Library","totalCount":0,"readiness":"Ready","captures":[]}"#
         }
         return json
+    }
+
+    private func selectedScopeLabel() -> String {
+        switch selectedSidebarScope {
+        case .all:
+            return "My Library"
+        case .year(let year):
+            return year
+        case .month(let id):
+            return groups.first { $0.id == id }?.label ?? "My Library"
+        case .topic(let topic):
+            return topic
+        case .company(let company):
+            return company
+        case .settings:
+            return "Settings"
+        }
     }
 
     private func addColumn(_ identifier: String, _ title: String, width: CGFloat) {
@@ -1393,6 +1609,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             }
         case "upload":
             uploadDocuments()
+        case "settings":
+            showSettings()
         case "onboardingDone":
             UserDefaults.standard.set(true, forKey: Self.onboardingCompleteKey)
         case "exportBrain":
@@ -1454,8 +1672,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         )
     }
 
-    /// Bulk-import user documents (PDF, Word, text, Markdown) with an optional
-    /// shared topic, then reload the Library. Parsing happens locally in the CLI.
+    /// Bulk-import user documents (PDF, Word, text, Markdown), then reload the
+    /// Library. Parsing happens locally in the CLI; topic organization is
+    /// generated by the Library taxonomy layer.
     private func uploadDocuments() {
         guard let window else { return }
         let panel = NSOpenPanel()
@@ -1470,14 +1689,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let self, !panel.urls.isEmpty else { return }
             let urls = panel.urls
-            let topic = self.promptForBatchTopic(count: urls.count)
-            guard topic != nil else { return } // user cancelled the topic step
             var arguments = ["import"]
             arguments.append(contentsOf: urls.map { $0.path })
-            if let topic, !topic.isEmpty {
-                arguments.append("--topic")
-                arguments.append(topic)
-            }
             self.progress.startAnimation(nil)
             self.client.runAsync(arguments) { [weak self] output in
                 guard let self else { return }
@@ -1485,21 +1698,6 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                 self.reload()
             }
         }
-    }
-
-    /// Returns the chosen topic (possibly empty for "no topic"), or nil if the
-    /// user cancelled the import entirely.
-    private func promptForBatchTopic(count: Int) -> String? {
-        let alert = NSAlert()
-        alert.messageText = "Add a topic to \(count) document\(count == 1 ? "" : "s")?"
-        alert.informativeText = "Optional — leave blank to import without a topic."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.placeholderString = "Topic (optional)"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Import")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func reportImport(output: String, total: Int) {
@@ -1585,7 +1783,10 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         if let capture {
             reader["date"] = displayDate(capture.capturedAt, fallback: capture.capturedAtText)
         }
-        if let topics = metadata["topics"] as? [String], !topics.isEmpty {
+        if let capture, !capture.taxonomyTopics.isEmpty {
+            reader["topics"] = capture.taxonomyTopics
+            reader["companies"] = capture.companies
+        } else if let topics = metadata["topics"] as? [String], !topics.isEmpty {
             reader["topics"] = topics
         }
         return jsonObjectString(reader)
@@ -1812,17 +2013,31 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 
     @objc private func showLibrary() {
         primaryView = .library
+        selectedSidebarScope = .all
         render()
     }
 
     @objc private func showSettings() {
         primaryView = .settings
+        selectedSidebarScope = .settings
         render()
     }
 
-    @objc private func selectMonth(_ sender: NSButton) {
-        selectedMonthID = sender.identifier?.rawValue
-        primaryView = .library
+    @objc private func selectSidebarNode(_ sender: SidebarTreeRowButton) {
+        if sender.hasChildren {
+            let id = sender.identifier?.rawValue ?? ""
+            if expandedSidebarNodeIDs.contains(id) {
+                expandedSidebarNodeIDs.remove(id)
+            } else {
+                expandedSidebarNodeIDs.insert(id)
+            }
+            UserDefaults.standard.set(Array(expandedSidebarNodeIDs).sorted(), forKey: Self.sidebarExpandedNodeIDsKey)
+            rebuildSidebarTree()
+        }
+        guard let scope = sender.scope else { return }
+        selectedSidebarScope = scope
+        primaryView = scope == .settings ? .settings : .library
+        rebuildSidebarTree()
         render()
     }
 
@@ -2014,73 +2229,52 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 }
 
-/// Sidebar nav plaque. Shares the Library article card surface system
-/// (`.capture-card` in renderer/styles.css, mirrored natively in
-/// `settingsCard`/`appearancePanel`): translucent navy fill so the solid-black
-/// sidebar shows through ~15% for subtle depth, a light card border that
-/// brightens on hover/selection, an 8pt corner radius, and a card-style drop
-/// shadow — formatted as a bold, outlined nav button. It does not bake any
-/// background image into the surface.
-private final class SidebarBoxButton: NSButton {
-    static var labelFont: NSFont {
-        .inter(ofSize: 22, weight: .heavy)
-    }
-
-    // Surface tokens mirror the Library article cards (.capture-card):
-    // navy #13284B (rgba(19,40,75,…)), light border, 8pt radius, card shadow.
-    // Exact card token: CSS `rgba(19, 40, 75, …)` in sRGB. The article cards are
-    // rendered by WebKit in sRGB, so the fill must use sRGB here too —
-    // calibratedRGB with the same numbers displays as a noticeably different tint.
+private final class SidebarTreeRowButton: NSButton {
     private static let navy = NSColor(srgbRed: 19.0 / 255.0, green: 40.0 / 255.0, blue: 75.0 / 255.0, alpha: 1)
-    private static let cream = NSColor(srgbRed: 0.949, green: 0.890, blue: 0.714, alpha: 1)
-    static let cornerRadius: CGFloat = 8
-    private static let buttonHeight: CGFloat = 84
-    private static let plaqueInsetX: CGFloat = 6
-    private static let plaqueInsetY: CGFloat = 8
+    private static let cream = NSColor(srgbRed: 242.0 / 255.0, green: 227.0 / 255.0, blue: 182.0 / 255.0, alpha: 1)
+    private static let white = NSColor.white
+    private static let black = NSColor.black
 
-    /// The plaque rectangle within the button's bounds. The sidebar cuts a hole
-    /// of exactly this shape so the app background shows through the translucent
-    /// navy fill; the plaque does not shift on hover/press so it stays aligned
-    /// with that hole.
-    var restingPlaqueRect: NSRect {
-        bounds.insetBy(dx: Self.plaqueInsetX, dy: Self.plaqueInsetY)
-    }
-
-    private var trackingAreaRef: NSTrackingArea?
+    let rowLabel: String
+    let count: Int?
+    let indent: Int
+    let hasChildren: Bool
+    let isSectionHeader: Bool
+    let isPrimaryLibrary: Bool
+    var scope: SidebarScope?
+    private var isExpanded: Bool
     private var isHovering = false
-    private var isPressed = false
-    private var isSelected = false
+    private var isSelectedRow = false
+    private var trackingAreaRef: NSTrackingArea?
 
-    init(title: String) {
+    init(
+        label: String,
+        count: Int?,
+        indent: Int,
+        hasChildren: Bool,
+        isExpanded: Bool,
+        isSectionHeader: Bool,
+        isPrimaryLibrary: Bool
+    ) {
+        self.rowLabel = label
+        self.count = count
+        self.indent = indent
+        self.hasChildren = hasChildren
+        self.isExpanded = isExpanded
+        self.isSectionHeader = isSectionHeader
+        self.isPrimaryLibrary = isPrimaryLibrary
         super.init(frame: .zero)
-        self.title = title
         isBordered = false
         bezelStyle = .regularSquare
+        focusRingType = .none
         setButtonType(.momentaryChange)
-        alignment = .center
-        font = Self.labelFont
-        contentTintColor = .white
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 260).isActive = true
-        heightAnchor.constraint(equalToConstant: Self.buttonHeight).isActive = true
-        updateAttributedTitle()
+        heightAnchor.constraint(equalToConstant: isSectionHeader ? 22 : (isPrimaryLibrary ? 34 : 28)).isActive = true
     }
 
     required init?(coder: NSCoder) {
         nil
-    }
-
-    override var title: String {
-        didSet {
-            updateAttributedTitle()
-        }
-    }
-
-    override var isEnabled: Bool {
-        didSet {
-            alphaValue = 1
-            updateAttributedTitle()
-        }
     }
 
     override var acceptsFirstResponder: Bool {
@@ -2112,171 +2306,89 @@ private final class SidebarBoxButton: NSButton {
         needsDisplay = true
     }
 
-    override func mouseDown(with event: NSEvent) {
-        isPressed = true
-        needsDisplay = true
-        super.mouseDown(with: event)
-        isPressed = false
-        needsDisplay = true
-    }
-
-    override func becomeFirstResponder() -> Bool {
-        needsDisplay = true
-        return super.becomeFirstResponder()
-    }
-
-    override func resignFirstResponder() -> Bool {
-        needsDisplay = true
-        return super.resignFirstResponder()
-    }
-
     func setSelected(_ selected: Bool) {
-        guard isSelected != selected else { return }
-        isSelected = selected
-        needsDisplay = true
-    }
-
-    private func updateAttributedTitle() {
-        attributedTitle = NSAttributedString(
-            string: title,
-            attributes: [
-                .font: Self.labelFont,
-                .foregroundColor: NSColor.white
-            ]
-        )
+        guard isSelectedRow != selected else { return }
+        isSelectedRow = selected
         needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let active = isSelected
-        // The plaque stays at its resting rect so it aligns with the hole the
-        // sidebar cuts behind it; hover/press are expressed through fill, border,
-        // and shadow only — never movement.
-        let plaque = restingPlaqueRect
-        let plaquePath = NSBezierPath(roundedRect: plaque, xRadius: Self.cornerRadius, yRadius: Self.cornerRadius)
-
-        // Card-style drop shadow + translucent navy fill (the card token,
-        // navy @ ~0.85). The button-shaped hole behind lets the live app
-        // background show through the remaining ~15%, matching the article cards.
-        NSGraphicsContext.saveGraphicsState()
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(isPressed ? 0.22 : (isHovering ? 0.40 : 0.32))
-        shadow.shadowBlurRadius = isPressed ? 8 : (isHovering ? 22 : 16)
-        shadow.shadowOffset = NSSize(width: 0, height: isPressed ? -3 : -8)
-        shadow.set()
-        let fillAlpha: CGFloat = isPressed ? 0.90 : ((isHovering || active) ? 0.92 : 0.85)
-        Self.navy.withAlphaComponent(fillAlpha).setFill()
-        plaquePath.fill()
-        NSGraphicsContext.restoreGraphicsState()
-
-        // Inner cream hairline = the retro double-border plaque treatment.
-        let innerRect = plaque.insetBy(dx: 5, dy: 5)
-        let innerRadius = max(Self.cornerRadius - 3, 2)
-        let innerPath = NSBezierPath(roundedRect: innerRect, xRadius: innerRadius, yRadius: innerRadius)
-        Self.cream.withAlphaComponent((isHovering || active) ? 0.92 : 0.78).setStroke()
-        innerPath.lineWidth = 1
-        innerPath.stroke()
-
-        // Outer border mirrors the card border exactly: white @ 0.42, full white
-        // on hover/selection.
-        let borderAlpha: CGFloat = (isHovering || active) ? 1.0 : 0.42
-        NSColor.white.withAlphaComponent(borderAlpha).setStroke()
-        plaquePath.lineWidth = 2
-        plaquePath.stroke()
-
-        // Selected: subtle outer glow ring so the active item reads as selected
-        // without becoming a different component.
-        if active {
-            NSColor.white.withAlphaComponent(0.30).setStroke()
-            let glow = NSBezierPath(
-                roundedRect: plaque.insetBy(dx: -3, dy: -3),
-                xRadius: Self.cornerRadius + 3,
-                yRadius: Self.cornerRadius + 3
-            )
-            glow.lineWidth = 2
-            glow.stroke()
+        if isSectionHeader {
+            drawSectionHeader()
+            return
         }
 
-        // Keyboard focus ring.
-        if window?.firstResponder === self {
-            Self.cream.withAlphaComponent(0.80).setStroke()
-            let focusPath = NSBezierPath(
-                roundedRect: plaque.insetBy(dx: -3, dy: -3),
-                xRadius: Self.cornerRadius + 3,
-                yRadius: Self.cornerRadius + 3
-            )
-            focusPath.lineWidth = 2
-            focusPath.stroke()
+        let rect = bounds.insetBy(dx: 2, dy: 1)
+        if isPrimaryLibrary || isSelectedRow || isHovering {
+            let surface = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
+            let alpha: CGFloat
+            if isSelectedRow {
+                alpha = 0.82
+            } else if isPrimaryLibrary {
+                alpha = 0.54
+            } else {
+                alpha = 0.22
+            }
+            Self.navy.withAlphaComponent(alpha).setFill()
+            surface.fill()
+            if isSelectedRow || isPrimaryLibrary {
+                Self.cream.withAlphaComponent(isSelectedRow ? 1.0 : 0.72).setStroke()
+                surface.lineWidth = isSelectedRow ? 1.2 : 1
+                surface.stroke()
+            }
         }
 
-        drawCenteredTitle(in: plaque)
+        drawDisclosure()
+        drawLabel()
+        drawCount()
     }
 
-    private func drawCenteredTitle(in rect: NSRect) {
-        let text = title.uppercased()
+    private func drawSectionHeader() {
+        let text = rowLabel.uppercased()
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: Self.labelFont,
-            .foregroundColor: NSColor.white,
-            .kern: 2.4,
-            .shadow: textShadow
+            .font: NSFont.inter(ofSize: 10, weight: .heavy),
+            .foregroundColor: Self.cream.withAlphaComponent(0.76),
+            .kern: 1.2
+        ]
+        NSAttributedString(string: text, attributes: attributes).draw(at: NSPoint(x: 8, y: 5))
+    }
+
+    private func drawDisclosure() {
+        guard hasChildren else { return }
+        let symbol = isExpanded ? "▾" : "▸"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .bold),
+            .foregroundColor: Self.cream.withAlphaComponent(0.86)
+        ]
+        NSAttributedString(string: symbol, attributes: attributes).draw(at: NSPoint(x: CGFloat(8 + indent * 14), y: bounds.midY - 7))
+    }
+
+    private func drawLabel() {
+        let x = CGFloat(8 + indent * 14 + (hasChildren ? 16 : 0))
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.inter(ofSize: isPrimaryLibrary ? 14 : 12, weight: isPrimaryLibrary ? .heavy : .semibold),
+            .foregroundColor: Self.white,
+            .kern: isPrimaryLibrary ? 0.6 : 0
+        ]
+        let text = NSAttributedString(string: rowLabel, attributes: attributes)
+        text.draw(at: NSPoint(x: x, y: bounds.midY - text.size().height / 2))
+    }
+
+    private func drawCount() {
+        guard let count else { return }
+        let text = "\(count)"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: Self.cream.withAlphaComponent(0.82)
         ]
         let attributed = NSAttributedString(string: text, attributes: attributes)
-        let textSize = attributed.size()
-        let textRect = NSRect(
-            x: rect.midX - textSize.width / 2,
-            y: rect.midY - textSize.height / 2 + 2,
-            width: textSize.width,
-            height: textSize.height
-        )
-        attributed.draw(in: textRect)
-    }
-
-    private var textShadow: NSShadow {
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.58)
-        shadow.shadowBlurRadius = 2.5
-        shadow.shadowOffset = NSSize(width: 0, height: -1)
-        return shadow
+        attributed.draw(at: NSPoint(x: bounds.maxX - attributed.size().width - 10, y: bounds.midY - attributed.size().height / 2))
     }
 }
 
-/// A solid-black sidebar background that cuts button-shaped holes so the
-/// app background WebView behind the split view shows through the nav plaques
-/// only. The black field everywhere else stays fully opaque — the sidebar
-/// container is never made transparent as a whole. Each button then draws its
-/// translucent navy plaque over its hole, so the live, Settings-reactive
-/// background faintly shows through at ~15%, matching the article cards.
-private final class SidebarHoleBackgroundView: NSView {
-    var knockoutButtons: [SidebarBoxButton] = [] {
-        didSet { needsDisplay = true }
-    }
-
-    override var isFlipped: Bool { false }
-
-    // Holes depend on the button frames, which Auto Layout resolves during the
-    // layout pass; redraw whenever that geometry can have changed.
-    override func layout() {
-        super.layout()
-        needsDisplay = true
-    }
-
+private final class SidebarBackgroundView: NSView {
     override func draw(_ dirtyRect: NSRect) {
-        // Fill the whole sidebar black, then subtract each plaque rect with the
-        // even-odd rule. Unpainted holes are transparent, revealing the
-        // background WebView that sits behind the split view.
-        let path = NSBezierPath(rect: bounds)
-        path.windingRule = .evenOdd
-        for button in knockoutButtons where button.window === window && button.superview != nil {
-            let rect = button.convert(button.restingPlaqueRect, to: self)
-            path.append(
-                NSBezierPath(
-                    roundedRect: rect,
-                    xRadius: SidebarBoxButton.cornerRadius,
-                    yRadius: SidebarBoxButton.cornerRadius
-                )
-            )
-        }
         NSColor.black.setFill()
-        path.fill()
+        bounds.fill()
     }
 }
