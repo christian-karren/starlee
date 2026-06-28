@@ -420,12 +420,12 @@ details.advanced[open] > summary::before {
   gap: 18px;
   padding: 28px 24px 22px;
   border-radius: 8px;
-  border: 2px solid rgba(255, 255, 255, 0.42);
+  border: 2px solid var(--black);
   background: rgba(19, 40, 75, 0.85);
-  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
+  box-shadow: 3px 3px 0 var(--black);
   color: var(--white);
   cursor: pointer;
-  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  transition: transform 120ms ease, background 120ms ease;
 }
 
 /* Edit mode: reveal the per-card delete control. */
@@ -467,9 +467,7 @@ details.advanced[open] > summary::before {
 .capture-card:hover,
 .capture-card:focus-visible {
   transform: translateY(-2px);
-  border-color: var(--white);
   background: rgba(19, 40, 75, 0.92);
-  box-shadow: 0 22px 46px rgba(0, 0, 0, 0.38);
   outline: none;
 }
 
