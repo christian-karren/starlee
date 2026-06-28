@@ -5,6 +5,7 @@ const state = {
   readiness: "",
   backgroundSettings: window.starleeDefaultPixelDitherSettings,
   editMode: false,
+  sortMode: "newest",
   filters: { type: "", author: "", topic: "", from: "", to: "" },
 };
 
@@ -16,6 +17,8 @@ const elements = {
   background: document.querySelector("#pixel-dither-background"),
   editToggle: document.querySelector("#edit-toggle"),
   uploadButton: document.querySelector("#upload-button"),
+  sortToggle: document.querySelector("#sort-toggle"),
+  sortPanel: document.querySelector("#sort-panel"),
   filterToggle: document.querySelector("#filter-toggle"),
   filterPanel: document.querySelector("#filter-panel"),
   filterType: document.querySelector("#filter-type"),
@@ -69,6 +72,35 @@ function dayOf(capture) {
   return String(capture.capturedAt || "").slice(0, 10); // YYYY-MM-DD (ISO sorts lexically)
 }
 
+function sortValue(value) {
+  return String(value || "").trim().toLocaleLowerCase();
+}
+
+function timestampOf(capture) {
+  const parsed = Date.parse(capture.capturedAt || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortedCaptures(captures) {
+  const sorted = [...captures];
+  switch (state.sortMode) {
+  case "oldest":
+    sorted.sort((a, b) => timestampOf(a) - timestampOf(b) || sortValue(a.title).localeCompare(sortValue(b.title)));
+    break;
+  case "title":
+    sorted.sort((a, b) => sortValue(a.title).localeCompare(sortValue(b.title)) || timestampOf(b) - timestampOf(a));
+    break;
+  case "source":
+    sorted.sort((a, b) => sortValue(a.source).localeCompare(sortValue(b.source)) || timestampOf(b) - timestampOf(a));
+    break;
+  case "newest":
+  default:
+    sorted.sort((a, b) => timestampOf(b) - timestampOf(a) || sortValue(a.title).localeCompare(sortValue(b.title)));
+    break;
+  }
+  return sorted;
+}
+
 function matchesFilters(capture) {
   const f = state.filters;
   if (f.type && capture.type !== f.type) return false;
@@ -118,23 +150,37 @@ function render() {
   const captures = state.captures.filter(
     (capture) => matchesQuery(capture, query) && matchesFilters(capture)
   );
+  const visibleCaptures = sortedCaptures(captures);
 
   const activeCount = activeFilterCount();
   if (elements.filterToggle) {
     elements.filterToggle.classList.toggle("active", activeCount > 0);
-    elements.filterToggle.textContent = activeCount > 0 ? `Filter (${activeCount})` : "Filter";
+    if (activeCount > 0) {
+      elements.filterToggle.dataset.count = String(activeCount);
+    } else {
+      delete elements.filterToggle.dataset.count;
+    }
+  }
+  if (elements.sortToggle) {
+    elements.sortToggle.classList.toggle("active", state.sortMode !== "newest");
+    elements.sortToggle.title = `Sort the library (${sortLabel(state.sortMode)})`;
+  }
+  if (elements.sortPanel) {
+    elements.sortPanel.querySelectorAll("[data-sort]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.sort === state.sortMode));
+    });
   }
   if (elements.filterCount) {
-    elements.filterCount.textContent = `${captures.length} of ${state.captures.length}`;
+    elements.filterCount.textContent = `${visibleCaptures.length} of ${state.captures.length}`;
   }
 
   const libraryEmpty = state.captures.length === 0;
-  const noResults = !libraryEmpty && captures.length === 0;
+  const noResults = !libraryEmpty && visibleCaptures.length === 0;
   if (elements.emptyLibrary) elements.emptyLibrary.hidden = !libraryEmpty;
   if (elements.noResults) elements.noResults.hidden = !noResults;
   elements.row.classList.toggle("editing", state.editMode);
 
-  elements.row.innerHTML = captures
+  elements.row.innerHTML = visibleCaptures
     .map((capture) => {
       const id = escapeHtml(capture.id);
       const title = escapeHtml(capture.title || "Untitled");
@@ -174,9 +220,20 @@ function setEditMode(active) {
   if (elements.editToggle) {
     elements.editToggle.setAttribute("aria-pressed", String(state.editMode));
     elements.editToggle.classList.toggle("active", state.editMode);
-    elements.editToggle.textContent = state.editMode ? "Done" : "Edit";
+    elements.editToggle.setAttribute("aria-label", state.editMode ? "Exit edit mode" : "Enter edit mode");
+    elements.editToggle.title = state.editMode ? "Done editing" : "Edit mode: delete captures";
   }
   render();
+}
+
+function sortLabel(mode) {
+  switch (mode) {
+  case "oldest": return "oldest first";
+  case "title": return "title A-Z";
+  case "source": return "source A-Z";
+  case "newest":
+  default: return "newest first";
+  }
 }
 
 // --- Reader ---------------------------------------------------------------
@@ -340,12 +397,39 @@ if (elements.uploadButton) {
   elements.uploadButton.addEventListener("click", () => postToHost({ action: "upload" }));
 }
 
+// --- Sort -----------------------------------------------------------------
+
+function setSortPanelOpen(open) {
+  if (!elements.sortPanel || !elements.sortToggle) return;
+  elements.sortPanel.hidden = !open;
+  elements.sortToggle.setAttribute("aria-expanded", String(open));
+  if (open) setFilterPanelOpen(false);
+}
+
+if (elements.sortToggle) {
+  elements.sortToggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setSortPanelOpen(elements.sortPanel.hidden);
+  });
+}
+
+if (elements.sortPanel) {
+  elements.sortPanel.addEventListener("click", (event) => {
+    const option = event.target.closest("[data-sort]");
+    if (!option) return;
+    state.sortMode = option.dataset.sort || "newest";
+    setSortPanelOpen(false);
+    render();
+  });
+}
+
 // --- Filters --------------------------------------------------------------
 
 function setFilterPanelOpen(open) {
   if (!elements.filterPanel || !elements.filterToggle) return;
   elements.filterPanel.hidden = !open;
   elements.filterToggle.setAttribute("aria-expanded", String(open));
+  if (open) setSortPanelOpen(false);
 }
 
 if (elements.filterToggle) {
@@ -378,11 +462,11 @@ if (elements.filterClear) {
   });
 }
 
-// Close the filter panel when clicking outside it.
+// Close popovers when clicking outside them.
 document.addEventListener("click", (event) => {
-  if (!elements.filterPanel || elements.filterPanel.hidden) return;
-  if (event.target.closest(".filter-wrap")) return;
+  if (event.target.closest(".filter-wrap") || event.target.closest(".sort-wrap")) return;
   setFilterPanelOpen(false);
+  setSortPanelOpen(false);
 });
 
 // Delegated clicks on the card grid: delete button vs. open card.

@@ -117,7 +117,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private var monthButtons: [String: NSButton] = [:]
     private weak var sidebarDivider: NSView?
     private var appBackgroundWebView: WKWebView?
-    private weak var rootSplitView: NSSplitView?
+    private weak var contentSurface: NSView?
     private weak var pixelColorWell: NSColorWell?
     private weak var backgroundColorWell: NSColorWell?
     private weak var blackColorWell: NSColorWell?
@@ -197,35 +197,38 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 
     private func makeContentView() -> NSView {
-        let split = NSSplitView()
-        split.isVertical = true
-        split.dividerStyle = .thin
-        split.translatesAutoresizingMaskIntoConstraints = false
-        split.wantsLayer = true
-        split.layer?.backgroundColor = NSColor.clear.cgColor
-        rootSplitView = split
-
         let sidebar = makeSidebar()
         let main = makeMainPane()
-        split.addArrangedSubview(sidebar)
-        split.addArrangedSubview(main)
-        split.setPosition(300, ofDividerAt: 0)
+        let content = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        content.wantsLayer = true
+        content.layer?.backgroundColor = NSColor.clear.cgColor
+        contentSurface = content
+        content.addSubview(sidebar)
+        content.addSubview(main)
 
         let root = NSView()
         let background = makeAppBackgroundWebView()
         appBackgroundWebView = background
         root.addSubview(background)
-        root.addSubview(split)
+        root.addSubview(content)
         NSLayoutConstraint.activate([
             background.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             background.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             background.topAnchor.constraint(equalTo: root.topAnchor),
             background.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            split.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            split.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            split.topAnchor.constraint(equalTo: root.topAnchor),
-            split.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 300)
+            content.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            content.topAnchor.constraint(equalTo: root.topAnchor),
+            content.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            sidebar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            sidebar.topAnchor.constraint(equalTo: content.topAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: 300),
+            main.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            main.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            main.topAnchor.constraint(equalTo: content.topAnchor),
+            main.bottomAnchor.constraint(equalTo: content.bottomAnchor)
         ])
         return root
     }
@@ -1773,7 +1776,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
 
     private func applyFluidBackground() {
         window?.appearance = NSAppearance(named: .aqua)
-        rootSplitView?.layer?.backgroundColor = NSColor.clear.cgColor
+        contentSurface?.layer?.backgroundColor = NSColor.clear.cgColor
         tableView.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.72)
         tableView.enclosingScrollView?.backgroundColor = tableView.backgroundColor
         updateFluidBackgroundControls()
