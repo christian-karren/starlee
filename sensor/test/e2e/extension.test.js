@@ -2,9 +2,9 @@
  * Playwright E2E tests for the Starlee browser extension.
  *
  * The tests load the unpacked extension from dist/extension/ into a real
- * Chromium instance and exercise it against a local mock capture server on
- * 127.0.0.1:47299 (not 47291 to avoid conflicts with a running Starlee
- * instance on the default port).
+ * Chromium instance and exercise it against a local mock capture server on an
+ * ephemeral 127.0.0.1 port to avoid conflicts with a running Starlee instance
+ * on the default port.
  *
  * The mock server also serves fixture.html over HTTP so the extension's
  * content scripts (which only match http:// and https:// URLs) are injected.
@@ -31,16 +31,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, "../../dist/extension");
 const FIXTURE_HTML_PATH = path.resolve(__dirname, "../fixture.html");
 
-// Use a port other than 47291 to avoid clashing with a running Starlee daemon.
-const TEST_PORT = 47299;
 const TEST_TOKEN = "test-token-e2e";
-const FIXTURE_URL = `http://127.0.0.1:${TEST_PORT}/fixture.html`;
 
 // ---------------------------------------------------------------------------
 // Module-level server state (one server for the whole test file)
 // ---------------------------------------------------------------------------
 
 let _server = null;
+let _serverPort = null;
 
 /** @type {Array<{id:string, status:string, message:string}>} */
 const _captureRequestResults = [];
@@ -131,15 +129,25 @@ function startServer() {
       });
     });
 
-    _server.listen(TEST_PORT, "127.0.0.1", resolve);
+    _server.listen(0, "127.0.0.1", () => {
+      _serverPort = _server.address().port;
+      resolve();
+    });
     _server.once("error", reject);
   });
 }
 
 function stopServer() {
   return new Promise((resolve) => {
-    if (_server) _server.close(resolve);
-    else resolve();
+    if (!_server) {
+      resolve();
+      return;
+    }
+    _server.close(() => {
+      _server = null;
+      _serverPort = null;
+      resolve();
+    });
   });
 }
 
@@ -152,6 +160,7 @@ function stopServer() {
  * test token and port into chrome.storage.local, and return the context.
  */
 async function launchExtensionContext() {
+  if (!_serverPort) throw new Error("mock capture server has not started");
   const userDataDir = `/tmp/starlee-e2e-${randomUUID()}`;
 
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -180,7 +189,7 @@ async function launchExtensionContext() {
   await setup.evaluate(
     ({ captureToken, capturePort }) =>
       chrome.storage.local.set({ captureToken, capturePort }),
-    { captureToken: TEST_TOKEN, capturePort: TEST_PORT }
+    { captureToken: TEST_TOKEN, capturePort: _serverPort }
   );
   await setup.close();
 
@@ -188,6 +197,11 @@ async function launchExtensionContext() {
   await waitMs(3000);
 
   return { context, extensionId };
+}
+
+function fixtureUrl() {
+  if (!_serverPort) throw new Error("mock capture server has not started");
+  return `http://127.0.0.1:${_serverPort}/fixture.html`;
 }
 
 async function resolveExtensionId(context) {
@@ -262,7 +276,7 @@ test.describe("Article extraction", () => {
 
   test("extracts article payload from fixture.html via extension capture button", async () => {
     const page = await context.newPage();
-    await page.goto(FIXTURE_URL, { waitUntil: "domcontentloaded" });
+    await page.goto(fixtureUrl(), { waitUntil: "domcontentloaded" });
 
     // Wait for the content script to inject the floating capture button
     const captureButton = page.locator("#starlee-save-button");
@@ -308,7 +322,7 @@ test.describe("Menu-bar capture flow", () => {
 
   test("extension polls /capture-request and POSTs result", async () => {
     const articlePage = await context.newPage();
-    await articlePage.goto(FIXTURE_URL, { waitUntil: "domcontentloaded" });
+    await articlePage.goto(fixtureUrl(), { waitUntil: "domcontentloaded" });
     await articlePage.bringToFront();
 
     // Wait for the content script to mount (proves it's ready to capture)
@@ -366,7 +380,7 @@ test.describe("Duplicate request dedup", () => {
 
   test("same request.id produces exactly one result entry", async () => {
     const articlePage = await context.newPage();
-    await articlePage.goto(FIXTURE_URL, { waitUntil: "domcontentloaded" });
+    await articlePage.goto(fixtureUrl(), { waitUntil: "domcontentloaded" });
     await articlePage.bringToFront();
     await expect(articlePage.locator("#starlee-save-button")).toBeVisible({
       timeout: 10_000,
