@@ -1,5 +1,7 @@
 import { capturePayload, detectedType } from "./payload.js";
+import { createExtensionApi } from "./browser.js";
 
+const chrome = createExtensionApi();
 const BUTTON_RESET_MS = 3500;
 const MESSAGE = Object.freeze({
   ping: "STARLEE_CONTENT_SCRIPT_PING",

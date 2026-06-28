@@ -1,3 +1,6 @@
+import { createExtensionApi } from "./browser.js";
+
+const chrome = createExtensionApi();
 const form = document.querySelector("form");
 const token = document.querySelector("#token");
 const port = document.querySelector("#port");
@@ -43,7 +46,7 @@ async function renderStatus({ forceHello = false } = {}) {
     label,
     setup?.detail ? `Setup detail: ${setup.detail}` : "",
     setup?.next_action ? `Next action: ${setup.next_action}` : bridge?.recommended_next_action ? `Next action: ${bridge.recommended_next_action}` : "",
-    `Browser: ${state.browser || "Chrome"}`,
+    `Browser: ${state.browser || "Browser"}`,
     `Extension: ${state.extensionVersion || "unknown"}`,
     `Build: ${state.extensionBuild || bridge?.extension_build || "unknown"}`,
     `Port: ${state.port || 47291}`,
@@ -67,17 +70,17 @@ function setupLabel(setup) {
   if (!setup?.state) return "";
   switch (setup.state) {
     case "capture_test_passed":
-      return "Chrome setup is ready.";
+      return "Browser setup is ready.";
     case "capture_test_needed":
-      return "Chrome is connected. Run a capture test from Starlee desktop setup.";
+      return "Browser extension is connected. Run a capture test from Starlee desktop setup.";
     case "permission_needed":
-      return "Chrome needs Starlee site access.";
+      return "Browser extension needs Starlee site access.";
     case "check_in_needed":
-      return "Chrome extension has not checked in recently.";
+      return "Browser extension has not checked in recently.";
     case "install_needed":
-      return "Chrome extension setup is not complete.";
+      return "Browser extension setup is not complete.";
     default:
-      return `Chrome setup: ${setup.state}`;
+      return `Browser setup: ${setup.state}`;
   }
 }
 

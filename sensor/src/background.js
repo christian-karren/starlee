@@ -1,4 +1,4 @@
-import { browserNameFromUserAgent } from "./browser.js";
+import { browserNameFromUserAgent, createExtensionApi } from "./browser.js";
 import {
   activeTabLookupFailure,
   activeTabProblem,
@@ -9,6 +9,7 @@ import {
   sendCaptureMessageToContentScript
 } from "./background-handoff.js";
 
+const chrome = createExtensionApi();
 const DEFAULT_PORT = 47291;
 // Alarm at the MV3 minimum so a fully-evicted worker re-wakes quickly and finds a
 // still-pending capture request (paired with the engine's longer request TTL).
