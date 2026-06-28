@@ -15,8 +15,24 @@
             <h1>Library</h1>
           </div>
           <div class="library-actions">
+            <button id="upload-button" class="action-btn" type="button" aria-label="Upload documents" title="Upload documents (PDF, Word, text, Markdown)">
+              <img class="action-icon action-icon-upload" src="./icons/upload.png" alt="" aria-hidden="true">
+            </button>
+            <div class="sort-wrap">
+              <button id="sort-toggle" class="action-btn" type="button" aria-expanded="false" aria-label="Sort the library" title="Sort the library">
+                <img class="action-icon action-icon-sort" src="./icons/sort.png" alt="" aria-hidden="true">
+              </button>
+              <div id="sort-panel" class="sort-panel" hidden role="group" aria-label="Library sort">
+                <button class="sort-option" type="button" data-sort="newest" aria-pressed="true">Newest first</button>
+                <button class="sort-option" type="button" data-sort="oldest" aria-pressed="false">Oldest first</button>
+                <button class="sort-option" type="button" data-sort="title" aria-pressed="false">Title A-Z</button>
+                <button class="sort-option" type="button" data-sort="source" aria-pressed="false">Source A-Z</button>
+              </div>
+            </div>
             <div class="filter-wrap">
-              <button id="filter-toggle" class="action-btn" type="button" aria-expanded="false" title="Filter the library">Filter</button>
+              <button id="filter-toggle" class="action-btn" type="button" aria-expanded="false" aria-label="Filter the library" title="Filter the library">
+                <img class="action-icon action-icon-filter" src="./icons/filter.png" alt="" aria-hidden="true">
+              </button>
               <div id="filter-panel" class="filter-panel" hidden role="group" aria-label="Library filters">
                 <label class="filter-field">
                   <span>Type</span>
@@ -46,8 +62,9 @@
                 </div>
               </div>
             </div>
-            <button id="upload-button" class="action-btn" type="button" title="Upload documents (PDF, Word, text, Markdown)">Upload</button>
-            <button id="edit-toggle" class="action-btn" type="button" aria-pressed="false" title="Edit mode: delete captures">Edit</button>
+            <button id="edit-toggle" class="action-btn" type="button" aria-pressed="false" aria-label="Enter edit mode" title="Edit mode: delete captures">
+              <img class="action-icon action-icon-edit" src="./icons/edit.png" alt="" aria-hidden="true">
+            </button>
           </div>
           <label class="search-shell">
             <span aria-hidden="true">/</span>
