@@ -182,9 +182,9 @@ test("duplicate pickup idempotency: request deduped by id across concurrent poll
 });
 
 // ---------------------------------------------------------------------------
-// Auth failure: /capture returns 401 → reported as auth_error, not silent
+// Auth failure: /capture returns 401 → reported as token_invalid, not silent
 // ---------------------------------------------------------------------------
-test("auth failure: 401 from /capture surfaces as auth_error code, not silently dropped", async () => {
+test("auth failure: 401 from /capture surfaces as token_invalid code, not silently dropped", async () => {
   const request = { id: "req-004", source: "menu-bar" };
   const results = [];
 
@@ -216,20 +216,76 @@ test("auth failure: 401 from /capture surfaces as auth_error code, not silently 
     });
 
     assert.equal(capture.ok, false);
-    assert.equal(capture.code, "auth_error", "401 must surface as auth_error, not be silently dropped");
+    assert.equal(capture.code, "token_invalid", "401 must surface as token_invalid, not be silently dropped");
     assert.match(capture.error, /Unauthorized/);
 
-    // Caller must report auth_error back to the server
+    // Caller must report token_invalid back to the server
     await postRequestResult({
       token: TOKEN,
       port,
       id: request.id,
-      status: "auth_error",
+      status: "token_invalid",
       message: capture.error
     });
 
     assert.equal(results.length, 1);
-    assert.equal(results[0].status, "auth_error");
+    assert.equal(results[0].status, "token_invalid");
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test("local bridge helpers return token_missing without network calls", async () => {
+  const poll = await pollCaptureRequest({ token: "", port: 1 });
+  const capture = await postCapture({
+    token: "",
+    port: 1,
+    payload: { url: "https://example.com/private" },
+    requestId: "req-token-missing"
+  });
+
+  assert.deepEqual(poll, { ok: false, request: null, code: "token_missing" });
+  assert.equal(capture.ok, false);
+  assert.equal(capture.code, "token_missing");
+  assert.equal(capture.requestId, "req-token-missing");
+});
+
+test("local bridge helpers return service_down when loopback is unreachable", async () => {
+  const port = 9;
+  const poll = await pollCaptureRequest({ token: TOKEN, port });
+  const capture = await postCapture({
+    token: TOKEN,
+    port,
+    payload: { url: "https://example.com/private" },
+    requestId: "req-service-down"
+  });
+
+  assert.equal(poll.ok, false);
+  assert.equal(poll.code, "service_down");
+  assert.equal(capture.ok, false);
+  assert.equal(capture.code, "service_down");
+  assert.equal(capture.requestId, "req-service-down");
+});
+
+test("capture payload too large status maps to payload_too_large", async () => {
+  const { server, port } = await startServer((req, res) => {
+    if (req.url === "/capture" && req.method === "POST") {
+      return reply(res, 413, { error: "capture payload too large" });
+    }
+    reply(res, 404, {});
+  });
+
+  try {
+    const capture = await postCapture({
+      token: TOKEN,
+      port,
+      payload: { url: "https://example.com/large" },
+      requestId: "req-too-large"
+    });
+
+    assert.equal(capture.ok, false);
+    assert.equal(capture.code, "payload_too_large");
+    assert.match(capture.error, /too large/);
   } finally {
     await stopServer(server);
   }

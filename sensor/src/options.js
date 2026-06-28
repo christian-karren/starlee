@@ -1,6 +1,6 @@
 import { createExtensionApi } from "./browser.js";
 
-const chrome = createExtensionApi();
+const ext = createExtensionApi();
 const form = document.querySelector("form");
 const token = document.querySelector("#token");
 const port = document.querySelector("#port");
@@ -8,8 +8,8 @@ const status = document.querySelector("#status");
 const connection = document.querySelector("#connection");
 const testButton = document.querySelector("#test-connection");
 
-const saved = await chrome.storage.local.get(["captureToken", "capturePort"]);
-const bundled = await fetch(chrome.runtime.getURL("starlee-config.json"))
+const saved = await ext.storage.local.get(["captureToken", "capturePort"]);
+const bundled = await fetch(ext.runtime.getURL("starlee-config.json"))
   .then((response) => response.ok ? response.json() : {})
   .catch(() => ({}));
 const hasToken = Boolean(saved.captureToken || bundled.captureToken);
@@ -23,7 +23,7 @@ form.addEventListener("submit", async (event) => {
   const next = { capturePort: Number(port.value) };
   const nextToken = token.value.trim();
   if (nextToken) next.captureToken = nextToken;
-  await chrome.storage.local.set(next);
+  await ext.storage.local.set(next);
   token.value = "";
   token.placeholder = "Token configured — leave blank to keep it";
   status.textContent = "Saved locally.";
@@ -37,9 +37,9 @@ testButton.addEventListener("click", async () => {
 });
 
 async function renderStatus({ forceHello = false } = {}) {
-  if (forceHello) await chrome.runtime.sendMessage({ type: "STARLEE_HELLO" });
-  const state = await chrome.runtime.sendMessage({ type: "STARLEE_STATUS" });
-  const bridge = await chrome.runtime.sendMessage({ type: "STARLEE_BRIDGE_HEALTH" }).catch(() => null);
+  if (forceHello) await ext.runtime.sendMessage({ type: "STARLEE_HELLO" });
+  const state = await ext.runtime.sendMessage({ type: "STARLEE_STATUS" });
+  const bridge = await ext.runtime.sendMessage({ type: "STARLEE_BRIDGE_HEALTH" }).catch(() => null);
   const setup = bridge?.chrome_setup;
   const label = state.ok ? setupLabel(setup) || "Connected to local Starlee" : statusLabel(state);
   connection.textContent = [

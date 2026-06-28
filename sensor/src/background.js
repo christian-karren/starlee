@@ -9,7 +9,7 @@ import {
   sendCaptureMessageToContentScript
 } from "./background-handoff.js";
 
-const chrome = createExtensionApi();
+const ext = createExtensionApi();
 const DEFAULT_PORT = 47291;
 // Alarm at the MV3 minimum so a fully-evicted worker re-wakes quickly and finds a
 // still-pending capture request (paired with the engine's longer request TTL).
@@ -44,7 +44,7 @@ let polling = false;
 let lastHelloAt = 0;
 const processedRequests = new Set();
 
-chrome.runtime.onMessage.addListener(handleMessage);
+ext.runtime.onMessage.addListener(handleMessage);
 
 function handleMessage(message, _sender, sendResponse) {
   if (message?.type === MESSAGE.capture) {
@@ -72,7 +72,7 @@ function handleMessage(message, _sender, sendResponse) {
   }
 }
 
-chrome.action.onClicked.addListener(async (tab) => {
+ext.action.onClicked.addListener(async (tab) => {
   const result = await captureTab(tab);
   await showResult(result);
 });
@@ -80,12 +80,12 @@ chrome.action.onClicked.addListener(async (tab) => {
 // Top-level listeners so a re-spawned service worker rewires itself immediately on
 // any wake (browser start, install, alarm, or keep-alive reconnect) — never inside
 // an async function, which would miss events that woke the worker.
-chrome.runtime.onStartup?.addListener?.(startLocalBridge);
-chrome.runtime.onInstalled?.addListener?.(startLocalBridge);
-chrome.alarms?.onAlarm?.addListener?.((alarm) => {
+ext.runtime.onStartup?.addListener?.(startLocalBridge);
+ext.runtime.onInstalled?.addListener?.(startLocalBridge);
+ext.alarms?.onAlarm?.addListener?.((alarm) => {
   if (alarm.name === ALARM_NAME) pollCaptureRequest();
 });
-chrome.runtime.onConnect?.addListener?.((port) => {
+ext.runtime.onConnect?.addListener?.((port) => {
   if (port.name === KEEPALIVE_PORT) {
     // Holding the port open defers worker eviction; it auto-closes after ~5 min
     // and keepAlive() reconnects, so the worker stays warm and keeps polling.
@@ -182,7 +182,7 @@ async function sendCapture(payload, options = {}) {
 async function captureTab(tab) {
   if (!tab?.id) return errorResult("no_active_tab", "No active browser tab is available.");
   try {
-    return await chrome.tabs.sendMessage(tab.id, { type: MESSAGE.captureNow });
+    return await ext.tabs.sendMessage(tab.id, { type: MESSAGE.captureNow });
   } catch {
     return errorResult("permission_denied", `${browserName()} has not granted Starlee access to this page, or this page cannot run extensions.`);
   }
@@ -191,7 +191,7 @@ async function captureTab(tab) {
 async function startLocalBridge() {
   // Always (re)arm the alarm and keep-alive, even if a poll loop is already running
   // in this worker instance, so a freshly-woken worker is fully wired.
-  chrome.alarms?.create?.(ALARM_NAME, { periodInMinutes: DEFAULT_POLL_MINUTES });
+  ext.alarms?.create?.(ALARM_NAME, { periodInMinutes: DEFAULT_POLL_MINUTES });
   keepAlive();
   if (polling) return;
   polling = true;
@@ -204,7 +204,7 @@ async function startLocalBridge() {
 // MV3 force-closes ports after ~5 minutes, so reconnect on disconnect to stay warm.
 function keepAlive() {
   try {
-    const port = chrome.runtime.connect({ name: KEEPALIVE_PORT });
+    const port = ext.runtime.connect({ name: KEEPALIVE_PORT });
     port.onDisconnect.addListener(() => {
       keepAlive();
     });
@@ -226,7 +226,7 @@ async function hello(_options = {}) {
       headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         browser: browserName(),
-        extension_version: chrome.runtime.getManifest().version,
+        extension_version: ext.runtime.getManifest().version,
         extension_build: await extensionBuildIdentity(),
         can_capture_active_tab: true
       })
@@ -254,7 +254,7 @@ async function pollCaptureRequest() {
   if (!request) return;
   const tab = await lookupActiveTabForRequest(request);
   if (tab?.result) {
-    await chrome.storage.local.set({
+    await ext.storage.local.set({
       lastMenuRequestId: request.id || "",
       lastMenuRequestAt: new Date().toISOString(),
       lastMenuRequestStatus: tab.result.code || CAPTURE_STATUS.failed
@@ -263,7 +263,7 @@ async function pollCaptureRequest() {
     return;
   }
   const result = await captureTabForRequest(tab, request);
-  await chrome.storage.local.set({
+  await ext.storage.local.set({
     lastMenuRequestId: request.id || "",
     lastMenuRequestAt: new Date().toISOString(),
     lastMenuRequestStatus: result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed
@@ -283,7 +283,7 @@ async function lookupActiveTabForRequest(request) {
     message: "Browser extension is looking up the active tab."
   });
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
     const problem = activeTabProblem(tab);
     if (problem) {
       const result = errorResult(problem.status, problem.message);
@@ -351,7 +351,7 @@ async function captureTabForRequest(tab, request) {
     tab,
     request,
     messageType: MESSAGE.pingContentScript,
-    sendMessage: chrome.tabs.sendMessage.bind(chrome.tabs),
+    sendMessage: ext.tabs.sendMessage.bind(ext.tabs),
     recordDiagnostic: recordDiagnosticEvent,
     browserName: browserName()
   });
@@ -363,7 +363,7 @@ async function captureTabForRequest(tab, request) {
     tab,
     request,
     messageType: MESSAGE.captureNow,
-    sendMessage: chrome.tabs.sendMessage.bind(chrome.tabs),
+    sendMessage: ext.tabs.sendMessage.bind(ext.tabs),
     recordDiagnostic: recordDiagnosticEvent,
     browserName: browserName()
   });
@@ -404,7 +404,7 @@ async function takeCaptureRequest() {
 }
 
 async function localSettings() {
-  const { captureToken = "", capturePort = 0 } = await chrome.storage.local.get(["captureToken", "capturePort"]);
+  const { captureToken = "", capturePort = 0 } = await ext.storage.local.get(["captureToken", "capturePort"]);
   const bundled = await bundledConfig();
   return {
     token: captureToken || bundled.captureToken || "",
@@ -413,7 +413,7 @@ async function localSettings() {
 }
 
 async function bundledConfig() {
-  bundledConfigPromise ||= fetch(chrome.runtime.getURL("starlee-config.json"))
+  bundledConfigPromise ||= fetch(ext.runtime.getURL("starlee-config.json"))
     .then((response) => response.ok ? response.json() : {})
     .catch(() => ({}));
   return bundledConfigPromise;
@@ -429,11 +429,11 @@ async function extensionBuildIdentity() {
     return `${branch}@${commit}${suffix}`;
   }
   if (commit && commit !== "unknown") return `${commit}${suffix}`;
-  return chrome.runtime.getManifest().version;
+  return ext.runtime.getManifest().version;
 }
 
 async function buildInfo() {
-  buildInfoPromise ||= fetch(chrome.runtime.getURL("build-info.json"))
+  buildInfoPromise ||= fetch(ext.runtime.getURL("build-info.json"))
     .then((response) => response.ok ? response.json() : {})
     .catch(() => ({}));
   return buildInfoPromise;
@@ -441,7 +441,7 @@ async function buildInfo() {
 
 async function status() {
   const settings = await localSettings();
-  const diagnostic = await chrome.storage.local.get([
+  const diagnostic = await ext.storage.local.get([
     "lastHandshakeAt",
     "lastHandshakeStatus",
     "lastHandshakeError",
@@ -455,7 +455,7 @@ async function status() {
     ok: diagnostic.lastHandshakeStatus === "connected",
     hasToken: Boolean(settings.token),
     port: settings.port,
-    extensionVersion: chrome.runtime.getManifest().version,
+    extensionVersion: ext.runtime.getManifest().version,
     extensionBuild: await extensionBuildIdentity(),
     browser: browserName(),
     ...diagnostic
@@ -496,7 +496,7 @@ async function bridgeHealth() {
 }
 
 async function recordHandshake(result) {
-  await chrome.storage.local.set({
+  await ext.storage.local.set({
     lastHandshakeAt: result.ok ? new Date().toISOString() : "",
     lastHandshakeStatus: result.code,
     lastHandshakeError: result.ok ? "" : result.error
@@ -504,7 +504,7 @@ async function recordHandshake(result) {
 }
 
 async function recordCaptureResult(result, source = "unknown") {
-  await chrome.storage.local.set({
+  await ext.storage.local.set({
     lastCaptureAt: new Date().toISOString(),
     lastCaptureSource: source,
     lastCaptureStatus: result.code || (result.ok ? CAPTURE_STATUS.saved : CAPTURE_STATUS.failed),
@@ -513,7 +513,7 @@ async function recordCaptureResult(result, source = "unknown") {
 }
 
 async function recordMenuRequest(request, status) {
-  await chrome.storage.local.set({
+  await ext.storage.local.set({
     lastMenuRequestId: request.id || "",
     lastMenuRequestAt: new Date().toISOString(),
     lastMenuRequestStatus: status
@@ -577,9 +577,9 @@ async function refreshHelloIfNeeded() {
 async function showResult(result) {
   const title = result.ok ? "Saved" : "Needs setup";
   const badge = result.ok ? "✓" : "!";
-  await chrome.action.setBadgeText?.({ text: badge });
-  await chrome.action.setBadgeBackgroundColor?.({ color: result.ok ? "#287a4b" : "#b45309" });
-  setTimeout(() => chrome.action.setBadgeText?.({ text: "" }), BADGE_CLEAR_MS);
+  await ext.action.setBadgeText?.({ text: badge });
+  await ext.action.setBadgeBackgroundColor?.({ color: result.ok ? "#287a4b" : "#b45309" });
+  setTimeout(() => ext.action.setBadgeText?.({ text: "" }), BADGE_CLEAR_MS);
   if (!result.ok) {
     console.warn(`Starlee capture ${result.code}: ${result.error}`);
   }

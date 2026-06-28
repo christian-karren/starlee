@@ -1,7 +1,8 @@
 import { capturePayload, detectedType } from "./payload.js";
 import { createExtensionApi } from "./browser.js";
+import { attachSelectedText } from "./selection.js";
 
-const chrome = createExtensionApi();
+const ext = createExtensionApi();
 const BUTTON_RESET_MS = 3500;
 const MESSAGE = Object.freeze({
   ping: "STARLEE_CONTENT_SCRIPT_PING",
@@ -12,7 +13,7 @@ const MESSAGE = Object.freeze({
 const type = detectedType(document);
 if (type && !document.getElementById("starlee-save-button")) mountButton(type);
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+ext.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === MESSAGE.ping) {
     sendResponse(contentScriptReadiness(message));
     return false;
@@ -86,7 +87,7 @@ async function capture(_message, sendResponse) {
         page: safePageFromDocument(document)
       });
     }
-    const payload = await capturePayload(document, {
+    let payload = await capturePayload(document, {
       discoverYouTubeTranscript: true,
       onDiagnostic: (event) => {
         diagnosticEvents.push({
@@ -96,11 +97,11 @@ async function capture(_message, sendResponse) {
         });
       }
     });
+    payload = attachSelectedText(payload, selectedText);
     for (const event of diagnosticEvents) {
       await sendDiagnostic(requestId, event);
     }
-    if (selectedText && payload?.dom_extract && payload.type === "article") {
-      payload.dom_extract.selected_text = selectedText;
+    if (payload?.dom_extract?.selected_text && payload.type === "article") {
       await sendDiagnostic(requestId, {
         component: "content_script",
         event: "content_script_selected_text_attached",
@@ -121,7 +122,7 @@ async function capture(_message, sendResponse) {
       page: safePageFromDocument(document),
       safe_metadata: payloadMetadata(payload)
     });
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: MESSAGE.capture,
       payload,
       source,
@@ -150,7 +151,7 @@ async function capture(_message, sendResponse) {
 
 async function sendDiagnostic(requestId, event) {
   if (!requestId) return;
-  await chrome.runtime
+  await ext.runtime
     .sendMessage({
       type: MESSAGE.diagnostic,
       event: {

@@ -10,7 +10,7 @@ This document tracks the Firefox-specific release path for the Starlee browser e
 - Shared source: `sensor/src` remains the shared extension implementation.
 - Firefox-specific source: `sensor/extension/manifest.firefox.json`, Firefox package scripts, Firefox package inspector, and Firefox target tests.
 
-Firefox MV3 service worker behavior still needs live-browser validation for menu-bar capture polling before a listed AMO launch. The package is suitable for build/package/review iteration, but runtime claims must come from a clean Firefox profile smoke test.
+Firefox MV3 service worker behavior still needs live-browser validation for menu-bar capture polling before a listed AMO launch. The package includes the same local polling path used by the shared background runtime, but the product-safe Firefox fallback is toolbar capture until a clean Firefox profile proves menu-bar polling survives worker suspension for at least 30 minutes.
 
 ## Build and Package
 
@@ -62,6 +62,6 @@ Run before AMO submission:
 - Toolbar article capture saves a local record.
 - Toolbar selected-text article capture includes selected text.
 - Toolbar YouTube capture saves transcript segments when rendered.
-- Menu-bar request pickup succeeds, or release notes mark menu-bar capture as unavailable for Firefox with toolbar fallback.
+- Menu-bar request pickup succeeds for a 30-minute Firefox MV3 lifecycle run, or release notes mark menu-bar capture as unavailable for Firefox with toolbar fallback.
 - Extension update preserves stored token and port.
 - Runtime network inspection shows no captured content leaving `127.0.0.1`.
