@@ -61,10 +61,35 @@ not hidden runtime dependencies.
 - Confirm Safari package inspection passes before loading into Xcode or Safari.
 - Full Xcode is required to run Apple's `safari-web-extension-converter`; Command
   Line Tools alone are not enough.
-- For local use, build and run the generated macOS wrapper app in Xcode, then
-  enable Starlee in Safari Settings > Extensions.
+- Treat `release/safari-extension/StarleeSafari` and
+  `release/safari-extension/extension` as generated local artifacts unless a
+  separate distribution decision checks in a curated wrapper project.
+- For local use, install the generated macOS wrapper app with
+  `scripts/install-safari-extension.sh`, then enable Starlee in Safari Settings >
+  Extensions and grant site access for the pages being captured.
+- Confirm `pluginkit -m -A -D -i com.starlee.capture.safari.Extension` lists the
+  registered extension after install.
 - Verify `starlee doctor`, a Safari article capture, and a Safari YouTube
   transcript capture before treating the local Safari path as working.
 - Validate Safari YouTube separately from Chrome because extension permission
   prompts, transcript DOM timing, and local wrapper setup differ. Permission
   failures should resolve to `permission_denied` with actionable recovery text.
+- Confirm `starlee diagnostics --last-capture` reports browser `Safari` and does
+  not expose capture tokens, OAuth tokens, article bodies, transcript text,
+  selected text, raw HTML, cookies, embeddings, or vault file bodies.
+
+## Safari distribution gates
+
+These are not required for local Safari parity, but they are required before
+shipping Safari to users outside local development.
+
+- Direct distribution requires Developer ID signing, a hardened runtime decision,
+  notarization, stapling, and Gatekeeper verification on a clean Mac.
+- Mac App Store distribution requires App Sandbox review, network client
+  entitlement review, Safari Web Extension capability, bundle ID ownership,
+  provisioning profile, privacy labels, screenshots, review copy, and Apple
+  review approval.
+- Public release copy must say Starlee reads only pages the user chooses to save
+  and sends captured content to the Starlee app running locally on the user's Mac.
+- Wrapper app and extension entitlements must be audited after conversion and
+  before signing or App Store upload.
