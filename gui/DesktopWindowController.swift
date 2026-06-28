@@ -7,11 +7,10 @@ private let kInterWeightAxis: Int = 0x77676874
 
 private enum SidebarScope: Hashable {
     case all
+    case year(String)
     case month(String)
     case topic(String)
-    case source(String)
-    case marketplace
-    case friends
+    case company(String)
     case settings
 }
 
@@ -58,6 +57,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let filePath: String
         let snippet: String
         let topics: [String]
+        let taxonomyTopics: [String]
+        let companies: [String]
 
         var monthKey: String {
             guard let capturedAt else { return "undated" }
@@ -130,7 +131,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private var groups: [MonthGroup] = []
     private var filteredCaptures: [LibraryCapture] = []
     private var selectedSidebarScope: SidebarScope = .all
-    private var expandedSidebarNodeIDs: Set<String> = ["my-library", "time", "topics"]
+    private var expandedSidebarNodeIDs: Set<String> = ["my-library", "time", "topics", "companies"]
     private lazy var fluidBackground = fluidBackgroundStore.load()
 
     private let sidebarBackground = SidebarBackgroundView()
@@ -181,7 +182,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         self.menuController = menuController
         let savedExpandedIDs = UserDefaults.standard.stringArray(forKey: Self.sidebarExpandedNodeIDsKey)
         if let savedExpandedIDs, !savedExpandedIDs.isEmpty {
-            expandedSidebarNodeIDs = Set(savedExpandedIDs)
+            expandedSidebarNodeIDs.formUnion(savedExpandedIDs)
         }
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720),
@@ -1109,7 +1110,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             guard let self else { return }
             let doctor = self.client.runJSON(["doctor"])
             let recent = self.client.runJSONArray(["recent", "--limit", "500"]) ?? []
-            let captures = recent.map(Self.capture(from:))
+            let captures = self.enrichTaxonomy(recent.map(Self.capture(from:)))
             DispatchQueue.main.async {
                 self.doctor = doctor
                 self.captures = captures
@@ -1147,7 +1148,118 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             capturedAtText: dateText,
             filePath: value["file_path"] as? String ?? "",
             snippet: value["snippet"] as? String ?? "",
-            topics: (value["topics"] as? [String]) ?? []
+            topics: (value["topics"] as? [String]) ?? [],
+            taxonomyTopics: [],
+            companies: []
+        )
+    }
+
+    private func enrichTaxonomy(_ captures: [LibraryCapture]) -> [LibraryCapture] {
+        let payload = captures.map { capture in
+            [
+                "id": capture.id,
+                "title": capture.title,
+                "source": capture.source,
+                "site": capture.site ?? "",
+                "author": capture.author ?? "",
+                "snippet": capture.snippet,
+                "topics": capture.topics
+            ] as [String: Any]
+        }
+        guard
+            let scriptURL = Bundle.main.url(forResource: "extract_taxonomy", withExtension: "py", subdirectory: "taxonomy"),
+            JSONSerialization.isValidJSONObject(payload),
+            let input = try? JSONSerialization.data(withJSONObject: payload, options: [])
+        else {
+            return captures.map(enrichTaxonomyFallback)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [scriptURL.path]
+        let stdin = Pipe()
+        let stdout = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            stdin.fileHandleForWriting.write(input)
+            try? stdin.fileHandleForWriting.close()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                return captures.map(enrichTaxonomyFallback)
+            }
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            guard
+                let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let items = value["items"] as? [[String: Any]]
+            else {
+                return captures.map(enrichTaxonomyFallback)
+            }
+            let byID = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (String, ([String], [String]))? in
+                guard let id = item["id"] as? String else { return nil }
+                return (id, ((item["topics"] as? [String]) ?? [], (item["companies"] as? [String]) ?? []))
+            })
+            return captures.map { capture in
+                let generated = byID[capture.id]
+                return LibraryCapture(
+                    id: capture.id,
+                    title: capture.title,
+                    type: capture.type,
+                    site: capture.site,
+                    author: capture.author,
+                    url: capture.url,
+                    capturedAt: capture.capturedAt,
+                    capturedAtText: capture.capturedAtText,
+                    filePath: capture.filePath,
+                    snippet: capture.snippet,
+                    topics: capture.topics,
+                    taxonomyTopics: generated?.0 ?? enrichTaxonomyFallback(capture).taxonomyTopics,
+                    companies: generated?.1 ?? enrichTaxonomyFallback(capture).companies
+                )
+            }
+        } catch {
+            return captures.map(enrichTaxonomyFallback)
+        }
+    }
+
+    private func enrichTaxonomyFallback(_ capture: LibraryCapture) -> LibraryCapture {
+        let text = " " + ([capture.title, capture.source, capture.author ?? "", capture.site ?? "", capture.snippet] + capture.topics)
+            .joined(separator: " ")
+            .lowercased() + " "
+        var topics: [String] = []
+        func add(_ topic: String, when needles: [String]) {
+            guard needles.contains(where: { text.contains($0) }), !topics.contains(topic) else { return }
+            topics.append(topic)
+        }
+        add("Tech / AI", when: [" ai ", "artificial intelligence", "machine learning", "model", "llm", "openai", "anthropic", "claude", "chatgpt"])
+        add("Tech / Enterprise SaaS", when: ["figma", "salesforce", "enterprise software", "enterprise", "saas", "b2b software", "design tool"])
+        add("Tech / Semiconductors", when: ["semiconductor", "chip", "chips", "gpu", "nvidia", "tsmc", "amd", "foundry", "wafer"])
+        add("Tech / Fintech", when: ["fintech", "stripe", "payments", "banking", "neobank", "lending", "stablecoin"])
+        add("Tech / Consumer Hardware", when: ["iphone", "ipad", "apple watch", "vision pro", "wearable", "consumer hardware", "device"])
+        add("Tech / Robotics", when: ["robot", "robots", "robotics", "humanoid", "autonomous", "drone"])
+        add("Tech / Digital Advertising", when: ["advertising", "adtech", "ads", "digital ads", "performance marketing", "targeting"])
+        add("Tech / E-commerce", when: ["e-commerce", "ecommerce", "shopify", "marketplace", "online shopping", "merchant"])
+        add("Tech / Cybersecurity", when: ["cybersecurity", "security", "ransomware", "malware", "phishing", "zero trust", "breach"])
+        let knownCompanies = ["AMD", "Adobe", "Airbnb", "Amazon", "Anthropic", "Apple", "Cursor", "Databricks", "Figma", "Google", "Intel", "Meta", "Microsoft", "Netflix", "NVIDIA", "OpenAI", "Palantir", "Salesforce", "Shopify", "SpaceX", "Stripe", "Tesla", "TSMC"]
+        let companies = knownCompanies.filter { company in
+            text.range(of: #"(?<![A-Za-z0-9])\#(NSRegularExpression.escapedPattern(for: company))(?![A-Za-z0-9])"#, options: [.regularExpression, .caseInsensitive]) != nil
+        }
+        return LibraryCapture(
+            id: capture.id,
+            title: capture.title,
+            type: capture.type,
+            site: capture.site,
+            author: capture.author,
+            url: capture.url,
+            capturedAt: capture.capturedAt,
+            capturedAtText: capture.capturedAtText,
+            filePath: capture.filePath,
+            snippet: capture.snippet,
+            topics: capture.topics,
+            taxonomyTopics: topics.isEmpty ? ["General"] : topics,
+            companies: companies
         )
     }
 
@@ -1218,18 +1330,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             NavNode(id: "my-library", label: "My Library", count: captures.count, scope: .all, children: [
                 NavNode(id: "time", label: "Time", count: nil, scope: nil, children: timeNodes()),
                 NavNode(id: "topics", label: "Topics", count: nil, scope: nil, children: topicNodes()),
-                NavNode(id: "sources", label: "Sources", count: nil, scope: nil, children: sourceNodes())
-            ]),
-            NavNode(id: "marketplace", label: "Marketplace", count: nil, scope: .marketplace, children: [
-                NavNode(id: "marketplace-featured", label: "Featured", count: 0, scope: nil, children: []),
-                NavNode(id: "marketplace-courses", label: "Courses", count: 0, scope: nil, children: []),
-                NavNode(id: "marketplace-archives", label: "Author Archives", count: 0, scope: nil, children: [])
-            ]),
-            NavNode(id: "friends", label: "Friends", count: nil, scope: .friends, children: [
-                NavNode(id: "friends-shared", label: "Shared Libraries", count: 0, scope: nil, children: [])
-            ]),
-            NavNode(id: "utility", label: "Utility", count: nil, scope: nil, children: []),
-            NavNode(id: "settings", label: "Settings", count: nil, scope: .settings, children: [])
+                NavNode(id: "companies", label: "Companies", count: nil, scope: nil, children: companyNodes())
+            ])
         ]
     }
 
@@ -1246,37 +1348,44 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             let children = monthGroups.sorted { $0.id > $1.id }.map { group in
                 NavNode(id: "month:\(group.id)", label: group.label, count: group.captures.count, scope: .month(group.id), children: [])
             }
-            return NavNode(id: "year:\(year)", label: year, count: monthGroups.reduce(0) { $0 + $1.captures.count }, scope: nil, children: children)
+            return NavNode(id: "year:\(year)", label: year, count: monthGroups.reduce(0) { $0 + $1.captures.count }, scope: .year(year), children: children)
         }
         .sorted { $0.label > $1.label }
     }
 
     private func topicNodes() -> [NavNode] {
-        let topics = captures.flatMap(\.topics).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        if topics.isEmpty {
-            return [
-                NavNode(id: "topic:tech", label: "Tech", count: nil, scope: .topic("Tech"), children: [
-                    NavNode(id: "topic:tech/semiconductors", label: "Semiconductors", count: nil, scope: .topic("Semiconductors"), children: [
-                        NavNode(id: "topic:tech/semiconductors/ai-infrastructure", label: "AI Infrastructure", count: nil, scope: .topic("AI Infrastructure"), children: [])
-                    ])
-                ]),
-                NavNode(id: "topic:politics", label: "Politics", count: nil, scope: .topic("Politics"), children: [])
-            ]
-        }
+        let topics = captures.flatMap(\.taxonomyTopics)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
         let counts = Dictionary(grouping: topics, by: { $0 }).mapValues(\.count)
-        return counts.keys.sorted { counts[$0, default: 0] == counts[$1, default: 0] ? $0 < $1 : counts[$0, default: 0] > counts[$1, default: 0] }
-            .prefix(12)
-            .map { topic in
-                NavNode(id: "topic:\(topic)", label: topic, count: counts[topic], scope: .topic(topic), children: [])
-            }
+        let roots = Set(topics.map { $0.components(separatedBy: " / ").first ?? $0 })
+        return roots.sorted().map { root in
+            let children = counts.keys
+                .filter { $0.hasPrefix(root + " / ") }
+                .sorted { lhs, rhs in
+                    counts[lhs, default: 0] == counts[rhs, default: 0]
+                        ? lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+                        : counts[lhs, default: 0] > counts[rhs, default: 0]
+                }
+                .map { topic -> NavNode in
+                    let label = topic.components(separatedBy: " / ").last ?? topic
+                    return NavNode(id: "topic:\(topic)", label: label, count: counts[topic], scope: .topic(topic), children: [])
+                }
+            let rootCount = captures.filter { capture in
+                capture.taxonomyTopics.contains { $0 == root || $0.hasPrefix(root + " / ") }
+            }.count
+            return NavNode(id: "topic:\(root)", label: root, count: rootCount, scope: .topic(root), children: children)
+        }
     }
 
-    private func sourceNodes() -> [NavNode] {
-        let counts = Dictionary(grouping: captures, by: \.source).mapValues(\.count)
-        return counts.keys.sorted { counts[$0, default: 0] == counts[$1, default: 0] ? $0 < $1 : counts[$0, default: 0] > counts[$1, default: 0] }
-            .prefix(10)
-            .map { source in
-                NavNode(id: "source:\(source)", label: source, count: counts[source], scope: .source(source), children: [])
+    private func companyNodes() -> [NavNode] {
+        let companies = captures.flatMap(\.companies)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let counts = Dictionary(grouping: companies, by: { $0 }).mapValues(\.count)
+        return counts.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .map { company in
+                NavNode(id: "company:\(company)", label: company, count: counts[company], scope: .company(company), children: [])
             }
     }
 
@@ -1306,16 +1415,23 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         switch selectedSidebarScope {
         case .all:
             return captures
+        case .year(let year):
+            let formatter = DateFormatter()
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy"
+            return captures.filter { capture in
+                guard let capturedAt = capture.capturedAt else { return year == "Undated" }
+                return formatter.string(from: capturedAt) == year
+            }
         case .month(let id):
             return groups.first { $0.id == id }?.captures ?? captures
         case .topic(let topic):
             return captures.filter { capture in
-                capture.topics.contains { $0.localizedCaseInsensitiveContains(topic) || topic.localizedCaseInsensitiveContains($0) }
+                capture.taxonomyTopics.contains { $0 == topic || $0.hasPrefix(topic + " / ") }
             }
-        case .source(let source):
-            return captures.filter { $0.source == source }
-        case .marketplace, .friends:
-            return []
+        case .company(let company):
+            return captures.filter { $0.companies.contains(company) }
         case .settings:
             return captures
         }
@@ -1344,7 +1460,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                     "snippet": capture.snippet,
                     "url": capture.url?.absoluteString ?? "",
                     "filePath": capture.filePath,
-                    "topics": capture.topics
+                    "topics": capture.taxonomyTopics,
+                    "companies": capture.companies
                 ]
             }
         ]
@@ -1362,16 +1479,14 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         switch selectedSidebarScope {
         case .all:
             return "My Library"
+        case .year(let year):
+            return year
         case .month(let id):
             return groups.first { $0.id == id }?.label ?? "My Library"
         case .topic(let topic):
             return topic
-        case .source(let source):
-            return source
-        case .marketplace:
-            return "Marketplace"
-        case .friends:
-            return "Friends"
+        case .company(let company):
+            return company
         case .settings:
             return "Settings"
         }
@@ -1494,6 +1609,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             }
         case "upload":
             uploadDocuments()
+        case "settings":
+            showSettings()
         case "onboardingDone":
             UserDefaults.standard.set(true, forKey: Self.onboardingCompleteKey)
         case "exportBrain":
@@ -1555,8 +1672,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         )
     }
 
-    /// Bulk-import user documents (PDF, Word, text, Markdown) with an optional
-    /// shared topic, then reload the Library. Parsing happens locally in the CLI.
+    /// Bulk-import user documents (PDF, Word, text, Markdown), then reload the
+    /// Library. Parsing happens locally in the CLI; topic organization is
+    /// generated by the Library taxonomy layer.
     private func uploadDocuments() {
         guard let window else { return }
         let panel = NSOpenPanel()
@@ -1571,14 +1689,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let self, !panel.urls.isEmpty else { return }
             let urls = panel.urls
-            let topic = self.promptForBatchTopic(count: urls.count)
-            guard topic != nil else { return } // user cancelled the topic step
             var arguments = ["import"]
             arguments.append(contentsOf: urls.map { $0.path })
-            if let topic, !topic.isEmpty {
-                arguments.append("--topic")
-                arguments.append(topic)
-            }
             self.progress.startAnimation(nil)
             self.client.runAsync(arguments) { [weak self] output in
                 guard let self else { return }
@@ -1586,21 +1698,6 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                 self.reload()
             }
         }
-    }
-
-    /// Returns the chosen topic (possibly empty for "no topic"), or nil if the
-    /// user cancelled the import entirely.
-    private func promptForBatchTopic(count: Int) -> String? {
-        let alert = NSAlert()
-        alert.messageText = "Add a topic to \(count) document\(count == 1 ? "" : "s")?"
-        alert.informativeText = "Optional — leave blank to import without a topic."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.placeholderString = "Topic (optional)"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Import")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func reportImport(output: String, total: Int) {
@@ -1686,7 +1783,10 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         if let capture {
             reader["date"] = displayDate(capture.capturedAt, fallback: capture.capturedAtText)
         }
-        if let topics = metadata["topics"] as? [String], !topics.isEmpty {
+        if let capture, !capture.taxonomyTopics.isEmpty {
+            reader["topics"] = capture.taxonomyTopics
+            reader["companies"] = capture.companies
+        } else if let topics = metadata["topics"] as? [String], !topics.isEmpty {
             reader["topics"] = topics
         }
         return jsonObjectString(reader)
@@ -2166,6 +2266,7 @@ private final class SidebarTreeRowButton: NSButton {
         super.init(frame: .zero)
         isBordered = false
         bezelStyle = .regularSquare
+        focusRingType = .none
         setButtonType(.momentaryChange)
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 260).isActive = true
@@ -2234,16 +2335,6 @@ private final class SidebarTreeRowButton: NSButton {
                 Self.cream.withAlphaComponent(isSelectedRow ? 1.0 : 0.72).setStroke()
                 surface.lineWidth = isSelectedRow ? 1.2 : 1
                 surface.stroke()
-            }
-            if isSelectedRow {
-                let edge = NSBezierPath()
-                edge.move(to: NSPoint(x: rect.maxX - 2, y: rect.minY + 4))
-                edge.line(to: NSPoint(x: rect.maxX - 2, y: rect.maxY - 4))
-                edge.move(to: NSPoint(x: rect.minX + 5, y: rect.minY + 2))
-                edge.line(to: NSPoint(x: rect.maxX - 5, y: rect.minY + 2))
-                Self.cream.setStroke()
-                edge.lineWidth = 1
-                edge.stroke()
             }
         }
 

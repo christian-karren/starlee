@@ -4,8 +4,8 @@
   <key>CFBundleName</key><string>Starlee</string>
   <key>CFBundleDisplayName</key><string>Starlee</string>
   <key>CFBundleIdentifier</key><string>com.christiankarren.starlee</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>3</string>
+  <key>CFBundleShortVersionString</key><string>0.1.2</string>
   <key>CFBundleExecutable</key><string>StarleeMenuBar</string>
   <key>CFBundleIconFile</key><string>StarleeDesktopIcon</string>
   <key>NSHighResolutionCapable</key><true/>

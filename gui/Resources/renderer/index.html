@@ -29,39 +29,9 @@
                 <button class="sort-option" type="button" data-sort="source" aria-pressed="false">Source A-Z</button>
               </div>
             </div>
-            <div class="filter-wrap">
-              <button id="filter-toggle" class="action-btn" type="button" aria-expanded="false" aria-label="Filter the library" title="Filter the library">
-                <img class="action-icon action-icon-filter" src="./icons/filter.png" alt="" aria-hidden="true">
-              </button>
-              <div id="filter-panel" class="filter-panel" hidden role="group" aria-label="Library filters">
-                <label class="filter-field">
-                  <span>Type</span>
-                  <select id="filter-type"><option value="">All types</option></select>
-                </label>
-                <label class="filter-field">
-                  <span>Author</span>
-                  <select id="filter-author"><option value="">All authors</option></select>
-                </label>
-                <label class="filter-field">
-                  <span>Topic</span>
-                  <select id="filter-topic"><option value="">All topics</option></select>
-                </label>
-                <div class="filter-dates">
-                  <label class="filter-field">
-                    <span>Ingested from</span>
-                    <input type="date" id="filter-from">
-                  </label>
-                  <label class="filter-field">
-                    <span>to</span>
-                    <input type="date" id="filter-to">
-                  </label>
-                </div>
-                <div class="filter-foot">
-                  <span id="filter-count" class="filter-count"></span>
-                  <button id="filter-clear" class="filter-clear" type="button">Clear all</button>
-                </div>
-              </div>
-            </div>
+            <button id="settings-button" class="action-btn" type="button" aria-label="Open settings" title="Settings">
+              <img class="action-icon action-icon-settings" src="./icons/settings.svg" alt="" aria-hidden="true">
+            </button>
             <button id="edit-toggle" class="action-btn" type="button" aria-pressed="false" aria-label="Enter edit mode" title="Edit mode: delete captures">
               <img class="action-icon action-icon-edit" src="./icons/edit.png" alt="" aria-hidden="true">
             </button>
