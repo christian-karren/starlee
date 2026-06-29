@@ -142,8 +142,16 @@ Then finish the Safari user-approval steps:
    starlee serve
    ```
 
-7. Open an article in Safari and use the Starlee extension button or the in-page
-   Starlee button.
+7. Open an article in Safari and use the Starlee extension button, the in-page
+   Starlee button, or the Starlee macOS menu-bar icon.
+
+When using the macOS menu-bar icon, Safari must already have a fresh extension
+check-in with the local Starlee service. The extension polls
+`http://127.0.0.1:47291/capture-request`, looks up Safari's active tab, probes
+the page content script, extracts the payload, posts `/capture`, then posts
+`/capture-request/result`. If Safari has not checked in recently, cannot expose
+the active tab, or cannot message the content script, Starlee should show an
+actionable "needs attention" message instead of a generic red X.
 
 Verify from Starlee:
 
@@ -168,6 +176,7 @@ Run these before treating the local Safari path as working:
 - [ ] A YouTube watch page with captions saves transcript segments.
 - [ ] A YouTube watch page without captions saves a metadata-only record with explicit transcript status/reason.
 - [ ] Denying site access produces `permission_denied` or `content_script_unreachable` with a next action to grant site access and reload.
+- [ ] Clicking the macOS menu-bar icon on a Safari article either saves the page or shows a non-generic setup/site-access/check-in message.
 - [ ] Stopping `starlee serve` produces `service_down` or local-service recovery text.
 - [ ] `starlee diagnostics --last-capture` contains browser `Safari` and does not contain capture tokens, article bodies, transcript text, selected text, raw HTML, cookies, embeddings, or vault file bodies.
 

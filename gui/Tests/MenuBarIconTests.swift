@@ -50,6 +50,13 @@ final class MenuBarIconTests: XCTestCase {
         // nil is also acceptable in a headless test environment without the bundle
     }
 
+    func testAttentionImage_isNilOrCorrectSize() {
+        let image = MenuBarIcon.attentionImage()
+        if let image {
+            XCTAssertEqual(image.size, MenuBarIcon.size)
+        }
+    }
+
     // MARK: - State count expectations
 
     func testStateTransition_idle_loadingFrameCountDiffersFromSuccessFrameCount() {
@@ -77,5 +84,10 @@ final class MenuBarIconTests: XCTestCase {
     func testErrorImage_isNotTemplateImage() {
         guard let image = MenuBarIcon.errorImage() else { return }
         XCTAssertFalse(image.isTemplate, "Error image should not be a template image")
+    }
+
+    func testAttentionImage_isNotTemplateImage() {
+        guard let image = MenuBarIcon.attentionImage() else { return }
+        XCTAssertFalse(image.isTemplate, "Attention image should not be a template image")
     }
 }

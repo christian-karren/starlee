@@ -16,7 +16,7 @@ test("active tab diagnostics classify missing and unsupported URLs", () => {
   assert.deepEqual(activeTabProblem({ id: 7 }), {
     event: "active_tab_missing_url",
     status: "permission_denied",
-    message: "The browser did not expose the active tab URL to Starlee."
+    message: "Safari did not expose the active tab URL to Starlee. Grant Starlee site access for this site, reload the tab, then try capture again."
   });
   assert.deepEqual(activeTabProblem({ id: 7, url: "safari-web-extension://settings" }), {
     event: "active_tab_unsupported_url",

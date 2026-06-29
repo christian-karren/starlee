@@ -8,10 +8,11 @@ use crate::config::{
     CaptureDiagnosticEvent, CaptureRequestPageMetadata, ExtensionState, LocalConfig,
 };
 
-// Generous enough to let the browser open the YouTube transcript panel and wait
-// out a slow transcript load (which can take several seconds) before the request
-// is considered stale.
+// Short enough to catch a browser extension that never polls at all.
 pub const CAPTURE_REQUEST_TTL: Duration = Duration::from_secs(25);
+// Saving a large restricted article can take longer than extraction because the
+// local engine writes, chunks, embeds, and indexes it before /capture returns.
+pub const CAPTURE_IN_PROGRESS_TTL: Duration = Duration::from_secs(3 * 60);
 pub const EXTENSION_HEARTBEAT_FRESHNESS: Duration = Duration::from_secs(5 * 60);
 const CAPTURE_DIAGNOSTIC_LIMIT: usize = 120;
 
@@ -72,19 +73,29 @@ pub(crate) fn expire_stale_capture_request(config: &mut LocalConfig) -> bool {
     if capture_status_is_terminal(&status.status) {
         return clear_pending_capture_request(config);
     }
-    let Some(requested_at) = parse_rfc3339_utc(&status.requested_at) else {
+    let timeout_anchor = status
+        .picked_up_at
+        .as_deref()
+        .and_then(parse_rfc3339_utc)
+        .or_else(|| parse_rfc3339_utc(&status.requested_at));
+    let Some(timeout_anchor) = timeout_anchor else {
         return false;
     };
-    let Ok(ttl) = chrono::TimeDelta::from_std(CAPTURE_REQUEST_TTL) else {
+    let ttl = if status.status == CAPTURE_STATUS_QUEUED {
+        CAPTURE_REQUEST_TTL
+    } else {
+        CAPTURE_IN_PROGRESS_TTL
+    };
+    let Ok(ttl) = chrono::TimeDelta::from_std(ttl) else {
         return false;
     };
-    if Utc::now().signed_duration_since(requested_at) <= ttl {
+    if Utc::now().signed_duration_since(timeout_anchor) <= ttl {
         return false;
     }
     let event = {
         status.status = CAPTURE_STATUS_TIMED_OUT.into();
         status.completed_at = Some(Utc::now().to_rfc3339());
-        status.message = Some("The browser did not pick up the request in time.".into());
+        status.message = Some(capture_timeout_message(status.picked_up_at.is_some()).into());
         diagnostic_event(DiagnosticEventInput {
             component: "engine",
             event: "capture_request_timed_out",
@@ -99,6 +110,14 @@ pub(crate) fn expire_stale_capture_request(config: &mut LocalConfig) -> bool {
     append_capture_diagnostic(config, event);
     config.pending_capture_request = None;
     true
+}
+
+fn capture_timeout_message(picked_up: bool) -> &'static str {
+    if picked_up {
+        "The browser picked up the request, but capture did not finish in time."
+    } else {
+        "The browser did not pick up the request in time."
+    }
 }
 
 fn clear_pending_capture_request(config: &mut LocalConfig) -> bool {

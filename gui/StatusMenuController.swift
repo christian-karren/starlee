@@ -1,7 +1,19 @@
 import AppKit
 
 final class StatusMenuController: NSObject {
-    private static let captureTimeout: TimeInterval = 25
+    private static let captureTimeout: TimeInterval = 180
+    static let actionableCaptureStatuses: Set<String> = [
+        "permission_denied",
+        "unsupported_page",
+        "extension_unavailable",
+        "content_script_unreachable",
+        "timed_out",
+        "token_missing",
+        "token_invalid",
+        "service_down",
+        "setup_required",
+        "service_unreachable"
+    ]
 
     private let statusItem: NSStatusItem
     private let client: StarleeClient
@@ -152,7 +164,7 @@ final class StatusMenuController: NSObject {
             } else if Self.isSetupStatus(result.status) {
                 self.finishCaptureNeedsAttention(message: result.message)
             } else {
-                self.finishCapture(PostResult(ok: false, message: result.message))
+                self.finishCapture(PostResult(ok: false, message: result.message, status: result.status))
             }
         }
     }
@@ -170,6 +182,8 @@ final class StatusMenuController: NSObject {
         if result.ok {
             recordMenuBarResult(status: "capture_saved", message: result.message, animation: "success")
             playSuccessAnimation()
+        } else if Self.isSetupStatus(result.status) {
+            playAttentionAnimation(message: result.message)
         } else {
             recordMenuBarResult(status: "capture_failed", message: result.message, animation: "error")
             playErrorAnimation(message: result.message)
@@ -188,15 +202,13 @@ final class StatusMenuController: NSObject {
         playAttentionAnimation(message: message)
     }
 
-    private static func isSetupStatus(_ status: String?) -> Bool {
-        switch status {
-        case "permission_denied", "unsupported_page", "extension_unavailable",
-             "content_script_unreachable", "timed_out", "setup_required",
-             "service_unreachable", "service_down", "token_missing", "token_invalid":
-            return true
-        default:
-            return false
-        }
+    static func isSetupStatus(_ status: String?) -> Bool {
+        guard let status else { return false }
+        return actionableCaptureStatuses.contains(status)
+    }
+
+    static func isActionableCaptureStatus(_ status: String?) -> Bool {
+        isSetupStatus(status)
     }
 
     private func pollCaptureRequestStatus(id: String) {
@@ -411,7 +423,7 @@ final class StatusMenuController: NSObject {
             } else if Self.isSetupStatus(result.status) {
                 self.finishCaptureNeedsAttention(message: result.message)
             } else {
-                self.finishCapture(PostResult(ok: false, message: result.message))
+                self.finishCapture(PostResult(ok: false, message: result.message, status: result.status))
             }
         }
     }

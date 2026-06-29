@@ -69,6 +69,15 @@ final class StatusMenuControllerTests: XCTestCase {
         XCTAssertTrue(controller.responds(to: #selector(StatusMenuController.saveCurrentArticle)))
     }
 
+    func testActionableCaptureStatusesUseNeedsAttentionPath() {
+        XCTAssertTrue(StatusMenuController.isActionableCaptureStatus("permission_denied"))
+        XCTAssertTrue(StatusMenuController.isActionableCaptureStatus("extension_unavailable"))
+        XCTAssertTrue(StatusMenuController.isActionableCaptureStatus("content_script_unreachable"))
+        XCTAssertTrue(StatusMenuController.isActionableCaptureStatus("service_down"))
+        XCTAssertFalse(StatusMenuController.isActionableCaptureStatus("capture_failed"))
+        XCTAssertFalse(StatusMenuController.isActionableCaptureStatus(nil))
+    }
+
     // MARK: - Double-tap guard: second testChromeCapture is no-op
 
     func testChromeCapture_doubleTapIgnored() {
