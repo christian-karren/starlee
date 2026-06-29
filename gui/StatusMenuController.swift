@@ -1,7 +1,7 @@
 import AppKit
 
 final class StatusMenuController: NSObject {
-    private static let captureTimeout: TimeInterval = 75
+    private static let captureTimeout: TimeInterval = 180
     static let actionableCaptureStatuses: Set<String> = [
         "permission_denied",
         "unsupported_page",
@@ -12,8 +12,7 @@ final class StatusMenuController: NSObject {
         "token_invalid",
         "service_down",
         "setup_required",
-        "service_unreachable",
-        "payload_too_large"
+        "service_unreachable"
     ]
 
     private let statusItem: NSStatusItem
@@ -223,7 +222,7 @@ final class StatusMenuController: NSObject {
             switch result.status {
             case "capture_saved":
                 self.finishCapture(PostResult(ok: true, message: result.message))
-            case "permission_denied", "unsupported_page", "extension_unavailable", "content_script_unreachable", "timed_out", "setup_required", "service_down", "service_unreachable", "token_missing", "token_invalid", "payload_too_large":
+            case "permission_denied", "unsupported_page", "extension_unavailable", "content_script_unreachable", "timed_out", "setup_required", "service_down", "service_unreachable", "token_missing", "token_invalid":
                 self.finishCaptureNeedsAttention(message: result.message.isEmpty ? "Starlee capture needs setup." : result.message)
             case "capture_failed":
                 self.finishCapture(PostResult(ok: false, message: result.message.isEmpty ? "Starlee capture failed." : result.message))

@@ -248,69 +248,6 @@ final class StarleeClientTests: XCTestCase {
         }
     }
 
-    func testRequestCapture_safariUnsupportedDoesNotEnqueueRequest() {
-        let session = MockURLSession()
-        let client = StarleeClient(session: session)
-        client.overrideConfig = ["capture_port": 47291 as NSNumber, "capture_token": "tok"]
-        client.overrideTargetBrowser = "Safari"
-
-        let exp = expectation(description: "done")
-        client.requestCurrentArticleCapture { result in
-            XCTAssertFalse(result.ok)
-            XCTAssertNil(result.requestId)
-            XCTAssertEqual(result.status, "setup_required")
-            XCTAssertEqual(result.message, "Safari capture is not enabled in this build. Use Chrome or Firefox.")
-            exp.fulfill()
-        }
-        wait(for: [exp], timeout: 2)
-
-        XCTAssertEqual(session.capturedRequests.count, 0)
-    }
-
-    func testRequestCapture_unknownTargetDoesNotEnqueueRequest() {
-        let session = MockURLSession()
-        let client = StarleeClient(session: session)
-        client.overrideConfig = ["capture_port": 47291 as NSNumber, "capture_token": "tok"]
-        client.overrideTargetBrowser = "Finder"
-
-        let exp = expectation(description: "done")
-        client.requestCurrentArticleCapture { result in
-            XCTAssertFalse(result.ok)
-            XCTAssertNil(result.requestId)
-            XCTAssertEqual(result.status, "setup_required")
-            XCTAssertEqual(result.message, "Open Chrome or Firefox to an article or YouTube page, then try again.")
-            exp.fulfill()
-        }
-        wait(for: [exp], timeout: 2)
-
-        XCTAssertEqual(session.capturedRequests.count, 0)
-    }
-
-    func testCaptureTargetResolutionAllowsChromeAndFirefoxOnly() {
-        XCTAssertEqual(
-            StarleeClient.captureTargetResolution(frontmostBrowser: "Chrome", fallbackBrowser: nil).targetBrowser,
-            "Chrome"
-        )
-        XCTAssertEqual(
-            StarleeClient.captureTargetResolution(frontmostBrowser: "Firefox", fallbackBrowser: nil).targetBrowser,
-            "Firefox"
-        )
-        XCTAssertNil(
-            StarleeClient.captureTargetResolution(frontmostBrowser: "Safari", fallbackBrowser: "Chrome").targetBrowser
-        )
-        XCTAssertEqual(
-            StarleeClient.captureTargetResolution(frontmostBrowser: "Safari", fallbackBrowser: "Chrome").message,
-            "Safari capture is not enabled in this build. Use Chrome or Firefox."
-        )
-        XCTAssertEqual(
-            StarleeClient.captureTargetResolution(frontmostBrowser: nil, fallbackBrowser: "Firefox").targetBrowser,
-            "Firefox"
-        )
-        XCTAssertNil(
-            StarleeClient.captureTargetResolution(frontmostBrowser: nil, fallbackBrowser: "Safari").targetBrowser
-        )
-    }
-
     func testBrowserNameMappingRecognizesSupportedBrowsersOnly() {
         XCTAssertEqual(StarleeClient.browserName(bundleIdentifier: "com.apple.Safari", localizedName: "Safari"), "Safari")
         XCTAssertEqual(StarleeClient.browserName(bundleIdentifier: "org.mozilla.firefox", localizedName: "Firefox"), "Firefox")

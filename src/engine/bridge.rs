@@ -32,7 +32,6 @@ pub const CAPTURE_STATUS_TOKEN_INVALID: &str = "token_invalid";
 pub const CAPTURE_STATUS_SERVICE_DOWN: &str = "service_down";
 pub const CAPTURE_STATUS_SERVICE_UNREACHABLE: &str = "service_unreachable";
 pub const CAPTURE_STATUS_PAYLOAD_TOO_LARGE: &str = "payload_too_large";
-pub const CAPTURE_STATUS_SETUP_REQUIRED: &str = "setup_required";
 
 pub(crate) fn capture_service_reachable(port: u16) -> bool {
     TcpStream::connect_timeout(
@@ -73,34 +72,6 @@ pub(crate) fn expire_stale_capture_request(config: &mut LocalConfig) -> bool {
     };
     if capture_status_is_terminal(&status.status) {
         return clear_pending_capture_request(config);
-    }
-    if config
-        .pending_capture_request
-        .as_ref()
-        .is_some_and(|request| request.target_browser.as_deref().is_none_or(str::is_empty))
-    {
-        let event = {
-            status.status = CAPTURE_STATUS_SETUP_REQUIRED.into();
-            status.completed_at = Some(Utc::now().to_rfc3339());
-            status.message = default_capture_status_message(CAPTURE_STATUS_SETUP_REQUIRED);
-            let mut event = diagnostic_event(DiagnosticEventInput {
-                component: "engine",
-                event: "capture_request_rejected",
-                request_id: Some(&status.id),
-                status: Some(&status.status),
-                source: Some(&status.source),
-                browser: status.requested_browser.as_deref(),
-                message: status.message.as_deref(),
-                page: status.page.clone(),
-            });
-            event
-                .safe_metadata
-                .insert("reason".into(), "missing_requested_browser".into());
-            event
-        };
-        append_capture_diagnostic(config, event);
-        config.pending_capture_request = None;
-        return true;
     }
     let timeout_anchor = status
         .picked_up_at
@@ -189,8 +160,7 @@ pub(crate) fn normalize_capture_request_status(status: &str) -> String {
         | CAPTURE_STATUS_TOKEN_INVALID
         | CAPTURE_STATUS_SERVICE_DOWN
         | CAPTURE_STATUS_SERVICE_UNREACHABLE
-        | CAPTURE_STATUS_PAYLOAD_TOO_LARGE
-        | CAPTURE_STATUS_SETUP_REQUIRED => status.to_owned(),
+        | CAPTURE_STATUS_PAYLOAD_TOO_LARGE => status.to_owned(),
         "empty_extract" | "no_active_tab" => CAPTURE_STATUS_FAILED.into(),
         _ => CAPTURE_STATUS_FAILED.into(),
     }
@@ -211,7 +181,6 @@ pub(crate) fn capture_status_is_terminal(status: &str) -> bool {
             | CAPTURE_STATUS_SERVICE_DOWN
             | CAPTURE_STATUS_SERVICE_UNREACHABLE
             | CAPTURE_STATUS_PAYLOAD_TOO_LARGE
-            | CAPTURE_STATUS_SETUP_REQUIRED
     )
 }
 
@@ -244,9 +213,6 @@ pub(crate) fn default_capture_status_message(status: &str) -> Option<String> {
             "Local Starlee is not reachable."
         }
         CAPTURE_STATUS_PAYLOAD_TOO_LARGE => "The browser capture payload was too large.",
-        CAPTURE_STATUS_SETUP_REQUIRED => {
-            "Open Chrome or Firefox to an article or YouTube page, then try again."
-        }
         _ => return None,
     };
     Some(message.into())
@@ -267,7 +233,6 @@ pub(crate) fn safe_bridge_failure_message(
         | CAPTURE_STATUS_SERVICE_DOWN
         | CAPTURE_STATUS_SERVICE_UNREACHABLE
         | CAPTURE_STATUS_PAYLOAD_TOO_LARGE
-        | CAPTURE_STATUS_SETUP_REQUIRED
         | CAPTURE_STATUS_FAILED => default_capture_status_message(status),
         _ => stored_message
             .map(str::trim)
@@ -325,9 +290,6 @@ pub(crate) fn bridge_next_action(
         }
         Some(CAPTURE_STATUS_PAYLOAD_TOO_LARGE) => {
             "Capture a smaller page or report the page type; Starlee rejected the payload size.".into()
-        }
-        Some(CAPTURE_STATUS_SETUP_REQUIRED) => {
-            "Open Chrome or Firefox to an article or YouTube page, then try again.".into()
         }
         Some(CAPTURE_STATUS_FAILED) => {
             "Retry capture from the active tab; run `starlee doctor` if it fails again.".into()

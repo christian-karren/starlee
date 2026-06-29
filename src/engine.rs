@@ -38,9 +38,8 @@ pub use bridge::{
     CAPTURE_STATUS_EXTENSION_UNAVAILABLE, CAPTURE_STATUS_EXTRACTING, CAPTURE_STATUS_FAILED,
     CAPTURE_STATUS_PERMISSION_DENIED, CAPTURE_STATUS_PICKED_UP, CAPTURE_STATUS_POSTED,
     CAPTURE_STATUS_QUEUED, CAPTURE_STATUS_SAVED, CAPTURE_STATUS_SERVICE_DOWN,
-    CAPTURE_STATUS_SERVICE_UNREACHABLE, CAPTURE_STATUS_SETUP_REQUIRED, CAPTURE_STATUS_TIMED_OUT,
-    CAPTURE_STATUS_TOKEN_INVALID, CAPTURE_STATUS_TOKEN_MISSING, CAPTURE_STATUS_UNSUPPORTED_PAGE,
-    EXTENSION_HEARTBEAT_FRESHNESS,
+    CAPTURE_STATUS_SERVICE_UNREACHABLE, CAPTURE_STATUS_TIMED_OUT, CAPTURE_STATUS_TOKEN_INVALID,
+    CAPTURE_STATUS_TOKEN_MISSING, CAPTURE_STATUS_UNSUPPORTED_PAGE, EXTENSION_HEARTBEAT_FRESHNESS,
 };
 
 use bridge::*;
@@ -1909,7 +1908,6 @@ fn failure_step(events: &[CaptureDiagnosticEvent], result_code: Option<&str>) ->
         .or_else(|| {
             result_code.map(|status| match status {
                 CAPTURE_STATUS_EXTENSION_UNAVAILABLE => "engine:capture_request_rejected".into(),
-                CAPTURE_STATUS_SETUP_REQUIRED => "engine:capture_request_rejected".into(),
                 CAPTURE_STATUS_TIMED_OUT => "engine:capture_request_timed_out".into(),
                 CAPTURE_STATUS_SERVICE_DOWN | CAPTURE_STATUS_SERVICE_UNREACHABLE => {
                     "local_service:unreachable".into()
@@ -2588,15 +2586,8 @@ mod tests {
         let status = engine
             .capture_request_status(&request.id)?
             .expect("status remains available");
-        assert_eq!(status.status, CAPTURE_STATUS_SETUP_REQUIRED);
-        assert!(status.completed_at.is_some());
+        assert_eq!(status.status, CAPTURE_STATUS_QUEUED);
         assert!(status.handling_browser.is_none());
-        assert!(
-            ConfigStore::new(temp.path())
-                .load_or_create()?
-                .pending_capture_request
-                .is_none()
-        );
         Ok(())
     }
 
