@@ -347,12 +347,30 @@ pub struct CaptureTraceReport {
     pub request_id: Option<String>,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
+    pub browser: Option<String>,
+    pub extension_build: Option<String>,
+    pub desktop_build: Option<String>,
+    pub result_code: Option<String>,
     pub terminal_status: Option<String>,
+    pub user_safe_message: Option<String>,
+    pub failure_step: Option<String>,
     pub recommended_next_action: String,
+    pub next_action: String,
+    pub last_extension_check_in: LastExtensionCheckInState,
     pub runtime: RuntimeIdentity,
     #[serde(default)]
     pub request_status: Option<CaptureRequestStatus>,
     pub events: Vec<CaptureDiagnosticEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastExtensionCheckInState {
+    pub checked_in_recently: bool,
+    pub can_capture_active_tab: bool,
+    pub last_hello_at: Option<String>,
+    pub browser: Option<String>,
+    pub extension_version: Option<String>,
+    pub extension_build: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

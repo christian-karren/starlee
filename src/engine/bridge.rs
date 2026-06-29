@@ -26,6 +26,11 @@ pub const CAPTURE_STATUS_UNSUPPORTED_PAGE: &str = "unsupported_page";
 pub const CAPTURE_STATUS_EXTENSION_UNAVAILABLE: &str = "extension_unavailable";
 pub const CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE: &str = "content_script_unreachable";
 pub const CAPTURE_STATUS_TIMED_OUT: &str = "timed_out";
+pub const CAPTURE_STATUS_TOKEN_MISSING: &str = "token_missing";
+pub const CAPTURE_STATUS_TOKEN_INVALID: &str = "token_invalid";
+pub const CAPTURE_STATUS_SERVICE_DOWN: &str = "service_down";
+pub const CAPTURE_STATUS_SERVICE_UNREACHABLE: &str = "service_unreachable";
+pub const CAPTURE_STATUS_PAYLOAD_TOO_LARGE: &str = "payload_too_large";
 
 pub(crate) fn capture_service_reachable(port: u16) -> bool {
     TcpStream::connect_timeout(
@@ -122,9 +127,13 @@ pub(crate) fn normalize_capture_request_status(status: &str) -> String {
         | CAPTURE_STATUS_UNSUPPORTED_PAGE
         | CAPTURE_STATUS_EXTENSION_UNAVAILABLE
         | CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE
-        | CAPTURE_STATUS_TIMED_OUT => status.to_owned(),
-        "service_down" | "token_missing" | "token_invalid" | "payload_too_large"
-        | "empty_extract" | "no_active_tab" => CAPTURE_STATUS_FAILED.into(),
+        | CAPTURE_STATUS_TIMED_OUT
+        | CAPTURE_STATUS_TOKEN_MISSING
+        | CAPTURE_STATUS_TOKEN_INVALID
+        | CAPTURE_STATUS_SERVICE_DOWN
+        | CAPTURE_STATUS_SERVICE_UNREACHABLE
+        | CAPTURE_STATUS_PAYLOAD_TOO_LARGE => status.to_owned(),
+        "empty_extract" | "no_active_tab" => CAPTURE_STATUS_FAILED.into(),
         _ => CAPTURE_STATUS_FAILED.into(),
     }
 }
@@ -139,6 +148,11 @@ pub(crate) fn capture_status_is_terminal(status: &str) -> bool {
             | CAPTURE_STATUS_EXTENSION_UNAVAILABLE
             | CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE
             | CAPTURE_STATUS_TIMED_OUT
+            | CAPTURE_STATUS_TOKEN_MISSING
+            | CAPTURE_STATUS_TOKEN_INVALID
+            | CAPTURE_STATUS_SERVICE_DOWN
+            | CAPTURE_STATUS_SERVICE_UNREACHABLE
+            | CAPTURE_STATUS_PAYLOAD_TOO_LARGE
     )
 }
 
@@ -161,6 +175,16 @@ pub(crate) fn default_capture_status_message(status: &str) -> Option<String> {
             "The Starlee content script was not running in the page."
         }
         CAPTURE_STATUS_TIMED_OUT => "The browser did not pick up the request in time.",
+        CAPTURE_STATUS_TOKEN_MISSING => {
+            "The browser extension is missing the local Starlee capture token."
+        }
+        CAPTURE_STATUS_TOKEN_INVALID => {
+            "The browser extension capture token was rejected by local Starlee."
+        }
+        CAPTURE_STATUS_SERVICE_DOWN | CAPTURE_STATUS_SERVICE_UNREACHABLE => {
+            "Local Starlee is not reachable."
+        }
+        CAPTURE_STATUS_PAYLOAD_TOO_LARGE => "The browser capture payload was too large.",
         _ => return None,
     };
     Some(message.into())
@@ -176,6 +200,11 @@ pub(crate) fn safe_bridge_failure_message(
         | CAPTURE_STATUS_EXTENSION_UNAVAILABLE
         | CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE
         | CAPTURE_STATUS_TIMED_OUT
+        | CAPTURE_STATUS_TOKEN_MISSING
+        | CAPTURE_STATUS_TOKEN_INVALID
+        | CAPTURE_STATUS_SERVICE_DOWN
+        | CAPTURE_STATUS_SERVICE_UNREACHABLE
+        | CAPTURE_STATUS_PAYLOAD_TOO_LARGE
         | CAPTURE_STATUS_FAILED => default_capture_status_message(status),
         _ => stored_message
             .map(str::trim)
@@ -217,6 +246,18 @@ pub(crate) fn bridge_next_action(
         }
         Some(CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE) => {
             "Reload the page so the Starlee content script loads (it does not inject into tabs opened before the extension was enabled), confirm the extension is enabled and allowed on this site, then try capture again.".into()
+        }
+        Some(CAPTURE_STATUS_TOKEN_MISSING) => {
+            "Open Starlee Capture settings and reconnect the local Starlee app, then reload the extension.".into()
+        }
+        Some(CAPTURE_STATUS_TOKEN_INVALID) => {
+            "Run `starlee setup`, reload the browser extension so it gets the current token, then try capture again.".into()
+        }
+        Some(CAPTURE_STATUS_SERVICE_DOWN) | Some(CAPTURE_STATUS_SERVICE_UNREACHABLE) => {
+            "Open Starlee or run `starlee serve`, then try capture again.".into()
+        }
+        Some(CAPTURE_STATUS_PAYLOAD_TOO_LARGE) => {
+            "Capture a smaller page or report the page type; Starlee rejected the payload size.".into()
         }
         Some(CAPTURE_STATUS_FAILED) => {
             "Retry capture from the active tab; run `starlee doctor` if it fails again.".into()

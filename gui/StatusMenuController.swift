@@ -13,6 +13,7 @@ final class StatusMenuController: NSObject {
     private var statusPollWorkItem: DispatchWorkItem?
     private var animationTimer: Timer?
     private var defaultImage: NSImage?
+    private var activeCaptureRequestId: String?
 
     init(
         statusItem: NSStatusItem,
@@ -146,6 +147,7 @@ final class StatusMenuController: NSObject {
         client.requestCurrentArticleCapture { [weak self] result in
             guard let self else { return }
             if result.ok, let requestId = result.requestId {
+                self.activeCaptureRequestId = requestId
                 self.pollCaptureRequestStatus(id: requestId)
             } else if Self.isSetupStatus(result.status) {
                 self.finishCaptureNeedsAttention(message: result.message)
@@ -166,8 +168,10 @@ final class StatusMenuController: NSObject {
         stopAnimationTimer()
 
         if result.ok {
+            recordMenuBarResult(status: "capture_saved", message: result.message, animation: "success")
             playSuccessAnimation()
         } else {
+            recordMenuBarResult(status: "capture_failed", message: result.message, animation: "error")
             playErrorAnimation(message: result.message)
         }
     }
@@ -188,7 +192,7 @@ final class StatusMenuController: NSObject {
         switch status {
         case "permission_denied", "unsupported_page", "extension_unavailable",
              "content_script_unreachable", "timed_out", "setup_required",
-             "service_unreachable":
+             "service_unreachable", "service_down", "token_missing", "token_invalid":
             return true
         default:
             return false
@@ -206,7 +210,7 @@ final class StatusMenuController: NSObject {
             switch result.status {
             case "capture_saved":
                 self.finishCapture(PostResult(ok: true, message: result.message))
-            case "permission_denied", "unsupported_page", "extension_unavailable", "content_script_unreachable", "timed_out", "setup_required":
+            case "permission_denied", "unsupported_page", "extension_unavailable", "content_script_unreachable", "timed_out", "setup_required", "service_down", "service_unreachable", "token_missing", "token_invalid":
                 self.finishCaptureNeedsAttention(message: result.message.isEmpty ? "Starlee capture needs setup." : result.message)
             case "capture_failed":
                 self.finishCapture(PostResult(ok: false, message: result.message.isEmpty ? "Starlee capture failed." : result.message))
@@ -271,9 +275,24 @@ final class StatusMenuController: NSObject {
             statusItem.button?.image = attentionImage
         }
         let body = message.isEmpty ? "Open Starlee diagnostics for the next step." : message
+        recordMenuBarResult(status: "needs_attention", message: body, animation: "attention")
         notifier.notify(title: "Starlee capture needs attention", body: body)
         NSLog("Starlee capture needs attention: \(body)")
         resetAfterFeedback(delay: 1.5)
+    }
+
+    private func recordMenuBarResult(status: String, message: String, animation: String) {
+        guard let requestId = activeCaptureRequestId else { return }
+        client.recordCaptureDiagnostic(CaptureDiagnosticPayload(
+            requestId: requestId,
+            component: "menu_bar",
+            event: "menu_bar_capture_result_displayed",
+            status: status,
+            source: "menu-bar",
+            message: message,
+            safeMetadata: ["animation": animation]
+        ))
+        activeCaptureRequestId = nil
     }
 
     private func playRepeating(frames: [NSImage], interval: TimeInterval) {
