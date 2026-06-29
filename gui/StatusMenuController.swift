@@ -218,7 +218,7 @@ final class StatusMenuController: NSObject {
         client.captureRequestStatus(id: id) { [weak self] result in
             guard let self, self.isCapturing else { return }
             if !result.ok {
-                self.finishCapture(PostResult(ok: false, message: result.message))
+                self.scheduleCaptureStatusPoll(id: id, delay: 1.0)
                 return
             }
             switch result.status {
@@ -229,13 +229,17 @@ final class StatusMenuController: NSObject {
             case "capture_failed":
                 self.finishCapture(PostResult(ok: false, message: result.message.isEmpty ? "Starlee capture failed." : result.message))
             default:
-                let next = DispatchWorkItem { [weak self] in
-                    self?.pollCaptureRequestStatus(id: id)
-                }
-                self.statusPollWorkItem = next
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: next)
+                self.scheduleCaptureStatusPoll(id: id, delay: 0.35)
             }
         }
+    }
+
+    private func scheduleCaptureStatusPoll(id: String, delay: TimeInterval) {
+        let next = DispatchWorkItem { [weak self] in
+            self?.pollCaptureRequestStatus(id: id)
+        }
+        statusPollWorkItem = next
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: next)
     }
 
     private func showManagementMenu(from button: NSStatusBarButton) {
@@ -421,6 +425,7 @@ final class StatusMenuController: NSObject {
         client.requestChromeSetupCaptureTest { [weak self] result in
             guard let self else { return }
             if result.ok, let requestId = result.requestId {
+                self.activeCaptureRequestId = requestId
                 self.pollCaptureRequestStatus(id: requestId)
             } else if Self.isSetupStatus(result.status) {
                 self.finishCaptureNeedsAttention(message: result.message)
