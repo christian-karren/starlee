@@ -280,4 +280,10 @@ final class StarleeClientTests: XCTestCase {
         XCTAssertTrue(summary.contains("Result: capture_saved"))
         XCTAssertTrue(summary.contains("Next action: Open another page."))
     }
+
+    func testCaptureTraceSummaryExplainsMissingTrace() {
+        let summary = StatusMenuController.captureTraceSummary(rawJSON: #"{"events":[]}"#)
+
+        XCTAssertTrue(summary.contains("No capture trace is available yet"))
+    }
 }

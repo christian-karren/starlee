@@ -352,6 +352,7 @@ final class StarleeClient {
             bundleIdentifier: app?.bundleIdentifier,
             localizedName: app?.localizedName
         )
+        ?? BrowserActivityTracker.shared.lastSupportedBrowser
     }
 
     static func browserName(bundleIdentifier: String?, localizedName: String?) -> String? {
@@ -402,5 +403,56 @@ final class StarleeClient {
             return message
         }
         return String(data: data, encoding: .utf8) ?? "HTTP \(status)"
+    }
+}
+
+final class BrowserActivityTracker {
+    static let shared = BrowserActivityTracker()
+    private static let supportedBrowserMemoryWindow: TimeInterval = 30
+
+    private var lastKnownSupportedBrowser: String?
+    private var lastSupportedBrowserAt: Date?
+    private var observer: NSObjectProtocol?
+
+    private init() {}
+
+    var lastSupportedBrowser: String? {
+        guard
+            let browser = lastKnownSupportedBrowser,
+            let activatedAt = lastSupportedBrowserAt,
+            Date().timeIntervalSince(activatedAt) <= Self.supportedBrowserMemoryWindow
+        else {
+            return nil
+        }
+        return browser
+    }
+
+    func start(workspace: NSWorkspace = .shared) {
+        if let browser = StarleeClient.browserName(
+            bundleIdentifier: workspace.frontmostApplication?.bundleIdentifier,
+            localizedName: workspace.frontmostApplication?.localizedName
+        ) {
+            record(browser)
+        }
+        guard observer == nil else { return }
+        observer = workspace.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard
+                let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                let browser = StarleeClient.browserName(
+                    bundleIdentifier: app.bundleIdentifier,
+                    localizedName: app.localizedName
+                )
+            else { return }
+            self?.record(browser)
+        }
+    }
+
+    private func record(_ browser: String) {
+        lastKnownSupportedBrowser = browser
+        lastSupportedBrowserAt = Date()
     }
 }

@@ -2558,6 +2558,40 @@ mod tests {
     }
 
     #[test]
+    fn capture_request_without_target_browser_is_not_served_to_any_extension() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("legacy-menu-bar", "Chrome")?;
+
+        let store = ConfigStore::new(temp.path());
+        let mut config = store.load_or_create()?;
+        if let Some(pending) = config.pending_capture_request.as_mut() {
+            pending.target_browser = None;
+        }
+        if let Some(status) = config.capture_request_status.as_mut() {
+            status.requested_browser = None;
+        }
+        store.save(&config)?;
+
+        for browser in ["Chrome", "Safari", "Firefox"] {
+            assert!(
+                engine
+                    .take_capture_request(Some(browser.to_owned()))?
+                    .is_none(),
+                "{browser} must not receive an unscoped legacy request"
+            );
+        }
+
+        let status = engine
+            .capture_request_status(&request.id)?
+            .expect("status remains available");
+        assert_eq!(status.status, CAPTURE_STATUS_QUEUED);
+        assert!(status.handling_browser.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn capture_trace_distinguishes_requested_and_handling_browser() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
