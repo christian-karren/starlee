@@ -313,6 +313,7 @@ pub struct Status {
 pub struct BridgeHealth {
     pub ok: bool,
     pub chrome_setup: ChromeSetupStatus,
+    pub browser_setup: ChromeSetupStatus,
     pub extension_setup_present: bool,
     pub extension_config_present: bool,
     pub checked_in_recently: bool,

@@ -77,7 +77,7 @@ final class StatusMenuController: NSObject {
         let doctor = client.runJSON(["doctor"])
         let status = doctor?["status"] as? [String: Any]
         let bridge = status?["bridge_health"] as? [String: Any]
-        let chromeSetup = bridge?["chrome_setup"] as? [String: Any]
+        let chromeSetup = bridge?["browser_setup"] as? [String: Any] ?? bridge?["chrome_setup"] as? [String: Any]
         let count = (status?["capture_count"] as? NSNumber)?.intValue ?? 0
         let ok = (doctor?["ok"] as? Bool) ?? false
         let title = "● \(count) captures · \(ok ? "ready" : "needs setup")"
@@ -372,7 +372,7 @@ final class StatusMenuController: NSObject {
         let doctor = client.runJSON(["doctor"])
         let status = doctor?["status"] as? [String: Any]
         let bridge = status?["bridge_health"] as? [String: Any] ?? [:]
-        let setup = bridge["chrome_setup"] as? [String: Any] ?? [:]
+        let setup = bridge["browser_setup"] as? [String: Any] ?? bridge["chrome_setup"] as? [String: Any] ?? [:]
         let extensionURL = client.home.appendingPathComponent("sensor-extension")
         NSWorkspace.shared.activateFileViewerSelecting([extensionURL])
         if let chromeURL = URL(string: "chrome://extensions") {
@@ -385,8 +385,8 @@ final class StatusMenuController: NSObject {
         DialogPresenter.show(
             title: "Browser setup",
             message: """
-            Chrome:
-            Load or reload the selected folder in chrome://extensions:
+            Browser extension:
+            Load or reload the selected folder in your browser extension developer settings:
 
             \(extensionURL.path)
 
@@ -397,7 +397,7 @@ final class StatusMenuController: NSObject {
 
             State: \(setup["state"] as? String ?? "unknown")
             Detail: \(setup["detail"] as? String ?? "unknown")
-            Next: \(setup["next_action"] as? String ?? bridge["recommended_next_action"] as? String ?? "Reload the extension, then run Test Chrome Capture.")
+            Next: \(setup["next_action"] as? String ?? bridge["recommended_next_action"] as? String ?? "Reload the extension, then run the capture test.")
 
             Safari:
             Enable Starlee Capture in Safari Settings > Extensions, then allow it on the sites you want to save.

@@ -516,7 +516,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private func settingsPayloadJSON() -> String {
         let checks = checksByName()
         let bridge = (status()["bridge_health"] as? [String: Any]) ?? [:]
-        let chromeSetup = bridge["chrome_setup"] as? [String: Any] ?? [:]
+        let chromeSetup = bridge["browser_setup"] as? [String: Any] ?? bridge["chrome_setup"] as? [String: Any] ?? [:]
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         let bridgeOK = (bridge["ok"] as? Bool) ?? false
         let codexOK = checks["codex_plugin_source"]?.ok == true
@@ -1894,13 +1894,14 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         }
         if let version = bridge["extension_version"] as? String {
             let build = bridge["extension_build"] as? String ?? "unknown"
-            lines.append("Chrome extension \(version) (\(build))")
+            let browser = bridge["browser"] as? String ?? "Browser"
+            lines.append("\(browser) extension \(version) (\(build))")
         }
         if let passedAt = setup["capture_test_passed_at"] as? String {
             lines.append("Capture test: \(passedAt)")
         }
         if lines.isEmpty {
-            return "Chrome uses the local extension folder. Safari uses the Starlee Capture extension wrapper."
+            return "Chrome and Firefox use the local extension folder. Safari uses the Starlee Capture extension wrapper."
         }
         return lines.joined(separator: "\n")
     }

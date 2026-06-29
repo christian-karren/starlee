@@ -40,7 +40,7 @@ async function renderStatus({ forceHello = false } = {}) {
   if (forceHello) await ext.runtime.sendMessage({ type: "STARLEE_HELLO" });
   const state = await ext.runtime.sendMessage({ type: "STARLEE_STATUS" });
   const bridge = await ext.runtime.sendMessage({ type: "STARLEE_BRIDGE_HEALTH" }).catch(() => null);
-  const setup = bridge?.chrome_setup;
+  const setup = bridge?.browser_setup || bridge?.chrome_setup;
   const label = state.ok ? setupLabel(setup) || "Connected to local Starlee" : statusLabel(state);
   connection.textContent = [
     label,

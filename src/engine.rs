@@ -583,6 +583,7 @@ impl Engine {
         let checked_in_recently =
             extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS);
         let bridge_action = bridge_next_action(
+            config.extension.browser.as_deref(),
             self.home.join("sensor-extension/manifest.json").exists(),
             self.home
                 .join("sensor-extension/starlee-config.json")
@@ -945,6 +946,7 @@ impl Engine {
         metadata.insert(
             "next_action".into(),
             bridge_next_action(
+                config.extension.browser.as_deref(),
                 extension_setup_present,
                 extension_config_present,
                 checked_in_recently,
@@ -1008,6 +1010,7 @@ impl Engine {
             safe_bridge_failure_message(&status.status, status.message.as_deref())
         });
         let recommended_next_action = bridge_next_action(
+            config.extension.browser.as_deref(),
             extension_setup_present,
             extension_config_present,
             checked_in_recently,
@@ -1017,7 +1020,8 @@ impl Engine {
                 .as_ref()
                 .map(|status| status.status.as_str()),
         );
-        let chrome_setup = Self::chrome_setup_status(
+        let browser_setup = Self::browser_setup_status(
+            config.extension.browser.as_deref(),
             extension_setup_present,
             extension_config_present,
             checked_in_recently,
@@ -1033,7 +1037,8 @@ impl Engine {
             && config.extension.can_capture_active_tab;
         BridgeHealth {
             ok,
-            chrome_setup,
+            chrome_setup: browser_setup.clone(),
+            browser_setup,
             extension_setup_present,
             extension_config_present,
             checked_in_recently,
@@ -1051,7 +1056,8 @@ impl Engine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn chrome_setup_status(
+    fn browser_setup_status(
+        browser: Option<&str>,
         extension_setup_present: bool,
         extension_config_present: bool,
         checked_in_recently: bool,
@@ -1061,38 +1067,49 @@ impl Engine {
         last_request_status: Option<&str>,
         recommended_next_action: &str,
     ) -> ChromeSetupStatus {
+        let browser = browser_name(browser);
         let installed = extension_setup_present && extension_config_present;
         let permission_needed = !can_capture_active_tab
             || last_request_status == Some(CAPTURE_STATUS_PERMISSION_DENIED);
         let (state, detail, next_action) = if !installed {
             (
                 "install_needed",
-                "Chrome extension assets or local configuration are missing.",
-                "Run `starlee setup`, then load or reload ~/Starlee/sensor-extension in Chrome.",
+                format!("{browser} extension assets or local configuration are missing."),
+                format!(
+                    "Run `starlee setup`, then load or reload ~/Starlee/sensor-extension in {browser}."
+                ),
             )
         } else if !checked_in_recently {
             (
                 "check_in_needed",
-                "Chrome has not checked in with Starlee in the last 5 minutes.",
-                "Load or reload the Starlee Chrome extension, then refresh setup status.",
+                format!("{browser} has not checked in with Starlee in the last 5 minutes."),
+                format!(
+                    "Load or reload the Starlee extension in {browser}, then refresh setup status."
+                ),
             )
         } else if permission_needed {
             (
                 "permission_needed",
-                "Chrome needs Starlee site access before it can capture the active tab.",
-                "Grant Starlee site access in Chrome, reload the page, then run the capture test.",
+                format!(
+                    "{browser} needs Starlee site access before it can capture the active tab."
+                ),
+                format!(
+                    "Grant Starlee site access in {browser}, reload the page, then run the capture test."
+                ),
             )
         } else if capture_test_passed {
             (
                 "capture_test_passed",
-                "Chrome capture has completed a setup test through the local bridge.",
-                "Open an article or YouTube watch page and capture from Starlee.",
+                format!("{browser} capture has completed a setup test through the local bridge."),
+                "Open an article or YouTube watch page and capture from Starlee.".into(),
             )
         } else {
             (
                 "capture_test_needed",
-                "Chrome is connected; run a capture test before relying on daily capture.",
-                "Run Test Chrome Capture from Starlee desktop setup.",
+                format!(
+                    "{browser} is connected; run a capture test before relying on daily capture."
+                ),
+                "Run the browser capture test from Starlee desktop setup.".into(),
             )
         };
         ChromeSetupStatus {
@@ -1102,11 +1119,11 @@ impl Engine {
             capture_test_passed,
             capture_test_passed_at,
             state: state.into(),
-            detail: detail.into(),
+            detail,
             next_action: if recommended_next_action.is_empty()
                 || matches!(state, "capture_test_needed" | "capture_test_passed")
             {
-                next_action.into()
+                next_action
             } else {
                 recommended_next_action.into()
             },
@@ -2487,7 +2504,7 @@ mod tests {
         assert!(
             trace
                 .recommended_next_action
-                .contains("Load or reload the Starlee browser extension")
+                .contains("Load or reload the Starlee extension")
         );
         let rejected = trace
             .events
@@ -2556,7 +2573,7 @@ mod tests {
         assert!(
             missing
                 .recommended_next_action
-                .contains("Load or reload the Starlee browser extension")
+                .contains("Load or reload the Starlee extension")
         );
 
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
@@ -2567,7 +2584,7 @@ mod tests {
         assert!(
             stale
                 .recommended_next_action
-                .contains("Load or reload the Starlee browser extension")
+                .contains("Load or reload the Starlee extension")
         );
         Ok(())
     }

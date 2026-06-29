@@ -233,35 +233,39 @@ pub(crate) fn safe_bridge_failure_message(
 }
 
 pub(crate) fn bridge_next_action(
+    browser: Option<&str>,
     extension_setup_present: bool,
     extension_config_present: bool,
     checked_in_recently: bool,
     can_capture_active_tab: bool,
     last_request_status: Option<&str>,
 ) -> String {
+    let browser = browser_name(browser);
     if !extension_setup_present || !extension_config_present {
-        return "Run `starlee setup`, then load or reload ~/Starlee/sensor-extension in your browser."
-            .into();
+        return format!(
+            "Run `starlee setup`, then load or reload ~/Starlee/sensor-extension in {browser}."
+        );
     }
     if !checked_in_recently {
-        return "Load or reload the Starlee browser extension, then try again.".into();
+        return format!("Load or reload the Starlee extension in {browser}, then try again.");
     }
     if !can_capture_active_tab {
-        return "Grant Starlee site access in the browser, or reload the page and try again."
-            .into();
+        return format!(
+            "Grant Starlee site access in {browser}, or reload the page and try again."
+        );
     }
     match last_request_status {
         Some(CAPTURE_STATUS_PERMISSION_DENIED) => {
-            "Grant Starlee site access in the browser, or reload the page and try again.".into()
+            format!("Grant Starlee site access in {browser}, or reload the page and try again.")
         }
         Some(CAPTURE_STATUS_UNSUPPORTED_PAGE) => {
             "Open an article or YouTube watch page, then try capture again.".into()
         }
         Some(CAPTURE_STATUS_TIMED_OUT) => {
-            "Make the target browser window active, reload the extension, then try again.".into()
+            format!("Make the target {browser} window active, reload the extension, then try again.")
         }
         Some(CAPTURE_STATUS_EXTENSION_UNAVAILABLE) => {
-            "Load or reload the Starlee browser extension, then try again.".into()
+            format!("Load or reload the Starlee extension in {browser}, then try again.")
         }
         Some(CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE) => {
             "Reload the page so the Starlee content script loads (it does not inject into tabs opened before the extension was enabled), confirm the extension is enabled and allowed on this site, then try capture again.".into()
@@ -283,6 +287,13 @@ pub(crate) fn bridge_next_action(
         }
         _ => "Bridge is ready. Open an article or YouTube watch page and capture again.".into(),
     }
+}
+
+pub(crate) fn browser_name(browser: Option<&str>) -> &str {
+    browser
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("your browser")
 }
 
 /// Derives a transcript-specific next action from a request's diagnostic trace.
