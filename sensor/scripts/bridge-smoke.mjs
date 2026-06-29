@@ -20,11 +20,11 @@ const headers = {
 };
 
 await post("/extension/hello", {
-  browser: "BridgeSmoke",
+  browser: "Chrome",
   extension_version: "0.1.0",
   can_capture_active_tab: true,
 });
-const created = await post("/capture-request", { source: "menu-bar" }, 202);
+const created = await post("/capture-request", { source: "menu-bar", target_browser: "Chrome" }, 202);
 const pickup = await takeCaptureRequest();
 const saved = await processRequest(pickup.request);
 const duplicate = await processRequest(pickup.request);
@@ -58,6 +58,7 @@ async function processRequest(request) {
     id: request.id,
     status: "posted",
     message: "Browser extension posted the capture to Starlee.",
+    browser: "Chrome",
     page,
   });
   await post("/capture", payload, 201);
@@ -65,13 +66,14 @@ async function processRequest(request) {
     id: request.id,
     status: "capture_saved",
     message: "Saved to Starlee.",
+    browser: "Chrome",
   });
   storage.lastMenuRequestStatus = terminal.request.status;
   return { ok: true, terminal };
 }
 
 async function takeCaptureRequest() {
-  const response = await fetch(`http://${address}/capture-request`, { headers });
+  const response = await fetch(`http://${address}/capture-request?browser=Chrome`, { headers });
   assertStatus(response, 200);
   return response.json();
 }

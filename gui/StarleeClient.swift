@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 struct PostResult {
     let ok: Bool
@@ -46,6 +47,7 @@ final class StarleeClient {
     ///   (simulates missing config without reading from disk).
     var overrideConfig: [String: Any]? = nil
     var blockDiskConfig: Bool = false
+    var overrideTargetBrowser: String? = nil
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -125,22 +127,45 @@ final class StarleeClient {
         guard let config = localConfig(), let token = config["capture_token"] as? String else {
             return PostResult(ok: false, message: "Run Starlee setup, then reload the browser extension.")
         }
+        guard let targetBrowser = targetBrowserForCapture() else {
+            return PostResult(
+                ok: false,
+                message: "Make Chrome, Safari, or Firefox the active browser window, then capture again.",
+                status: "setup_required"
+            )
+        }
         let port = (config["capture_port"] as? NSNumber)?.intValue ?? 47291
         guard let url = URL(string: "http://127.0.0.1:\(port)/capture-request") else {
             return PostResult(ok: false, message: "Invalid local Starlee capture endpoint.")
         }
-        return postJSON(url: url, token: token, body: ["source": "menu-bar"])
+        return postJSON(url: url, token: token, body: [
+            "source": "menu-bar",
+            "target_browser": targetBrowser
+        ])
     }
 
     func requestCurrentArticleCapture(completion: @escaping (CaptureRequestPostResult) -> Void) {
-        requestCapture(source: "menu-bar", completion: completion)
+        guard let targetBrowser = targetBrowserForCapture() else {
+            completion(CaptureRequestPostResult(
+                ok: false,
+                message: "Make Chrome, Safari, or Firefox the active browser window, then capture again.",
+                requestId: nil,
+                status: "setup_required"
+            ))
+            return
+        }
+        requestCapture(source: "menu-bar", targetBrowser: targetBrowser, completion: completion)
     }
 
     func requestChromeSetupCaptureTest(completion: @escaping (CaptureRequestPostResult) -> Void) {
-        requestCapture(source: "desktop-setup-test", completion: completion)
+        requestCapture(source: "desktop-setup-test", targetBrowser: "Chrome", completion: completion)
     }
 
-    private func requestCapture(source: String, completion: @escaping (CaptureRequestPostResult) -> Void) {
+    private func requestCapture(
+        source: String,
+        targetBrowser: String,
+        completion: @escaping (CaptureRequestPostResult) -> Void
+    ) {
         startEngine()
         guard let config = localConfig(), let token = config["capture_token"] as? String else {
             completion(CaptureRequestPostResult(ok: false, message: "Run Starlee setup, then reload the browser extension.", requestId: nil, status: "setup_required"))
@@ -151,7 +176,13 @@ final class StarleeClient {
             completion(CaptureRequestPostResult(ok: false, message: "Invalid local Starlee capture endpoint.", requestId: nil, status: "setup_required"))
             return
         }
-        postCaptureRequest(url: url, token: token, source: source, completion: completion)
+        postCaptureRequest(
+            url: url,
+            token: token,
+            source: source,
+            targetBrowser: targetBrowser,
+            completion: completion
+        )
     }
 
     func captureRequestStatus(id: String, completion: @escaping (CaptureRequestStatusResult) -> Void) {
@@ -223,6 +254,7 @@ final class StarleeClient {
         url: URL,
         token: String,
         source: String,
+        targetBrowser: String,
         completion: @escaping (CaptureRequestPostResult) -> Void
     ) {
         var request = URLRequest(url: url)
@@ -230,7 +262,10 @@ final class StarleeClient {
         request.timeoutInterval = 5
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["source": source])
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "source": source,
+            "target_browser": targetBrowser
+        ])
 
         session.dataTask(with: request) { data, response, error in
             let result: CaptureRequestPostResult
@@ -306,6 +341,45 @@ final class StarleeClient {
         }
         return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("target/release/starlee")
+    }
+
+    private func targetBrowserForCapture() -> String? {
+        if let overrideTargetBrowser {
+            return Self.normalizedBrowserName(overrideTargetBrowser)
+        }
+        let app = NSWorkspace.shared.frontmostApplication
+        return Self.browserName(
+            bundleIdentifier: app?.bundleIdentifier,
+            localizedName: app?.localizedName
+        )
+    }
+
+    static func browserName(bundleIdentifier: String?, localizedName: String?) -> String? {
+        let bundle = (bundleIdentifier ?? "").lowercased()
+        let name = (localizedName ?? "").lowercased()
+        if bundle == "com.apple.safari" || name == "safari" {
+            return "Safari"
+        }
+        if bundle == "org.mozilla.firefox" || name.contains("firefox") {
+            return "Firefox"
+        }
+        if bundle == "com.google.chrome" || name.contains("chrome") {
+            return "Chrome"
+        }
+        return nil
+    }
+
+    static func normalizedBrowserName(_ value: String) -> String? {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "chrome", "google chrome", "chromium":
+            return "Chrome"
+        case "safari":
+            return "Safari"
+        case "firefox", "mozilla firefox":
+            return "Firefox"
+        default:
+            return nil
+        }
     }
 
     private static func responseMessage(data: Data?, status: Int) -> String {

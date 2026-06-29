@@ -92,17 +92,21 @@ pub(crate) fn expire_stale_capture_request(config: &mut LocalConfig) -> bool {
     if Utc::now().signed_duration_since(timeout_anchor) <= ttl {
         return false;
     }
+    let previous_status = status.status.clone();
     let event = {
         status.status = CAPTURE_STATUS_TIMED_OUT.into();
         status.completed_at = Some(Utc::now().to_rfc3339());
-        status.message = Some(capture_timeout_message(status.picked_up_at.is_some()).into());
+        status.message = Some(capture_timeout_message(&previous_status).into());
         diagnostic_event(DiagnosticEventInput {
             component: "engine",
             event: "capture_request_timed_out",
             request_id: Some(&status.id),
             status: Some(&status.status),
             source: Some(&status.source),
-            browser: status.browser.as_deref(),
+            browser: status
+                .handling_browser
+                .as_deref()
+                .or(status.browser.as_deref()),
             message: status.message.as_deref(),
             page: status.page.clone(),
         })
@@ -112,11 +116,16 @@ pub(crate) fn expire_stale_capture_request(config: &mut LocalConfig) -> bool {
     true
 }
 
-fn capture_timeout_message(picked_up: bool) -> &'static str {
-    if picked_up {
-        "The browser picked up the request, but capture did not finish in time."
-    } else {
-        "The browser did not pick up the request in time."
+fn capture_timeout_message(status: &str) -> &'static str {
+    match status {
+        CAPTURE_STATUS_QUEUED => "The target browser did not pick up the request in time.",
+        CAPTURE_STATUS_POSTED => {
+            "The browser posted the capture, but the local save is still processing or did not finish in time."
+        }
+        CAPTURE_STATUS_EXTRACTING | CAPTURE_STATUS_PICKED_UP => {
+            "The browser picked up the request, but capture did not finish in time."
+        }
+        _ => "The capture did not finish in time.",
     }
 }
 

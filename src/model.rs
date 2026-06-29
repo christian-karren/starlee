@@ -349,6 +349,10 @@ pub struct CaptureTraceReport {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub browser: Option<String>,
+    #[serde(default)]
+    pub requested_browser: Option<String>,
+    #[serde(default)]
+    pub handling_browser: Option<String>,
     pub extension_build: Option<String>,
     pub desktop_build: Option<String>,
     pub result_code: Option<String>,
