@@ -5,6 +5,7 @@ node_modules/
 *.db-shm
 *.db-wal
 /sensor/node_modules
+/sensor/dist/firefox-extension/
 /sensor/dist/**/*.map
 /sensor/dist/extension/build-info.json
 /release

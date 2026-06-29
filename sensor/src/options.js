@@ -1,3 +1,6 @@
+import { createExtensionApi } from "./browser.js";
+
+const ext = createExtensionApi();
 const form = document.querySelector("form");
 const token = document.querySelector("#token");
 const port = document.querySelector("#port");
@@ -5,8 +8,8 @@ const status = document.querySelector("#status");
 const connection = document.querySelector("#connection");
 const testButton = document.querySelector("#test-connection");
 
-const saved = await chrome.storage.local.get(["captureToken", "capturePort"]);
-const bundled = await fetch(chrome.runtime.getURL("starlee-config.json"))
+const saved = await ext.storage.local.get(["captureToken", "capturePort"]);
+const bundled = await fetch(ext.runtime.getURL("starlee-config.json"))
   .then((response) => response.ok ? response.json() : {})
   .catch(() => ({}));
 const hasToken = Boolean(saved.captureToken || bundled.captureToken);
@@ -20,7 +23,7 @@ form.addEventListener("submit", async (event) => {
   const next = { capturePort: Number(port.value) };
   const nextToken = token.value.trim();
   if (nextToken) next.captureToken = nextToken;
-  await chrome.storage.local.set(next);
+  await ext.storage.local.set(next);
   token.value = "";
   token.placeholder = "Token configured — leave blank to keep it";
   status.textContent = "Saved locally.";
@@ -34,16 +37,16 @@ testButton.addEventListener("click", async () => {
 });
 
 async function renderStatus({ forceHello = false } = {}) {
-  if (forceHello) await chrome.runtime.sendMessage({ type: "STARLEE_HELLO" });
-  const state = await chrome.runtime.sendMessage({ type: "STARLEE_STATUS" });
-  const bridge = await chrome.runtime.sendMessage({ type: "STARLEE_BRIDGE_HEALTH" }).catch(() => null);
+  if (forceHello) await ext.runtime.sendMessage({ type: "STARLEE_HELLO" });
+  const state = await ext.runtime.sendMessage({ type: "STARLEE_STATUS" });
+  const bridge = await ext.runtime.sendMessage({ type: "STARLEE_BRIDGE_HEALTH" }).catch(() => null);
   const setup = bridge?.chrome_setup;
   const label = state.ok ? setupLabel(setup) || "Connected to local Starlee" : statusLabel(state);
   connection.textContent = [
     label,
     setup?.detail ? `Setup detail: ${setup.detail}` : "",
     setup?.next_action ? `Next action: ${setup.next_action}` : bridge?.recommended_next_action ? `Next action: ${bridge.recommended_next_action}` : "",
-    `Browser: ${state.browser || "Chrome"}`,
+    `Browser: ${state.browser || "Browser"}`,
     `Extension: ${state.extensionVersion || "unknown"}`,
     `Build: ${state.extensionBuild || bridge?.extension_build || "unknown"}`,
     `Port: ${state.port || 47291}`,
@@ -67,17 +70,17 @@ function setupLabel(setup) {
   if (!setup?.state) return "";
   switch (setup.state) {
     case "capture_test_passed":
-      return "Chrome setup is ready.";
+      return "Browser setup is ready.";
     case "capture_test_needed":
-      return "Chrome is connected. Run a capture test from Starlee desktop setup.";
+      return "Browser extension is connected. Run a capture test from Starlee desktop setup.";
     case "permission_needed":
-      return "Chrome needs Starlee site access.";
+      return "Browser extension needs Starlee site access.";
     case "check_in_needed":
-      return "Chrome extension has not checked in recently.";
+      return "Browser extension has not checked in recently.";
     case "install_needed":
-      return "Chrome extension setup is not complete.";
+      return "Browser extension setup is not complete.";
     default:
-      return `Chrome setup: ${setup.state}`;
+      return `Browser setup: ${setup.state}`;
   }
 }
 
