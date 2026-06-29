@@ -10,23 +10,28 @@ This document tracks the Firefox-specific release path for the Starlee browser e
 - Shared source: `sensor/src` remains the shared extension implementation.
 - Firefox-specific source: `sensor/extension/manifest.firefox.json`, Firefox package scripts, Firefox package inspector, and Firefox target tests.
 
-Firefox MV3 service worker behavior still needs live-browser validation for menu-bar capture polling before a listed AMO launch. The package includes the same local polling path used by the shared background runtime, but the product-safe Firefox fallback is toolbar capture until a clean Firefox profile proves menu-bar polling survives worker suspension for at least 30 minutes.
+Firefox MV3 does not accept a service-worker-only background in the tested Firefox runtime. The Firefox target therefore uses a Gecko MV3 event-page background (`background.scripts`) while Chrome keeps its service-worker manifest. Immediate menu-bar polling is smoke-tested in Firefox, but a listed AMO launch still needs a long-lifecycle run proving polling survives background suspension for at least 30 minutes. The product-safe Firefox fallback is toolbar capture.
 
 ## Merge Readiness
 
-Current recommendation: merge after manual Firefox smoke.
+Current recommendation: merge-ready as an additive Firefox target, not AMO launch-ready.
 
 Automated coverage is in place for the Firefox build target, package hygiene,
 article payload shape, selected-text attachment, YouTube metadata, rendered
 transcript segments, transcript-unavailable state, browser adapter behavior, and
-local bridge error mapping. This makes the branch suitable for a human Firefox
-smoke pass, not a claim that AMO/listed production launch is complete.
+local bridge error mapping. A real Firefox temporary-add-on smoke also proves
+rendered article extraction, selected-text article capture, toolbar/in-page
+capture, immediate menu-bar request polling, local bridge posting, and diagnostic
+redaction. This is enough to merge the additive Firefox target if code review is
+comfortable with the documented launch blockers below.
 
 What works by automated verification:
 
 - Chrome remains the default build target.
 - Firefox build writes to `sensor/dist/firefox-extension`.
 - Firefox package uses `sensor/extension/manifest.firefox.json`.
+- Firefox manifest uses `background.scripts` for Gecko MV3 compatibility while
+  Chrome keeps `background.service_worker`.
 - Article extraction reuses the shared Readability path and emits the same
   payload fields as Chrome.
 - Selected text is attached only to article payloads.
@@ -34,12 +39,12 @@ What works by automated verification:
   transcript segment shape `{ t: seconds, text: string }`.
 - Local bridge helpers return `token_missing`, `token_invalid`,
   `service_down`, and `payload_too_large` without leaking page bodies or tokens.
+- A live Firefox smoke with a temporary add-on posts article captures to a mock
+  `127.0.0.1` bridge and verifies diagnostics omit article body, selected text,
+  and token material.
 
-What still requires manual Firefox testing:
+What still requires manual Firefox testing before AMO/listed production launch:
 
-- Temporary add-on install in a clean Firefox desktop profile.
-- Toolbar article capture posting to a local Starlee service.
-- Toolbar selected-text capture posting to a local Starlee service.
 - Toolbar YouTube transcript capture against a real video page.
 - Toolbar YouTube transcript-unavailable behavior against a real or controlled
   no-transcript page.
@@ -56,6 +61,7 @@ npm test
 npm run test:integration
 npm run build
 node scripts/build.mjs --target firefox
+FIREFOX_BIN=/path/to/firefox node scripts/firefox-smoke.mjs
 
 cd ..
 ./scripts/package-firefox-extension.sh
@@ -67,6 +73,7 @@ The package inspector verifies:
 
 - Required extension files are present.
 - `build-info.json` identifies the `firefox` target.
+- `background.scripts` references `background.js` for Gecko MV3 compatibility.
 - `host_permissions` are limited to `http://127.0.0.1/*`.
 - Static content-script matches include `http://*/*`, `https://*/*`, and
   YouTube watch-page hosts so rendered article and transcript extraction can run.
@@ -88,7 +95,7 @@ Permissions:
 - `storage`: stores the local capture token, port, and non-sensitive status codes.
 - `activeTab`: captures the current tab after user interaction.
 - `tabs`: locates the active tab for toolbar and menu-bar initiated capture.
-- `alarms`: wakes the background worker to check for pending local menu-bar capture requests.
+- `alarms`: wakes the Firefox background context to check for pending local menu-bar capture requests.
 - `host_permissions: http://127.0.0.1/*`: communicates with the local Starlee service.
 - Static `content_scripts` on `http://*/*`, `https://*/*`, and YouTube hosts:
   lets Starlee read the rendered page when the user invokes capture. This page

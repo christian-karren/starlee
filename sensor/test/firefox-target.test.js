@@ -13,7 +13,8 @@ test("Firefox manifest keeps local bridge permission separate from content-scrip
 
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.name, "Starlee");
-  assert.equal(manifest.background.service_worker, "background.js");
+  assert.deepEqual(manifest.background.scripts, ["background.js"]);
+  assert.equal(manifest.background.type, "module");
   assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*"]);
   assert.equal(manifest.optional_host_permissions, undefined);
   assert.ok(manifest.permissions.includes("storage"));
@@ -36,6 +37,7 @@ test("built Firefox target writes a separate extension directory", async () => {
   const build = JSON.parse(await readFile(new URL("../dist/firefox-extension/build-info.json", import.meta.url), "utf8"));
 
   assert.equal(manifest.browser_specific_settings.gecko.id, "capture@starlee.local");
+  assert.deepEqual(manifest.background.scripts, ["background.js"]);
   assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*"]);
   assert.equal(build.target, "firefox");
   await access(new URL("../dist/firefox-extension/background.js", import.meta.url));

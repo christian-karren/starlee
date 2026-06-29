@@ -60,7 +60,10 @@ for (const permission of requiredPermissions) {
   }
 }
 if (manifest.manifest_version !== 3) throw new Error("Firefox target must use Manifest V3");
-if (manifest.background?.service_worker !== "background.js") throw new Error("missing Firefox background service worker");
+if (JSON.stringify(manifest.background?.scripts || []) !== JSON.stringify(["background.js"])) {
+  throw new Error("Firefox package must use background.scripts for Gecko MV3 compatibility");
+}
+if (manifest.background?.type !== "module") throw new Error("Firefox background script must stay module-based");
 if (manifest.host_permissions?.length !== 1 || manifest.host_permissions[0] !== "http://127.0.0.1/*") {
   throw new Error("Firefox package host_permissions must stay local-only");
 }
