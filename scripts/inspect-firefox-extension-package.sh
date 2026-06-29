@@ -64,6 +64,11 @@ if (manifest.background?.service_worker !== "background.js") throw new Error("mi
 if (manifest.host_permissions?.length !== 1 || manifest.host_permissions[0] !== "http://127.0.0.1/*") {
   throw new Error("Firefox package host_permissions must stay local-only");
 }
+if (manifest.optional_host_permissions) throw new Error("Firefox package must not declare unused optional host permissions");
+const matches = manifest.content_scripts?.[0]?.matches || [];
+for (const match of ["http://*/*", "https://*/*", "https://www.youtube.com/*"]) {
+  if (!matches.includes(match)) throw new Error(`missing content script match: ${match}`);
+}
 if (!manifest.browser_specific_settings?.gecko?.id) throw new Error("missing Gecko extension id");
 if (build.target !== "firefox") throw new Error("build-info target must be firefox");
 const files = [];

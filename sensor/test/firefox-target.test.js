@@ -8,14 +8,14 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const sensorRoot = fileURLToPath(new URL("../", import.meta.url));
 
-test("Firefox manifest keeps local bridge permission separate from optional page access", async () => {
+test("Firefox manifest keeps local bridge permission separate from content-script page access", async () => {
   const manifest = JSON.parse(await readFile(new URL("../extension/manifest.firefox.json", import.meta.url), "utf8"));
 
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.name, "Starlee");
   assert.equal(manifest.background.service_worker, "background.js");
   assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*"]);
-  assert.deepEqual(manifest.optional_host_permissions, ["http://*/*", "https://*/*"]);
+  assert.equal(manifest.optional_host_permissions, undefined);
   assert.ok(manifest.permissions.includes("storage"));
   assert.ok(manifest.permissions.includes("activeTab"));
   assert.ok(manifest.permissions.includes("tabs"));
@@ -23,6 +23,7 @@ test("Firefox manifest keeps local bridge permission separate from optional page
   assert.equal(manifest.options_ui.page, "options.html");
   assert.equal(manifest.browser_specific_settings.gecko.id, "capture@starlee.local");
   assert.ok(manifest.content_scripts[0].matches.includes("https://www.youtube.com/*"));
+  assert.ok(manifest.content_scripts[0].matches.includes("http://*/*"));
   assert.ok(manifest.content_scripts[0].matches.includes("https://*/*"));
 });
 

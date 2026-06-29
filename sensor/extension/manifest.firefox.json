@@ -5,7 +5,6 @@
   "description": "Save rendered articles and YouTube transcripts to your local Starlee brain.",
   "permissions": ["storage", "activeTab", "tabs", "alarms"],
   "host_permissions": ["http://127.0.0.1/*"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "icons": {
     "16": "assets/icon-16.png",
     "32": "assets/icon-32.png",
