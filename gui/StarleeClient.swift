@@ -3,6 +3,13 @@ import Foundation
 struct PostResult {
     let ok: Bool
     let message: String
+    let status: String?
+
+    init(ok: Bool, message: String, status: String? = nil) {
+        self.ok = ok
+        self.message = message
+        self.status = status
+    }
 }
 
 struct CaptureRequestPostResult {

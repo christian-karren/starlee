@@ -2237,7 +2237,12 @@ mod tests {
         let temp = tempfile::tempdir()?;
         install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
+        engine.record_extension_hello(
+            Some("Safari".into()),
+            Some("0.1.0".into()),
+            Some("safari-local@abc123".into()),
+            true,
+        )?;
         let request = engine.create_capture_request("menu-bar")?;
         engine.record_capture_request_result(
             &request.id,
@@ -2259,6 +2264,33 @@ mod tests {
         assert_eq!(
             health.recommended_next_action,
             "Reload the page so the Starlee content script loads (it does not inject into tabs opened before the extension was enabled), confirm the extension is enabled and allowed on this site, then try capture again."
+        );
+        let diagnostics = engine.capture_diagnostics(4)?;
+        let terminal = diagnostics
+            .iter()
+            .find(|event| {
+                event.status.as_deref() == Some(CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE)
+            })
+            .expect("terminal diagnostic");
+        assert_eq!(
+            terminal
+                .safe_metadata
+                .get("extension_build")
+                .map(String::as_str),
+            Some("safari-local@abc123")
+        );
+        assert_eq!(
+            terminal
+                .safe_metadata
+                .get("extension_checked_in_recently")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert!(
+            terminal
+                .safe_metadata
+                .get("next_action")
+                .is_some_and(|value| value.contains("Reload the page"))
         );
         Ok(())
     }
@@ -2283,6 +2315,59 @@ mod tests {
             .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?
             .expect("timed out status remains available");
         assert_eq!(ignored.status, CAPTURE_STATUS_TIMED_OUT);
+        Ok(())
+    }
+
+    #[test]
+    fn picked_up_capture_request_allows_slow_local_save() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar")?;
+        assert!(engine.take_capture_request()?.is_some());
+        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_EXTRACTING, None, None)?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_POSTED,
+            Some("Browser extension posted the capture to Starlee.".into()),
+            Some(CaptureRequestPageMetadata {
+                title: Some("Slow article".into()),
+                url: Some("https://example.com/slow".into()),
+                domain: Some("example.com".into()),
+            }),
+        )?;
+        age_capture_request(temp.path(), 30)?;
+
+        let still_running = engine
+            .capture_request_status(&request.id)?
+            .expect("status remains available");
+        assert_eq!(still_running.status, CAPTURE_STATUS_POSTED);
+
+        let saved = engine
+            .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?
+            .expect("late save is accepted");
+        assert_eq!(saved.status, CAPTURE_STATUS_SAVED);
+        Ok(())
+    }
+
+    #[test]
+    fn picked_up_capture_request_times_out_after_in_progress_window() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar")?;
+        assert!(engine.take_capture_request()?.is_some());
+        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_POSTED, None, None)?;
+        age_capture_request(temp.path(), 4 * 60)?;
+
+        let status = engine
+            .capture_request_status(&request.id)?
+            .expect("timed out status");
+        assert_eq!(status.status, CAPTURE_STATUS_TIMED_OUT);
+        assert_eq!(
+            status.message.as_deref(),
+            Some("The browser picked up the request, but capture did not finish in time.")
+        );
         Ok(())
     }
 
@@ -2635,6 +2720,9 @@ mod tests {
         let old = (Utc::now() - chrono::TimeDelta::seconds(seconds)).to_rfc3339();
         if let Some(status) = config.capture_request_status.as_mut() {
             status.requested_at = old.clone();
+            if status.picked_up_at.is_some() {
+                status.picked_up_at = Some(old.clone());
+            }
         }
         if let Some(pending) = config.pending_capture_request.as_mut() {
             pending.requested_at = old;

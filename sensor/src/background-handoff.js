@@ -36,7 +36,7 @@ export function activeTabProblem(tab = {}) {
     return {
       event: "active_tab_missing_url",
       status: "permission_denied",
-      message: "The browser did not expose the active tab URL to Starlee."
+      message: "Safari did not expose the active tab URL to Starlee. Grant Starlee site access for this site, reload the tab, then try capture again."
     };
   }
   if (!supportedContentScriptUrl(tab.url)) {
