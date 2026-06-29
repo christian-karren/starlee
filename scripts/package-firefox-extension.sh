@@ -22,4 +22,9 @@ rm -f "$STAGE/starlee-config.json"
   LC_ALL=C find . -type f | sort | zip -X -q "$ZIP" -@
 )
 
+LOCAL_CONFIG="${STARLEE_FIREFOX_LOCAL_CONFIG:-$HOME/Starlee/sensor-extension/starlee-config.json}"
+if [ -f "$LOCAL_CONFIG" ]; then
+  cp "$LOCAL_CONFIG" "$STAGE/starlee-config.json"
+fi
+
 printf '%s\n' "$ZIP"

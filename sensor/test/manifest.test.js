@@ -1,6 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+let builtChromeDist;
+
+async function ensureChromeDist() {
+  builtChromeDist ||= execFileAsync(process.execPath, ["scripts/build.mjs"], {
+    cwd: fileURLToPath(new URL("../", import.meta.url))
+  });
+  await builtChromeDist;
+}
 
 test("manifest stays Manifest V3 and requests all-site Safari access plus local bridge access", async () => {
   const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"));
@@ -23,6 +36,7 @@ test("manifest stays Manifest V3 and requests all-site Safari access plus local 
 });
 
 test("built dist manifest includes YouTube matches and content script file", async () => {
+  await ensureChromeDist();
   const manifest = JSON.parse(await readFile(new URL("../dist/extension/manifest.json", import.meta.url), "utf8"));
   const matches = manifest.content_scripts[0].matches;
 
@@ -37,6 +51,7 @@ test("built dist manifest includes YouTube matches and content script file", asy
 });
 
 test("built extension includes release build identity metadata", async () => {
+  await ensureChromeDist();
   const build = JSON.parse(await readFile(new URL("../dist/extension/build-info.json", import.meta.url), "utf8"));
 
   assert.equal(typeof build.git_commit, "string");

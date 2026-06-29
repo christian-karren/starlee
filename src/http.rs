@@ -578,6 +578,7 @@ mod tests {
         let engine = test_engine(temp.path());
         let missing = engine.bridge_health()?;
         assert_eq!(missing.chrome_setup.state, "install_needed");
+        assert_eq!(missing.browser_setup.state, "install_needed");
         assert!(!missing.chrome_setup.installed);
 
         write_extension_assets(temp.path(), true)?;
@@ -589,6 +590,7 @@ mod tests {
         )?;
         let connected = engine.bridge_health()?;
         assert_eq!(connected.chrome_setup.state, "capture_test_needed");
+        assert_eq!(connected.browser_setup.state, "capture_test_needed");
         assert!(connected.chrome_setup.installed);
         assert!(connected.chrome_setup.checked_in_recently);
         assert_eq!(connected.extension_build.as_deref(), Some("main@abc123"));
@@ -604,8 +606,36 @@ mod tests {
         )?;
         let passed = engine.bridge_health()?;
         assert_eq!(passed.chrome_setup.state, "capture_test_passed");
+        assert_eq!(passed.browser_setup.state, "capture_test_passed");
         assert!(passed.chrome_setup.capture_test_passed);
         assert!(passed.chrome_setup.capture_test_passed_at.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_health_reports_firefox_setup_text_without_chrome_wording() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = test_engine(temp.path());
+        write_extension_assets(temp.path(), true)?;
+        engine.record_extension_hello(
+            Some("Firefox".into()),
+            Some("0.1.0".into()),
+            Some("codex/firefox@abc123".into()),
+            true,
+        )?;
+
+        let health = engine.bridge_health()?;
+
+        assert_eq!(health.browser.as_deref(), Some("Firefox"));
+        assert_eq!(health.browser_setup.state, "capture_test_needed");
+        assert!(health.browser_setup.detail.contains("Firefox is connected"));
+        assert!(
+            health
+                .browser_setup
+                .next_action
+                .contains("browser capture test")
+        );
+        assert!(!health.browser_setup.detail.contains("Chrome"));
         Ok(())
     }
 
