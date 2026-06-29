@@ -26,6 +26,14 @@ struct CaptureRequestStatusResult {
     let message: String
 }
 
+struct CaptureTargetResolution {
+    let targetBrowser: String?
+    let message: String
+    let status: String
+
+    var ok: Bool { targetBrowser != nil }
+}
+
 struct CaptureDiagnosticPayload {
     let requestId: String
     let component: String
@@ -123,16 +131,13 @@ final class StarleeClient {
     }
 
     func requestCurrentArticleCapture() -> PostResult {
+        let target = captureTargetForCapture()
+        guard let targetBrowser = target.targetBrowser else {
+            return PostResult(ok: false, message: target.message, status: target.status)
+        }
         startEngine()
         guard let config = localConfig(), let token = config["capture_token"] as? String else {
             return PostResult(ok: false, message: "Run Starlee setup, then reload the browser extension.")
-        }
-        guard let targetBrowser = targetBrowserForCapture() else {
-            return PostResult(
-                ok: false,
-                message: "Make Chrome, Safari, or Firefox the active browser window, then capture again.",
-                status: "setup_required"
-            )
         }
         let port = (config["capture_port"] as? NSNumber)?.intValue ?? 47291
         guard let url = URL(string: "http://127.0.0.1:\(port)/capture-request") else {
@@ -145,12 +150,13 @@ final class StarleeClient {
     }
 
     func requestCurrentArticleCapture(completion: @escaping (CaptureRequestPostResult) -> Void) {
-        guard let targetBrowser = targetBrowserForCapture() else {
+        let target = captureTargetForCapture()
+        guard let targetBrowser = target.targetBrowser else {
             completion(CaptureRequestPostResult(
                 ok: false,
-                message: "Make Chrome, Safari, or Firefox the active browser window, then capture again.",
+                message: target.message,
                 requestId: nil,
-                status: "setup_required"
+                status: target.status
             ))
             return
         }
@@ -343,16 +349,22 @@ final class StarleeClient {
             .appendingPathComponent("target/release/starlee")
     }
 
-    private func targetBrowserForCapture() -> String? {
+    private func captureTargetForCapture() -> CaptureTargetResolution {
         if let overrideTargetBrowser {
-            return Self.normalizedBrowserName(overrideTargetBrowser)
+            return Self.captureTargetResolution(
+                frontmostBrowser: Self.normalizedBrowserName(overrideTargetBrowser),
+                fallbackBrowser: nil
+            )
         }
         let app = NSWorkspace.shared.frontmostApplication
-        return Self.browserName(
+        let frontmostBrowser = Self.browserName(
             bundleIdentifier: app?.bundleIdentifier,
             localizedName: app?.localizedName
         )
-        ?? BrowserActivityTracker.shared.lastSupportedBrowser
+        return Self.captureTargetResolution(
+            frontmostBrowser: frontmostBrowser,
+            fallbackBrowser: BrowserActivityTracker.shared.lastSupportedBrowser
+        )
     }
 
     static func browserName(bundleIdentifier: String?, localizedName: String?) -> String? {
@@ -378,6 +390,47 @@ final class StarleeClient {
             return "Safari"
         case "firefox", "mozilla firefox":
             return "Firefox"
+        default:
+            return nil
+        }
+    }
+
+    static func captureTargetResolution(frontmostBrowser: String?, fallbackBrowser: String?) -> CaptureTargetResolution {
+        if let frontmostBrowser {
+            return resolution(for: frontmostBrowser)
+        }
+        if let fallback = enabledCaptureBrowser(fallbackBrowser) {
+            return CaptureTargetResolution(targetBrowser: fallback, message: "", status: "ok")
+        }
+        return CaptureTargetResolution(
+            targetBrowser: nil,
+            message: "Open Chrome or Firefox to an article or YouTube page, then try again.",
+            status: "setup_required"
+        )
+    }
+
+    private static func resolution(for browser: String) -> CaptureTargetResolution {
+        if let enabled = enabledCaptureBrowser(browser) {
+            return CaptureTargetResolution(targetBrowser: enabled, message: "", status: "ok")
+        }
+        if browser == "Safari" {
+            return CaptureTargetResolution(
+                targetBrowser: nil,
+                message: "Safari capture is not enabled in this build. Use Chrome or Firefox.",
+                status: "setup_required"
+            )
+        }
+        return CaptureTargetResolution(
+            targetBrowser: nil,
+            message: "Open Chrome or Firefox to an article or YouTube page, then try again.",
+            status: "setup_required"
+        )
+    }
+
+    private static func enabledCaptureBrowser(_ browser: String?) -> String? {
+        switch browser {
+        case "Chrome", "Firefox":
+            return browser
         default:
             return nil
         }

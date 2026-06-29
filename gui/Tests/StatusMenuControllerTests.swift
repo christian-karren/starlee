@@ -75,6 +75,7 @@ final class StatusMenuControllerTests: XCTestCase {
         XCTAssertTrue(StatusMenuController.isActionableCaptureStatus("extension_unavailable"))
         XCTAssertTrue(StatusMenuController.isActionableCaptureStatus("content_script_unreachable"))
         XCTAssertTrue(StatusMenuController.isActionableCaptureStatus("service_down"))
+        XCTAssertTrue(StatusMenuController.isActionableCaptureStatus("payload_too_large"))
         XCTAssertFalse(StatusMenuController.isActionableCaptureStatus("capture_failed"))
         XCTAssertFalse(StatusMenuController.isActionableCaptureStatus(nil))
     }
