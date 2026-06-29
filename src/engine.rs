@@ -876,6 +876,60 @@ impl Engine {
         }
     }
 
+    fn capture_diagnostic_metadata(
+        &self,
+        config: &LocalConfig,
+        status: &str,
+        message: Option<&str>,
+        page: Option<&CaptureRequestPageMetadata>,
+    ) -> BTreeMap<String, String> {
+        let extension_path = self.home.join("sensor-extension");
+        let extension_setup_present = extension_path.join("manifest.json").exists();
+        let extension_config_present = extension_path.join("starlee-config.json").exists();
+        let checked_in_recently =
+            extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS);
+        let user_safe_message = safe_bridge_failure_message(status, message)
+            .or_else(|| default_capture_status_message(status));
+        let mut metadata = BTreeMap::new();
+        metadata.insert("result_code".into(), status.into());
+        metadata.insert(
+            "next_action".into(),
+            bridge_next_action(
+                extension_setup_present,
+                extension_config_present,
+                checked_in_recently,
+                config.extension.can_capture_active_tab,
+                Some(status),
+            ),
+        );
+        metadata.insert(
+            "extension_checked_in_recently".into(),
+            checked_in_recently.to_string(),
+        );
+        metadata.insert(
+            "extension_can_capture_active_tab".into(),
+            config.extension.can_capture_active_tab.to_string(),
+        );
+        metadata.insert(
+            "active_tab_category".into(),
+            if page
+                .and_then(|page| page.domain.as_deref())
+                .is_some_and(|domain| !domain.trim().is_empty())
+            {
+                "web".into()
+            } else {
+                "unknown".into()
+            },
+        );
+        if let Some(message) = user_safe_message {
+            metadata.insert("user_safe_message".into(), message);
+        }
+        if let Some(build) = config.extension.extension_build.as_deref() {
+            metadata.insert("extension_build".into(), build.into());
+        }
+        metadata
+    }
+
     fn bridge_health_from_config(&self, config: &LocalConfig) -> BridgeHealth {
         let extension_path = self.home.join("sensor-extension");
         let extension_setup_present = extension_path.join("manifest.json").exists();
@@ -1097,19 +1151,23 @@ impl Engine {
             status.completed_at = Some(Utc::now().to_rfc3339());
             status.message = default_capture_status_message(CAPTURE_STATUS_EXTENSION_UNAVAILABLE);
             config.pending_capture_request = None;
-            append_capture_diagnostic(
-                &mut config,
-                diagnostic_event(DiagnosticEventInput {
-                    component: "engine",
-                    event: "capture_request_rejected",
-                    request_id: Some(&status.id),
-                    status: Some(&status.status),
-                    source: Some(&status.source),
-                    browser: status.browser.as_deref(),
-                    message: status.message.as_deref(),
-                    page: None,
-                }),
+            let mut event = diagnostic_event(DiagnosticEventInput {
+                component: "engine",
+                event: "capture_request_rejected",
+                request_id: Some(&status.id),
+                status: Some(&status.status),
+                source: Some(&status.source),
+                browser: status.browser.as_deref(),
+                message: status.message.as_deref(),
+                page: None,
+            });
+            event.safe_metadata = self.capture_diagnostic_metadata(
+                &config,
+                &status.status,
+                status.message.as_deref(),
+                status.page.as_ref(),
             );
+            append_capture_diagnostic(&mut config, event);
         }
         config.capture_request_status = Some(status.clone());
         store.save(&config)?;
@@ -1202,19 +1260,23 @@ impl Engine {
         request_status.message = message.or_else(|| default_capture_status_message(&status));
         let diagnostic_message =
             safe_bridge_failure_message(&request_status.status, request_status.message.as_deref());
-        append_capture_diagnostic(
-            &mut config,
-            diagnostic_event(DiagnosticEventInput {
-                component: "browser_bridge",
-                event: "capture_request_status",
-                request_id: Some(&request_status.id),
-                status: Some(&request_status.status),
-                source: Some(&request_status.source),
-                browser: request_status.browser.as_deref(),
-                message: diagnostic_message.as_deref(),
-                page: request_status.page.clone(),
-            }),
+        let mut event = diagnostic_event(DiagnosticEventInput {
+            component: "browser_bridge",
+            event: "capture_request_status",
+            request_id: Some(&request_status.id),
+            status: Some(&request_status.status),
+            source: Some(&request_status.source),
+            browser: request_status.browser.as_deref(),
+            message: diagnostic_message.as_deref(),
+            page: request_status.page.clone(),
+        });
+        event.safe_metadata = self.capture_diagnostic_metadata(
+            &config,
+            &request_status.status,
+            request_status.message.as_deref(),
+            request_status.page.as_ref(),
         );
+        append_capture_diagnostic(&mut config, event);
         config.capture_request_status = Some(request_status.clone());
         store.save(&config)?;
         Ok(Some(request_status))
@@ -2231,11 +2293,54 @@ mod tests {
     #[test]
     fn stale_extension_heartbeat_prevents_queueing() -> Result<()> {
         let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
         let request = engine.create_capture_request("menu-bar")?;
         assert_eq!(request.status, CAPTURE_STATUS_EXTENSION_UNAVAILABLE);
         assert!(request.completed_at.is_some());
         assert!(engine.take_capture_request()?.is_none());
+        let trace = engine.last_capture_trace()?;
+        assert_eq!(
+            trace.terminal_status.as_deref(),
+            Some(CAPTURE_STATUS_EXTENSION_UNAVAILABLE)
+        );
+        assert!(
+            trace
+                .recommended_next_action
+                .contains("Load or reload the Starlee browser extension")
+        );
+        let rejected = trace
+            .events
+            .iter()
+            .find(|event| event.event == "capture_request_rejected")
+            .expect("rejection diagnostic event");
+        assert_eq!(
+            rejected
+                .safe_metadata
+                .get("result_code")
+                .map(String::as_str),
+            Some(CAPTURE_STATUS_EXTENSION_UNAVAILABLE)
+        );
+        assert_eq!(
+            rejected
+                .safe_metadata
+                .get("extension_checked_in_recently")
+                .map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            rejected
+                .safe_metadata
+                .get("active_tab_category")
+                .map(String::as_str),
+            Some("unknown")
+        );
+        assert!(
+            rejected
+                .safe_metadata
+                .get("next_action")
+                .is_some_and(|action| action.contains("Load or reload"))
+        );
         Ok(())
     }
 

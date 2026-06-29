@@ -2,7 +2,9 @@ import { browserNameFromUserAgent, createExtensionApi } from "./browser.js";
 import {
   activeTabLookupFailure,
   activeTabProblem,
+  classifyContentScriptMessageError,
   CONTENT_SCRIPT_UNREACHABLE,
+  contentScriptFailureResult,
   probeContentScriptReadiness,
   safeTabMetadata,
   safeTabPage,
@@ -180,11 +182,15 @@ async function sendCapture(payload, options = {}) {
 }
 
 async function captureTab(tab) {
-  if (!tab?.id) return errorResult("no_active_tab", "No active browser tab is available.");
+  const problem = activeTabProblem(tab);
+  if (problem) return errorResult(problem.status, problem.message);
   try {
     return await ext.tabs.sendMessage(tab.id, { type: MESSAGE.captureNow });
-  } catch {
-    return errorResult("permission_denied", `${browserName()} has not granted Starlee access to this page, or this page cannot run extensions.`);
+  } catch (error) {
+    const classified = classifyContentScriptMessageError(error);
+    return classified.status === CAPTURE_STATUS.permissionDenied
+      ? errorResult("permission_denied", `${browserName()} has not granted Starlee access to this page, or this page cannot run extensions.`)
+      : contentScriptFailureResult(browserName());
   }
 }
 
