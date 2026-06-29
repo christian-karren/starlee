@@ -46,6 +46,11 @@ enum MenuBarIcon {
         return stateImage(from: base, alpha: 1, tint: NSColor.systemRed.withAlphaComponent(0.34), drawsMark: true)
     }
 
+    static func attentionImage() -> NSImage? {
+        guard let base = makeImage() else { return nil }
+        return stateImage(from: base, alpha: 1, tint: NSColor.systemOrange.withAlphaComponent(0.30), drawsAttentionMark: true)
+    }
+
     private static func addRepresentation(named name: String, to image: NSImage) {
         guard
             let url = Bundle.main.url(forResource: name, withExtension: "png"),
@@ -61,7 +66,8 @@ enum MenuBarIcon {
         from base: NSImage,
         alpha: CGFloat,
         tint: NSColor,
-        drawsMark: Bool = false
+        drawsMark: Bool = false,
+        drawsAttentionMark: Bool = false
     ) -> NSImage {
         drawImage { rect in
             base.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha)
@@ -71,6 +77,9 @@ enum MenuBarIcon {
             NSGraphicsContext.current?.compositingOperation = .sourceOver
             if drawsMark {
                 drawErrorMark(in: rect)
+            }
+            if drawsAttentionMark {
+                drawAttentionMark(in: rect)
             }
         }
     }
@@ -113,5 +122,18 @@ enum MenuBarIcon {
         path.move(to: NSPoint(x: markRect.maxX, y: markRect.minY))
         path.line(to: NSPoint(x: markRect.minX, y: markRect.maxY))
         path.stroke()
+    }
+
+    private static func drawAttentionMark(in rect: NSRect) {
+        let markRect = NSRect(x: rect.maxX - 7, y: rect.minY + 2, width: 4, height: 8)
+        let path = NSBezierPath()
+        path.lineWidth = 1.5
+        path.lineCapStyle = .round
+        NSColor(calibratedRed: 0.78, green: 0.42, blue: 0.08, alpha: 0.92).setStroke()
+        path.move(to: NSPoint(x: markRect.midX, y: markRect.maxY))
+        path.line(to: NSPoint(x: markRect.midX, y: markRect.minY + 2.5))
+        path.stroke()
+        NSColor(calibratedRed: 0.78, green: 0.42, blue: 0.08, alpha: 0.92).setFill()
+        NSBezierPath(ovalIn: NSRect(x: markRect.midX - 0.8, y: markRect.minY, width: 1.6, height: 1.6)).fill()
     }
 }

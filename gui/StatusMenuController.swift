@@ -138,7 +138,7 @@ final class StatusMenuController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: loading)
 
         let timeout = DispatchWorkItem { [weak self] in
-            self?.finishCapture(PostResult(ok: false, message: "No response from Starlee."))
+            self?.finishCaptureNeedsAttention(message: "The browser did not finish capture in time. Reload the extension or page, then try again.")
         }
         timeoutWorkItem = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureTimeout, execute: timeout)
@@ -147,6 +147,8 @@ final class StatusMenuController: NSObject {
             guard let self else { return }
             if result.ok, let requestId = result.requestId {
                 self.pollCaptureRequestStatus(id: requestId)
+            } else if Self.isSetupStatus(result.status) {
+                self.finishCaptureNeedsAttention(message: result.message)
             } else {
                 self.finishCapture(PostResult(ok: false, message: result.message))
             }
@@ -170,6 +172,29 @@ final class StatusMenuController: NSObject {
         }
     }
 
+    private func finishCaptureNeedsAttention(message: String) {
+        guard isCapturing else { return }
+        loadingWorkItem?.cancel()
+        timeoutWorkItem?.cancel()
+        statusPollWorkItem?.cancel()
+        loadingWorkItem = nil
+        timeoutWorkItem = nil
+        statusPollWorkItem = nil
+        stopAnimationTimer()
+        playAttentionAnimation(message: message)
+    }
+
+    private static func isSetupStatus(_ status: String?) -> Bool {
+        switch status {
+        case "permission_denied", "unsupported_page", "extension_unavailable",
+             "content_script_unreachable", "timed_out", "setup_required",
+             "service_unreachable":
+            return true
+        default:
+            return false
+        }
+    }
+
     private func pollCaptureRequestStatus(id: String) {
         guard isCapturing else { return }
         client.captureRequestStatus(id: id) { [weak self] result in
@@ -181,7 +206,9 @@ final class StatusMenuController: NSObject {
             switch result.status {
             case "capture_saved":
                 self.finishCapture(PostResult(ok: true, message: result.message))
-            case "capture_failed", "permission_denied", "unsupported_page", "extension_unavailable", "timed_out":
+            case "permission_denied", "unsupported_page", "extension_unavailable", "content_script_unreachable", "timed_out", "setup_required":
+                self.finishCaptureNeedsAttention(message: result.message.isEmpty ? "Starlee capture needs setup." : result.message)
+            case "capture_failed":
                 self.finishCapture(PostResult(ok: false, message: result.message.isEmpty ? "Starlee capture failed." : result.message))
             default:
                 let next = DispatchWorkItem { [weak self] in
@@ -236,6 +263,16 @@ final class StatusMenuController: NSObject {
             statusItem.button?.image = errorImage
         }
         NSLog("Starlee capture failed: \(message)")
+        resetAfterFeedback(delay: 1.5)
+    }
+
+    private func playAttentionAnimation(message: String) {
+        if let attentionImage = MenuBarIcon.attentionImage() {
+            statusItem.button?.image = attentionImage
+        }
+        let body = message.isEmpty ? "Open Starlee diagnostics for the next step." : message
+        notifier.notify(title: "Starlee capture needs attention", body: body)
+        NSLog("Starlee capture needs attention: \(body)")
         resetAfterFeedback(delay: 1.5)
     }
 
@@ -343,7 +380,7 @@ final class StatusMenuController: NSObject {
         startLoadingAnimation()
 
         let timeout = DispatchWorkItem { [weak self] in
-            self?.finishCapture(PostResult(ok: false, message: "Chrome capture test timed out."))
+            self?.finishCaptureNeedsAttention(message: "Chrome capture test timed out. Reload the extension or page, then try again.")
         }
         timeoutWorkItem = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureTimeout, execute: timeout)
@@ -352,6 +389,8 @@ final class StatusMenuController: NSObject {
             guard let self else { return }
             if result.ok, let requestId = result.requestId {
                 self.pollCaptureRequestStatus(id: requestId)
+            } else if Self.isSetupStatus(result.status) {
+                self.finishCaptureNeedsAttention(message: result.message)
             } else {
                 self.finishCapture(PostResult(ok: false, message: result.message))
             }

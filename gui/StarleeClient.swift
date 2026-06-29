@@ -9,6 +9,7 @@ struct CaptureRequestPostResult {
     let ok: Bool
     let message: String
     let requestId: String?
+    let status: String?
 }
 
 struct CaptureRequestStatusResult {
@@ -125,12 +126,12 @@ final class StarleeClient {
     private func requestCapture(source: String, completion: @escaping (CaptureRequestPostResult) -> Void) {
         startEngine()
         guard let config = localConfig(), let token = config["capture_token"] as? String else {
-            completion(CaptureRequestPostResult(ok: false, message: "Run Starlee setup, then reload the browser extension.", requestId: nil))
+            completion(CaptureRequestPostResult(ok: false, message: "Run Starlee setup, then reload the browser extension.", requestId: nil, status: "setup_required"))
             return
         }
         let port = (config["capture_port"] as? NSNumber)?.intValue ?? 47291
         guard let url = URL(string: "http://127.0.0.1:\(port)/capture-request") else {
-            completion(CaptureRequestPostResult(ok: false, message: "Invalid local Starlee capture endpoint.", requestId: nil))
+            completion(CaptureRequestPostResult(ok: false, message: "Invalid local Starlee capture endpoint.", requestId: nil, status: "setup_required"))
             return
         }
         postCaptureRequest(url: url, token: token, source: source, completion: completion)
@@ -191,7 +192,7 @@ final class StarleeClient {
         session.dataTask(with: request) { data, response, error in
             let result: CaptureRequestPostResult
             if let error {
-                result = CaptureRequestPostResult(ok: false, message: error.localizedDescription, requestId: nil)
+                result = CaptureRequestPostResult(ok: false, message: error.localizedDescription, requestId: nil, status: "service_unreachable")
             } else {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 let requestValue = data.flatMap { data -> [String: Any]? in
@@ -202,12 +203,13 @@ final class StarleeClient {
                     return request
                 }
                 let requestId = requestValue?["id"] as? String
+                let requestStatus = requestValue?["status"] as? String
                 if (200..<300).contains(status), let requestId {
-                    result = CaptureRequestPostResult(ok: true, message: "Capture request queued.", requestId: requestId)
+                    result = CaptureRequestPostResult(ok: true, message: "Capture request queued.", requestId: requestId, status: requestStatus)
                 } else {
                     let text = requestValue?["message"] as? String
                         ?? Self.responseMessage(data: data, status: status)
-                    result = CaptureRequestPostResult(ok: false, message: text, requestId: nil)
+                    result = CaptureRequestPostResult(ok: false, message: text, requestId: requestId, status: requestStatus)
                 }
             }
             DispatchQueue.main.async {

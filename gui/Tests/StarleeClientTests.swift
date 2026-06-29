@@ -107,6 +107,27 @@ final class StarleeClientTests: XCTestCase {
         wait(for: [exp], timeout: 2)
     }
 
+    func testRequestCapture_setupRejectionPreservesRequestStatusForDiagnostics() {
+        let responseBody = jsonData([
+            "request": [
+                "id": "req-setup",
+                "status": "extension_unavailable",
+                "message": "Load or reload the Starlee browser extension, then try again."
+            ] as [String: Any]
+        ])
+        let (client, _) = makeClient(data: responseBody, statusCode: 409)
+
+        let exp = expectation(description: "done")
+        client.requestCurrentArticleCapture { result in
+            XCTAssertFalse(result.ok)
+            XCTAssertEqual(result.requestId, "req-setup")
+            XCTAssertEqual(result.status, "extension_unavailable")
+            XCTAssertEqual(result.message, "Load or reload the Starlee browser extension, then try again.")
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 2)
+    }
+
     // MARK: - Status endpoint path
 
     func testCaptureRequestStatus_hitsStatusPath() {
