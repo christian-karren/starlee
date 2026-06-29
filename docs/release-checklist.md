@@ -29,6 +29,7 @@
 ```sh
 make test
 ./scripts/legal-invariants.sh
+cd sensor && npm run test:chrome-release
 make package-chrome
 ./scripts/inspect-chrome-extension-package.sh release/chrome-extension/starlee-capture-0.1.0.zip
 make package-safari
@@ -44,9 +45,27 @@ not hidden runtime dependencies.
 ## Chrome extension release gate
 
 - Upload only the ZIP produced by `scripts/package-chrome-extension.sh`.
-- Confirm package inspection passes before upload.
+- Confirm package inspection passes before upload and keep its JSON output with
+  the release candidate.
+- Do not treat `make test` alone as the Chrome Web Store gate. It runs
+  `sensor` unit tests through `npm test`, but `npm test` is scoped to
+  `node --test 'test/*.test.js'` and does not run
+  `sensor/test/e2e/extension.test.js` or
+  `sensor/test/integration/handoff-loop.test.js`.
+- Run `cd sensor && npm run test:chrome-release` before upload. This expands to
+  the sensor build, unit tests, handoff integration tests, and Playwright
+  extension E2E tests.
 - Confirm the Chrome Web Store listing says captured article bodies and
   transcripts are sent only to the user's local Starlee service.
+- Confirm the listing includes permission justifications for `storage`,
+  `activeTab`, `tabs`, `alarms`, `http://127.0.0.1/*`, `http://*/*`, and
+  `https://*/*`.
+- Confirm the privacy disclosure says Starlee Capture does not sell, share, or
+  upload article bodies, transcripts, browsing history, vault data, or capture
+  tokens to Starlee servers.
+- Confirm reviewer notes explain the local Starlee app dependency, loopback-only
+  endpoint, bearer token, and why broad page content-script access is required
+  for macOS menu-bar capture.
 - Submit as an unlisted beta before public listing.
 - Verify a clean Chrome profile can install, handshake, toolbar-capture,
   menu-bar-capture, and YouTube-capture before public launch.
@@ -54,6 +73,9 @@ not hidden runtime dependencies.
   one without an available transcript. Confirm the menu-bar success pulse occurs
   only after `capture_saved`, the vault has one restricted canonical video
   record, and bridge health/status do not expose transcript text.
+- Verify `starlee diagnostics --last-capture` after one successful capture and
+  at least one induced failure. The trace must omit article bodies, transcript
+  text, selected text, bearer tokens, and vault data.
 
 ## Safari local extension gate
 

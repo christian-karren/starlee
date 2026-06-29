@@ -8,6 +8,7 @@
     "test": "node --test 'test/*.test.js'",
     "test:integration": "node --test test/integration/*.test.js",
     "test:e2e": "playwright test",
+    "test:chrome-release": "npm run build && npm test && npm run test:integration && npm run test:e2e",
     "package:chrome": "../scripts/package-chrome-extension.sh",
     "inspect:chrome": "../scripts/inspect-chrome-extension-package.sh",
     "package:safari": "../scripts/package-safari-extension.sh",
