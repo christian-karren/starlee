@@ -11,6 +11,20 @@ PROJECT_EXTENSION_DIR="$OUT_DIR/extension"
 APP_ICON_SOURCE="$ROOT/assets/brand/starlee_desktop_application_icon.png"
 CONVERTER=${SAFARI_WEB_EXTENSION_CONVERTER:-}
 
+require_file() {
+  if [ ! -f "$1" ]; then
+    printf 'required file missing: %s\n' "$1" >&2
+    exit 1
+  fi
+}
+
+require_dir() {
+  if [ ! -d "$1" ]; then
+    printf 'required directory missing: %s\n' "$1" >&2
+    exit 1
+  fi
+}
+
 cd "$ROOT/sensor"
 npm run build
 
@@ -36,14 +50,25 @@ NODE
 )
 
 printf '%s\n' "$ZIP"
+"$ROOT/scripts/inspect-safari-extension-package.sh" "$ZIP" >/dev/null
 
 LOCAL_CONFIG="${STARLEE_SAFARI_LOCAL_CONFIG:-$HOME/Starlee/sensor-extension/starlee-config.json}"
 if [ -f "$LOCAL_CONFIG" ]; then
   cp "$LOCAL_CONFIG" "$STAGE/starlee-config.json"
+  printf 'Copied local Safari development config into staged source: %s\n' "$LOCAL_CONFIG" >&2
 fi
 
 if [ -z "$CONVERTER" ]; then
   CONVERTER=$(xcrun --find safari-web-extension-converter 2>/dev/null || true)
+elif ! command -v "$CONVERTER" >/dev/null 2>&1; then
+  cat >&2 <<EOF
+Safari Web Extension source package is ready, but the configured converter was not found:
+  SAFARI_WEB_EXTENSION_CONVERTER=$CONVERTER
+
+Set SAFARI_WEB_EXTENSION_CONVERTER to Apple's safari-web-extension-converter, or select full Xcode:
+  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+EOF
+  exit 1
 fi
 
 if [ -z "$CONVERTER" ]; then
@@ -85,6 +110,8 @@ rm -rf "$PROJECT_DIR" "$PROJECT_EXTENSION_DIR"
   --bundle-identifier "com.starlee.capture.safari" \
   --no-open
 
+require_dir "$CONVERTER_PROJECT"
+
 cp -R "$CONVERTER_PROJECT" "$PROJECT_DIR"
 cp -R "$CONVERTER_STAGE" "$PROJECT_EXTENSION_DIR"
 
@@ -111,6 +138,19 @@ fi
 PROJECT_FILE=$(find "$PROJECT_DIR" -name project.pbxproj -print -quit)
 if [ -n "$PROJECT_FILE" ]; then
   perl -0pi -e 's/PRODUCT_BUNDLE_IDENTIFIER = "?com\.starlee\.capture\.Starlee-Safari"?;/PRODUCT_BUNDLE_IDENTIFIER = com.starlee.capture.safari;/g' "$PROJECT_FILE"
+fi
+
+require_file "$PROJECT_DIR/Starlee Safari/Starlee Safari.xcodeproj/project.pbxproj"
+require_dir "$PROJECT_EXTENSION_DIR"
+
+if ! grep -R 'PRODUCT_BUNDLE_IDENTIFIER = com.starlee.capture.safari;' "$PROJECT_DIR" >/dev/null 2>&1; then
+  printf 'generated Safari project does not contain expected app bundle identifier com.starlee.capture.safari\n' >&2
+  exit 1
+fi
+
+if ! grep -R 'com.starlee.capture.safari.Extension' "$PROJECT_DIR" >/dev/null 2>&1; then
+  printf 'generated Safari project does not contain expected extension identifier com.starlee.capture.safari.Extension\n' >&2
+  exit 1
 fi
 
 printf '%s\n' "$PROJECT_DIR"
