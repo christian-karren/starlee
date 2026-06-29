@@ -37,6 +37,11 @@ struct CaptureDiagnosticPayload {
 }
 
 final class StarleeClient {
+    private enum CaptureTargetResult {
+        case success(String)
+        case failure(String)
+    }
+
     private var engineProcess: Process?
     let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Starlee")
     let session: URLSession
@@ -123,38 +128,40 @@ final class StarleeClient {
     }
 
     func requestCurrentArticleCapture() -> PostResult {
-        startEngine()
-        guard let config = localConfig(), let token = config["capture_token"] as? String else {
-            return PostResult(ok: false, message: "Run Starlee setup, then reload the browser extension.")
+        switch captureTargetForCurrentApp() {
+        case .success(let targetBrowser):
+            startEngine()
+            guard let config = localConfig(), let token = config["capture_token"] as? String else {
+                return PostResult(ok: false, message: "Run Starlee setup, then reload the browser extension.")
+            }
+            let port = (config["capture_port"] as? NSNumber)?.intValue ?? 47291
+            guard let url = URL(string: "http://127.0.0.1:\(port)/capture-request") else {
+                return PostResult(ok: false, message: "Invalid local Starlee capture endpoint.")
+            }
+            return postJSON(url: url, token: token, body: [
+                "source": "menu-bar",
+                "target_browser": targetBrowser
+            ])
+        case .failure(let message):
+            return PostResult(ok: false, message: message, status: "setup_required")
         }
-        guard let targetBrowser = targetBrowserForCapture() else {
-            return PostResult(
-                ok: false,
-                message: "Make Chrome, Safari, or Firefox the active browser window, then capture again.",
-                status: "setup_required"
-            )
-        }
-        let port = (config["capture_port"] as? NSNumber)?.intValue ?? 47291
-        guard let url = URL(string: "http://127.0.0.1:\(port)/capture-request") else {
-            return PostResult(ok: false, message: "Invalid local Starlee capture endpoint.")
-        }
-        return postJSON(url: url, token: token, body: [
-            "source": "menu-bar",
-            "target_browser": targetBrowser
-        ])
     }
 
     func requestCurrentArticleCapture(completion: @escaping (CaptureRequestPostResult) -> Void) {
-        guard let targetBrowser = targetBrowserForCapture() else {
+        let target: String
+        switch captureTargetForCurrentApp() {
+        case .success(let targetBrowser):
+            target = targetBrowser
+        case .failure(let message):
             completion(CaptureRequestPostResult(
                 ok: false,
-                message: "Make Chrome, Safari, or Firefox the active browser window, then capture again.",
+                message: message,
                 requestId: nil,
                 status: "setup_required"
             ))
             return
         }
-        requestCapture(source: "menu-bar", targetBrowser: targetBrowser, completion: completion)
+        requestCapture(source: "menu-bar", targetBrowser: target, completion: completion)
     }
 
     func requestChromeSetupCaptureTest(completion: @escaping (CaptureRequestPostResult) -> Void) {
@@ -352,6 +359,16 @@ final class StarleeClient {
             bundleIdentifier: app?.bundleIdentifier,
             localizedName: app?.localizedName
         )
+    }
+
+    private func captureTargetForCurrentApp() -> CaptureTargetResult {
+        guard let browser = targetBrowserForCapture() else {
+            return .failure("Open Chrome or Firefox to an article or YouTube page, then try again.")
+        }
+        if browser == "Safari" {
+            return .failure("Safari capture is not enabled in this build. Use Chrome or Firefox.")
+        }
+        return .success(browser)
     }
 
     static func browserName(bundleIdentifier: String?, localizedName: String?) -> String? {
