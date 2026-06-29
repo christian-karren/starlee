@@ -13,18 +13,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let matchingApps = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
             .filter { $0.processIdentifier != currentPID && !$0.isTerminated }
         if let existingApp = matchingApps.first {
-            if Self.sameApplicationBundle(existingApp) {
-                existingApp.activate(options: [.activateAllWindows])
-                NSApplication.shared.terminate(nil)
-            } else {
-                existingApp.terminate()
-            }
+            existingApp.activate(options: [.activateAllWindows])
+            NSApplication.shared.terminate(nil)
         }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
-        BrowserActivityTracker.shared.start()
         notifier.requestAuthorization()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -78,13 +73,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showDesktopWindow() {
         desktopWindowController.showWindow(nil)
         NSApplication.shared.activate()
-    }
-
-    private static func sameApplicationBundle(_ app: NSRunningApplication) -> Bool {
-        guard let existingPath = app.bundleURL?.standardizedFileURL.path else {
-            return false
-        }
-        let currentPath = Bundle.main.bundleURL.standardizedFileURL.path
-        return existingPath == currentPath
     }
 }

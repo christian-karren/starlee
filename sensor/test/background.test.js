@@ -1,10 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  browserNameFromUserAgent,
-  createExtensionApi,
-  requestTargetsBrowser
-} from "../src/browser.js";
+import { browserNameFromUserAgent, createExtensionApi } from "../src/browser.js";
 
 test("detects Safari instead of falling back to Chrome", () => {
   assert.equal(
@@ -22,42 +18,6 @@ test("detects Firefox from user agent", () => {
     browserNameFromUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 15.5; rv:128.0) Gecko/20100101 Firefox/128.0"),
     "Firefox"
   );
-});
-
-test("capture requests are accepted only by their requested browser", () => {
-  const cases = [
-    ["Safari", ["Chrome", "Firefox"]],
-    ["Firefox", ["Chrome", "Safari"]],
-    ["Chrome", ["Safari", "Firefox"]]
-  ];
-
-  for (const [requested, rejectedBrowsers] of cases) {
-    assert.equal(
-      requestTargetsBrowser({ requested_browser: requested }, requested),
-      true,
-      `${requested} should accept its own requested_browser`
-    );
-    assert.equal(
-      requestTargetsBrowser({ target_browser: requested }, requested),
-      true,
-      `${requested} should accept its own legacy target_browser`
-    );
-    for (const browser of rejectedBrowsers) {
-      assert.equal(
-        requestTargetsBrowser({ requested_browser: requested }, browser),
-        false,
-        `${browser} must reject ${requested}-targeted requests`
-      );
-    }
-  }
-});
-
-test("capture requests with no browser target fail closed", () => {
-  for (const browser of ["Chrome", "Safari", "Firefox"]) {
-    assert.equal(requestTargetsBrowser({}, browser), false);
-    assert.equal(requestTargetsBrowser({ requested_browser: null, target_browser: null }, browser), false);
-    assert.equal(requestTargetsBrowser({ requested_browser: "" }, browser), false);
-  }
 });
 
 test("browser adapter preserves Firefox promise-style APIs", async () => {

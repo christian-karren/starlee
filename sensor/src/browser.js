@@ -44,27 +44,6 @@ export function browserNameFromUserAgent(agent = "") {
   return "Chrome";
 }
 
-export function normalizeBrowserName(value = "") {
-  switch (String(value).trim().toLowerCase()) {
-    case "chrome":
-    case "google chrome":
-    case "chromium":
-      return "Chrome";
-    case "safari":
-      return "Safari";
-    case "firefox":
-    case "mozilla firefox":
-      return "Firefox";
-    default:
-      return "";
-  }
-}
-
-export function requestTargetsBrowser(request = {}, browserName = "") {
-  const requested = normalizeBrowserName(request.requested_browser || request.target_browser || "");
-  return Boolean(requested) && requested === normalizeBrowserName(browserName);
-}
-
 function isPromiseStyleApi(api) {
   return Boolean(api?.runtime?.getBrowserInfo) || api === globalThis.browser && api !== globalThis.chrome;
 }

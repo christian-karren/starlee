@@ -1,4 +1,4 @@
-import { browserNameFromUserAgent, createExtensionApi, requestTargetsBrowser } from "./browser.js";
+import { browserNameFromUserAgent, createExtensionApi } from "./browser.js";
 import {
   activeTabLookupFailure,
   activeTabProblem,
@@ -397,22 +397,6 @@ async function takeCaptureRequest() {
     return { ok: false, request: null, code: "service_down" };
   }
   if (!request) return { ok: true, request: null };
-  if (!requestTargetsThisBrowser(request)) {
-    await recordDiagnosticEvent({
-      component: "extension",
-      event: "capture_request_ignored_wrong_browser",
-      request_id: request.id,
-      status: "ignored",
-      source: request.source || "menu-bar",
-      browser: browserName(),
-      message: "Browser extension ignored a capture request targeted to another browser.",
-      safe_metadata: {
-        requested_browser: request.requested_browser || request.target_browser || "missing",
-        handling_browser: browserName()
-      }
-    });
-    return { ok: true, request: null };
-  }
   if (request.id && processedRequests.has(request.id)) return { ok: true, request: null };
   if (request.id) processedRequests.add(request.id);
   await recordMenuRequest(request, CAPTURE_STATUS.pickedUp);
@@ -635,8 +619,4 @@ function domainFromUrl(value) {
 
 function browserName() {
   return browserNameFromUserAgent(navigator.userAgent);
-}
-
-function requestTargetsThisBrowser(request = {}) {
-  return requestTargetsBrowser(request, browserName());
 }
