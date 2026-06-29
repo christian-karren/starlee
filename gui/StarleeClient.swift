@@ -18,6 +18,16 @@ struct CaptureRequestStatusResult {
     let message: String
 }
 
+struct CaptureDiagnosticPayload {
+    let requestId: String
+    let component: String
+    let event: String
+    let status: String
+    let source: String
+    let message: String
+    let safeMetadata: [String: String]
+}
+
 final class StarleeClient {
     private var engineProcess: Process?
     let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Starlee")
@@ -148,6 +158,32 @@ final class StarleeClient {
             return
         }
         getCaptureRequestStatus(url: url, token: token, completion: completion)
+    }
+
+    func recordCaptureDiagnostic(_ diagnostic: CaptureDiagnosticPayload) {
+        guard
+            let config = localConfig(),
+            let token = config["capture_token"] as? String
+        else { return }
+        let port = (config["capture_port"] as? NSNumber)?.intValue ?? 47291
+        guard let url = URL(string: "http://127.0.0.1:\(port)/capture-diagnostics/event") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 2
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "timestamp": ISO8601DateFormatter().string(from: Date()),
+            "component": diagnostic.component,
+            "event": diagnostic.event,
+            "request_id": diagnostic.requestId,
+            "status": diagnostic.status,
+            "source": diagnostic.source,
+            "message": diagnostic.message,
+            "safe_metadata": diagnostic.safeMetadata
+        ])
+        session.dataTask(with: request).resume()
     }
 
     private func postJSON(url: URL, token: String, body: [String: Any]) -> PostResult {

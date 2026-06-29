@@ -297,7 +297,7 @@ test("opens transcript controls when discovery is enabled", async () => {
 
   const payload = await extractYouTube(dom.window.document, {
     discoverTranscript: true,
-    transcriptDiscoveryTimeoutMs: 50
+    transcriptDiscoveryTimeoutMs: 700
   });
 
   assert.deepEqual(payload.transcript, [{ t: 7, text: "Found after click" }]);

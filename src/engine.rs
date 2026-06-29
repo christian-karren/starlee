@@ -20,8 +20,9 @@ use crate::{
     index::Index,
     model::{
         BridgeHealth, CaptureInput, CaptureTraceReport, ChromeSetupStatus, CorpusOverview,
-        DoctorCheck, DoctorReport, GetResult, QueryResult, Record, RuntimeIdentity, SearchHit,
-        SearchScope, SetupReport, SourceType, SpotifySyncEvent, SpotifySyncLog, Status, TopicCount,
+        DoctorCheck, DoctorReport, GetResult, LastExtensionCheckInState, QueryResult, Record,
+        RuntimeIdentity, SearchHit, SearchScope, SetupReport, SourceType, SpotifySyncEvent,
+        SpotifySyncLog, Status, TopicCount,
     },
     public_fetch, sensor_assets, spotify,
     spotify::{SpotifyConfigureReport, SpotifySyncReport, SpotifySyncStatus},
@@ -36,8 +37,9 @@ pub use bridge::{
     CAPTURE_REQUEST_TTL, CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE,
     CAPTURE_STATUS_EXTENSION_UNAVAILABLE, CAPTURE_STATUS_EXTRACTING, CAPTURE_STATUS_FAILED,
     CAPTURE_STATUS_PERMISSION_DENIED, CAPTURE_STATUS_PICKED_UP, CAPTURE_STATUS_POSTED,
-    CAPTURE_STATUS_QUEUED, CAPTURE_STATUS_SAVED, CAPTURE_STATUS_TIMED_OUT,
-    CAPTURE_STATUS_UNSUPPORTED_PAGE, EXTENSION_HEARTBEAT_FRESHNESS,
+    CAPTURE_STATUS_QUEUED, CAPTURE_STATUS_SAVED, CAPTURE_STATUS_SERVICE_DOWN,
+    CAPTURE_STATUS_SERVICE_UNREACHABLE, CAPTURE_STATUS_TIMED_OUT, CAPTURE_STATUS_TOKEN_INVALID,
+    CAPTURE_STATUS_TOKEN_MISSING, CAPTURE_STATUS_UNSUPPORTED_PAGE, EXTENSION_HEARTBEAT_FRESHNESS,
 };
 
 use bridge::*;
@@ -578,12 +580,14 @@ impl Engine {
                     })
                     .map(|event| event.timestamp.clone())
             });
+        let checked_in_recently =
+            extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS);
         let bridge_action = bridge_next_action(
             self.home.join("sensor-extension/manifest.json").exists(),
             self.home
                 .join("sensor-extension/starlee-config.json")
                 .exists(),
-            extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS),
+            checked_in_recently,
             config.extension.can_capture_active_tab,
             terminal_status
                 .as_deref()
@@ -601,14 +605,60 @@ impl Engine {
                 )
             })
             .unwrap_or(bridge_action);
+        let result_code = terminal_status.clone().or_else(|| {
+            request_status
+                .as_ref()
+                .map(|status| status.status.clone())
+                .or_else(|| {
+                    events
+                        .iter()
+                        .rev()
+                        .filter_map(|event| event.status.clone())
+                        .find(|status| status != "started" && status != "ok")
+                })
+        });
+        let user_safe_message = result_code
+            .as_deref()
+            .and_then(|status| {
+                safe_bridge_failure_message(
+                    status,
+                    request_status
+                        .as_ref()
+                        .and_then(|status| status.message.as_deref()),
+                )
+                .or_else(|| default_capture_status_message(status))
+            })
+            .or_else(|| {
+                events
+                    .iter()
+                    .rev()
+                    .find_map(|event| event.safe_metadata.get("user_safe_message").cloned())
+            });
+        let failure_step = failure_step(&events, result_code.as_deref());
+        let runtime = self.runtime_identity(&config);
         Ok(CaptureTraceReport {
             trace_version: 1,
             request_id,
             started_at,
             completed_at,
+            browser: runtime.browser.clone(),
+            extension_build: runtime.extension_build.clone(),
+            desktop_build: runtime.app_build_identifier.clone(),
+            result_code,
             terminal_status: terminal_status.clone(),
-            recommended_next_action,
-            runtime: self.runtime_identity(&config),
+            user_safe_message,
+            failure_step,
+            recommended_next_action: recommended_next_action.clone(),
+            next_action: recommended_next_action,
+            last_extension_check_in: LastExtensionCheckInState {
+                checked_in_recently,
+                can_capture_active_tab: config.extension.can_capture_active_tab,
+                last_hello_at: config.extension.last_handshake_at.clone(),
+                browser: config.extension.browser.clone(),
+                extension_version: config.extension.extension_version.clone(),
+                extension_build: config.extension.extension_build.clone(),
+            },
+            runtime,
             request_status,
             events,
         })
@@ -1692,6 +1742,35 @@ fn git_commit() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn failure_step(events: &[CaptureDiagnosticEvent], result_code: Option<&str>) -> Option<String> {
+    if result_code == Some(CAPTURE_STATUS_SAVED) {
+        return None;
+    }
+    events
+        .iter()
+        .rev()
+        .find(|event| {
+            event
+                .status
+                .as_deref()
+                .is_some_and(|status| status != "started" && status != "ok")
+        })
+        .map(|event| format!("{}:{}", event.component, event.event))
+        .or_else(|| {
+            result_code.map(|status| match status {
+                CAPTURE_STATUS_EXTENSION_UNAVAILABLE => "engine:capture_request_rejected".into(),
+                CAPTURE_STATUS_TIMED_OUT => "engine:capture_request_timed_out".into(),
+                CAPTURE_STATUS_SERVICE_DOWN | CAPTURE_STATUS_SERVICE_UNREACHABLE => {
+                    "local_service:unreachable".into()
+                }
+                CAPTURE_STATUS_TOKEN_MISSING | CAPTURE_STATUS_TOKEN_INVALID => {
+                    "browser_bridge:token".into()
+                }
+                _ => "browser_bridge:capture_request_status".into(),
+            })
+        })
+}
+
 fn add_terms(counts: &mut HashMap<String, usize>, text: &str) {
     let stopwords = stopwords();
     let mut document_terms = HashSet::new();
@@ -1925,6 +2004,18 @@ mod tests {
             trace.terminal_status.as_deref(),
             Some(CAPTURE_STATUS_FAILED)
         );
+        assert_eq!(trace.result_code.as_deref(), Some(CAPTURE_STATUS_FAILED));
+        assert_eq!(trace.browser.as_deref(), Some("Chrome"));
+        assert_eq!(
+            trace.extension_build.as_deref(),
+            Some("codex/youtube-capture-diagnostic-harness@b965131")
+        );
+        assert_eq!(
+            trace.failure_step.as_deref(),
+            Some("browser_bridge:capture_request_status")
+        );
+        assert!(trace.user_safe_message.is_some());
+        assert!(trace.last_extension_check_in.checked_in_recently);
         assert_eq!(trace.runtime.starlee_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(trace.runtime.browser.as_deref(), Some("Chrome"));
         assert_eq!(
@@ -2114,6 +2205,10 @@ mod tests {
             CAPTURE_STATUS_PERMISSION_DENIED,
             CAPTURE_STATUS_UNSUPPORTED_PAGE,
             CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE,
+            CAPTURE_STATUS_TOKEN_MISSING,
+            CAPTURE_STATUS_TOKEN_INVALID,
+            CAPTURE_STATUS_SERVICE_DOWN,
+            CAPTURE_STATUS_SERVICE_UNREACHABLE,
         ] {
             let temp = tempfile::tempdir()?;
             let engine = Engine::new(temp.path().to_owned());
