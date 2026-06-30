@@ -55,7 +55,9 @@ final class StatusMenuController: NSObject {
         menu.addItem(item("Browser Setup…", #selector(browserSetup)))
         menu.addItem(item("Test Chrome Capture", #selector(testChromeCapture)))
         menu.addItem(item("Run Setup Diagnostics…", #selector(showDoctor)))
-        menu.addItem(item("Show Last Capture Trace…", #selector(showLastCaptureTrace)))
+        let traceItem = item("Show Last Capture Trace…", #selector(showLastCaptureTrace))
+        traceItem.isEnabled = hasLastCaptureTrace()
+        menu.addItem(traceItem)
         menu.addItem(item("Open Vault", #selector(openVault)))
         menu.addItem(item("Start Capture Endpoint", #selector(startEngine)))
         menu.addItem(item("Stop Capture Endpoint", #selector(stopEngine)))
@@ -433,7 +435,48 @@ final class StatusMenuController: NSObject {
     }
 
     @objc private func showLastCaptureTrace() {
-        DialogPresenter.show(title: "Last Capture Trace", message: client.run(["diagnostics", "--last-capture"]))
+        let raw = client.run(["diagnostics", "--last-capture"])
+        DialogPresenter.showTrace(
+            title: "Last Capture Trace",
+            summary: Self.captureTraceSummary(rawJSON: raw),
+            rawJSON: raw
+        )
+    }
+
+    private func hasLastCaptureTrace() -> Bool {
+        guard let trace = client.runJSON(["diagnostics", "--last-capture"]) else { return false }
+        return (trace["request_id"] as? String)?.isEmpty == false || (trace["events"] as? [[String: Any]])?.isEmpty == false
+    }
+
+    static func captureTraceSummary(rawJSON: String) -> String {
+        guard
+            let data = rawJSON.data(using: .utf8),
+            let trace = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return "Summary\nTrace could not be parsed. Raw diagnostic output is shown below."
+        }
+        let request = trace["request_status"] as? [String: Any]
+        let requested = request?["requested_browser"] as? String ?? trace["requested_browser"] as? String ?? "unknown"
+        let handling = request?["handling_browser"] as? String ?? trace["handling_browser"] as? String ?? trace["browser"] as? String ?? "unknown"
+        let result = trace["result_code"] as? String ?? trace["terminal_status"] as? String ?? "in_progress"
+        let message = trace["user_safe_message"] as? String ?? "No user-safe message recorded."
+        let next = trace["next_action"] as? String ?? trace["recommended_next_action"] as? String ?? "Run setup diagnostics."
+        let events = trace["events"] as? [[String: Any]] ?? []
+        let pageType = events
+            .compactMap { event -> String? in
+                let safe = event["safe_metadata"] as? [String: Any]
+                return safe?["page_type"] as? String ?? safe?["payload_type"] as? String
+            }
+            .last ?? "unknown"
+        return """
+        Summary
+        Requested browser: \(requested)
+        Handling browser: \(handling)
+        Page type: \(pageType)
+        Result: \(result)
+        Message: \(message)
+        Next action: \(next)
+        """
     }
 
     @objc func openVault() {

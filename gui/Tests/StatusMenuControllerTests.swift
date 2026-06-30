@@ -39,6 +39,7 @@ final class StatusMenuControllerTests: XCTestCase {
     ) -> (StatusMenuController, MockURLSession) {
         let client = StarleeClient(session: session)
         client.overrideConfig = ["capture_port": 47291 as NSNumber, "capture_token": "tok"]
+        client.overrideTargetBrowser = "Chrome"
         let notifier = NotificationController()
         let controller = StatusMenuController(
             statusItem: makeStatusItem(),
@@ -125,6 +126,7 @@ final class StatusMenuControllerTests: XCTestCase {
         // Call the underlying client directly (same code path, avoids UNUserNotificationCenter crash)
         let client = StarleeClient(session: sess)
         client.overrideConfig = ["capture_port": 47291 as NSNumber, "capture_token": "tok"]
+        client.overrideTargetBrowser = "Chrome"
         let result = client.requestCurrentArticleCapture()
         // Result may be ok=false since JSON doesn't have requestId, but a request was made
         XCTAssertEqual(sess.capturedRequests.count, 1)

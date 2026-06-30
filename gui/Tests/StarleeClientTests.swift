@@ -20,6 +20,7 @@ final class StarleeClientTests: XCTestCase {
         session.stubbedError = error
         let client = StarleeClient(session: session)
         client.overrideConfig = ["capture_port": port as NSNumber, "capture_token": token]
+        client.overrideTargetBrowser = "Chrome"
         return (client, session)
     }
 
@@ -43,6 +44,8 @@ final class StarleeClientTests: XCTestCase {
         let req = session.capturedRequests[0]
         XCTAssertEqual(req.url?.path, "/capture-request")
         XCTAssertEqual(req.httpMethod, "POST")
+        let body = try? JSONSerialization.jsonObject(with: req.httpBody ?? Data()) as? [String: Any]
+        XCTAssertEqual(body?["target_browser"] as? String, "Chrome")
     }
 
     // MARK: - Auth header
@@ -173,6 +176,7 @@ final class StarleeClientTests: XCTestCase {
         let session = MockURLSession()
         let client = StarleeClient(session: session)
         client.blockDiskConfig = true
+        client.overrideTargetBrowser = "Chrome"
 
         let exp = expectation(description: "done")
         client.requestCurrentArticleCapture { result in
@@ -238,8 +242,80 @@ final class StarleeClientTests: XCTestCase {
         if let body = session.capturedRequests[0].httpBody,
            let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
             XCTAssertEqual(json["source"] as? String, "desktop-setup-test")
+            XCTAssertEqual(json["target_browser"] as? String, "Chrome")
         } else {
             XCTFail("Request body should be valid JSON with 'source' key")
         }
+    }
+
+    func testRequestCapture_safariUnsupportedDoesNotEnqueueRequest() {
+        let session = MockURLSession()
+        let client = StarleeClient(session: session)
+        client.overrideConfig = ["capture_port": 47291 as NSNumber, "capture_token": "tok"]
+        client.overrideTargetBrowser = "Safari"
+
+        let exp = expectation(description: "done")
+        client.requestCurrentArticleCapture { result in
+            XCTAssertFalse(result.ok)
+            XCTAssertNil(result.requestId)
+            XCTAssertEqual(result.status, "setup_required")
+            XCTAssertEqual(result.message, "Safari capture is not enabled in this build. Use Chrome or Firefox.")
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 2)
+
+        XCTAssertEqual(session.capturedRequests.count, 0)
+    }
+
+    func testRequestCapture_unknownTargetDoesNotEnqueueRequest() {
+        let session = MockURLSession()
+        let client = StarleeClient(session: session)
+        client.overrideConfig = ["capture_port": 47291 as NSNumber, "capture_token": "tok"]
+        client.overrideTargetBrowser = "Finder"
+
+        let exp = expectation(description: "done")
+        client.requestCurrentArticleCapture { result in
+            XCTAssertFalse(result.ok)
+            XCTAssertNil(result.requestId)
+            XCTAssertEqual(result.status, "setup_required")
+            XCTAssertEqual(result.message, "Open Chrome or Firefox to an article or YouTube page, then try again.")
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 2)
+
+        XCTAssertEqual(session.capturedRequests.count, 0)
+    }
+
+    func testBrowserNameMappingRecognizesSupportedBrowsersOnly() {
+        XCTAssertEqual(StarleeClient.browserName(bundleIdentifier: "com.apple.Safari", localizedName: "Safari"), "Safari")
+        XCTAssertEqual(StarleeClient.browserName(bundleIdentifier: "org.mozilla.firefox", localizedName: "Firefox"), "Firefox")
+        XCTAssertEqual(StarleeClient.browserName(bundleIdentifier: "com.google.Chrome", localizedName: "Google Chrome"), "Chrome")
+        XCTAssertNil(StarleeClient.browserName(bundleIdentifier: "com.apple.finder", localizedName: "Finder"))
+    }
+
+    func testCaptureTraceSummaryIncludesRoutingAndNextAction() {
+        let raw = """
+        {
+          "result_code": "capture_saved",
+          "user_safe_message": "Saved to Starlee.",
+          "next_action": "Open another page.",
+          "browser": "Safari",
+          "request_status": {
+            "requested_browser": "Safari",
+            "handling_browser": "Safari"
+          },
+          "events": [
+            {"safe_metadata": {"page_type": "youtube"}}
+          ]
+        }
+        """
+
+        let summary = StatusMenuController.captureTraceSummary(rawJSON: raw)
+
+        XCTAssertTrue(summary.contains("Requested browser: Safari"))
+        XCTAssertTrue(summary.contains("Handling browser: Safari"))
+        XCTAssertTrue(summary.contains("Page type: youtube"))
+        XCTAssertTrue(summary.contains("Result: capture_saved"))
+        XCTAssertTrue(summary.contains("Next action: Open another page."))
     }
 }

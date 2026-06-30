@@ -59,6 +59,8 @@ pub struct CaptureRequestState {
     pub requested_at: String,
     #[serde(default)]
     pub source: String,
+    #[serde(default)]
+    pub target_browser: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +73,10 @@ pub struct CaptureRequestStatus {
     pub picked_up_at: Option<String>,
     #[serde(default)]
     pub browser: Option<String>,
+    #[serde(default)]
+    pub requested_browser: Option<String>,
+    #[serde(default)]
+    pub handling_browser: Option<String>,
     #[serde(default)]
     pub page: Option<CaptureRequestPageMetadata>,
     pub status: String,

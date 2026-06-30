@@ -212,6 +212,9 @@ function keepAlive() {
   try {
     const port = ext.runtime.connect({ name: KEEPALIVE_PORT });
     port.onDisconnect.addListener(() => {
+      // Chrome reports benign MV3 service-worker port closures through
+      // runtime.lastError unless the listener reads it.
+      void globalThis.chrome?.runtime?.lastError;
       keepAlive();
     });
   } catch {
@@ -385,7 +388,7 @@ async function takeCaptureRequest() {
   await refreshHelloIfNeeded();
   let request;
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/capture-request`, {
+    const response = await fetch(`http://127.0.0.1:${port}/capture-request?browser=${encodeURIComponent(browserName())}`, {
       headers: { "Authorization": `Bearer ${token}` }
     });
     if (!response.ok) return { ok: false, request: null, code: `http_${response.status}` };
@@ -546,6 +549,7 @@ async function recordCaptureRequestStatus(requestId, status, message, page) {
       id: requestId,
       status,
       message,
+      browser: browserName(),
       ...(page ? { page } : {})
     })
   }).catch(() => {});

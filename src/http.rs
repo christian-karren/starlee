@@ -145,7 +145,17 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                 .get("source")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("menu-bar");
-            let capture_request = engine.create_capture_request(source)?;
+            let Some(target_browser) = value
+                .get("target_browser")
+                .and_then(serde_json::Value::as_str)
+            else {
+                return respond(
+                    request,
+                    StatusCode(400),
+                    json!({"error":"missing target_browser"}),
+                );
+            };
+            let capture_request = engine.create_capture_request(source, target_browser)?;
             let status =
                 if capture_request.status == crate::engine::CAPTURE_STATUS_EXTENSION_UNAVAILABLE {
                     StatusCode(409)
@@ -158,10 +168,11 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
             if !authorized(&request, &config.capture_token) {
                 return respond(request, StatusCode(401), json!({"error":"unauthorized"}));
             }
+            let browser = query_param(request.url(), "browser");
             respond(
                 request,
                 StatusCode(200),
-                json!({"request": engine.take_capture_request()?}),
+                json!({"request": engine.take_capture_request(browser)?}),
             )
         }
         (&Method::Get, "/capture-request/status") => {
@@ -210,10 +221,14 @@ fn handle(mut request: Request, engine: &Engine, config: &LocalConfig) -> Result
                 .cloned()
                 .map(serde_json::from_value::<CaptureRequestPageMetadata>)
                 .transpose()?;
+            let browser = value
+                .get("browser")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
             respond(
                 request,
                 StatusCode(200),
-                json!({"request": engine.record_capture_request_result(id, status, message, page)?}),
+                json!({"request": engine.record_capture_request_result(id, status, message, page, browser)?}),
             )
         }
         (&Method::Post, "/capture-diagnostics/event") => {
@@ -484,7 +499,7 @@ mod tests {
         let created = post_path(
             &server.address,
             "/capture-request",
-            r#"{"source":"test"}"#,
+            r#"{"source":"test","target_browser":"Chrome"}"#,
             Some("secret-token"),
         )?;
         assert!(created.starts_with("HTTP/1.1 202"));
@@ -503,7 +518,11 @@ mod tests {
         )?;
         assert!(queued.contains("\"status\":\"queued\""));
 
-        let first = get_path(&server.address, "/capture-request", Some("secret-token"))?;
+        let first = get_path(
+            &server.address,
+            "/capture-request?browser=Chrome",
+            Some("secret-token"),
+        )?;
         assert!(first.contains("\"request\""));
         assert!(first.contains("\"id\""));
         let picked_up = get_path(
@@ -546,7 +565,11 @@ mod tests {
         assert!(saved.starts_with("HTTP/1.1 200"));
         assert!(saved.contains("\"status\":\"capture_saved\""));
 
-        let second = get_path(&server.address, "/capture-request", Some("secret-token"))?;
+        let second = get_path(
+            &server.address,
+            "/capture-request?browser=Chrome",
+            Some("secret-token"),
+        )?;
         assert!(second.contains("\"request\":null"));
         drop(server);
         Ok(())
@@ -560,13 +583,17 @@ mod tests {
         let created = post_path(
             &server.address,
             "/capture-request",
-            r#"{"source":"test"}"#,
+            r#"{"source":"test","target_browser":"Chrome"}"#,
             Some("secret-token"),
         )?;
         assert!(created.starts_with("HTTP/1.1 409"));
         assert!(created.contains("\"status\":\"extension_unavailable\""));
 
-        let first = get_path(&server.address, "/capture-request", Some("secret-token"))?;
+        let first = get_path(
+            &server.address,
+            "/capture-request?browser=Chrome",
+            Some("secret-token"),
+        )?;
         assert!(first.contains("\"request\":null"));
         drop(server);
         Ok(())
@@ -596,12 +623,13 @@ mod tests {
         assert_eq!(connected.extension_build.as_deref(), Some("main@abc123"));
         assert!(!connected.chrome_setup.capture_test_passed);
 
-        let request = engine.create_capture_request("desktop-setup-test")?;
-        engine.take_capture_request()?;
+        let request = engine.create_capture_request("desktop-setup-test", "Chrome")?;
+        engine.take_capture_request(Some("Chrome".into()))?;
         engine.record_capture_request_result(
             &request.id,
             crate::engine::CAPTURE_STATUS_SAVED,
             Some("Saved to Starlee.".into()),
+            None,
             None,
         )?;
         let passed = engine.bridge_health()?;
@@ -676,7 +704,7 @@ mod tests {
         let created = post_path(
             &server.address,
             "/capture-request",
-            r#"{"source":"test"}"#,
+            r#"{"source":"test","target_browser":"Chrome"}"#,
             Some("secret-token"),
         )?;
         let request_id = created

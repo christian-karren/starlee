@@ -582,8 +582,17 @@ impl Engine {
             });
         let checked_in_recently =
             extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS);
+        let bridge_browser = request_status
+            .as_ref()
+            .and_then(|status| {
+                status
+                    .handling_browser
+                    .as_deref()
+                    .or(status.requested_browser.as_deref())
+            })
+            .or(config.extension.browser.as_deref());
         let bridge_action = bridge_next_action(
-            config.extension.browser.as_deref(),
+            bridge_browser,
             self.home.join("sensor-extension/manifest.json").exists(),
             self.home
                 .join("sensor-extension/starlee-config.json")
@@ -637,12 +646,35 @@ impl Engine {
             });
         let failure_step = failure_step(&events, result_code.as_deref());
         let runtime = self.runtime_identity(&config);
+        let requested_browser = request_status
+            .as_ref()
+            .and_then(|status| status.requested_browser.clone());
+        let handling_browser = request_status
+            .as_ref()
+            .and_then(|status| status.handling_browser.clone())
+            .or_else(|| {
+                events
+                    .iter()
+                    .rev()
+                    .filter(|event| {
+                        matches!(
+                            event.status.as_deref(),
+                            Some(CAPTURE_STATUS_PICKED_UP)
+                                | Some(CAPTURE_STATUS_EXTRACTING)
+                                | Some(CAPTURE_STATUS_POSTED)
+                                | Some(CAPTURE_STATUS_SAVED)
+                        )
+                    })
+                    .find_map(|event| event.browser.clone())
+            });
         Ok(CaptureTraceReport {
             trace_version: 1,
             request_id,
             started_at,
             completed_at,
-            browser: runtime.browser.clone(),
+            browser: handling_browser.clone(),
+            requested_browser,
+            handling_browser,
             extension_build: runtime.extension_build.clone(),
             desktop_build: runtime.app_build_identifier.clone(),
             result_code,
@@ -995,9 +1027,7 @@ impl Engine {
         let capture_test_passed_at = config
             .capture_request_status
             .as_ref()
-            .filter(|status| {
-                status.source == "desktop-setup-test" && status.status == CAPTURE_STATUS_SAVED
-            })
+            .filter(|status| status.status == CAPTURE_STATUS_SAVED)
             .and_then(|status| status.completed_at.clone());
         let capture_test_passed = capture_test_passed_at.is_some();
         let last_failure = config
@@ -1153,66 +1183,75 @@ impl Engine {
     pub fn create_capture_request(
         &self,
         source: impl Into<String>,
+        target_browser: impl Into<String>,
     ) -> Result<CaptureRequestStatus> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
         expire_stale_capture_request(&mut config);
         let source = source.into();
+        let target_browser = normalize_target_browser(&target_browser.into()).ok_or_else(|| {
+            anyhow::anyhow!("capture request requires Chrome, Safari, or Firefox")
+        })?;
         let id_material = format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}",
             config.capture_token,
             Utc::now().timestamp_nanos_opt().unwrap_or_default(),
-            source
+            source,
+            target_browser
         );
         let id = token_fingerprint(&id_material);
         let requested_at = Utc::now().to_rfc3339();
-        let browser = config.extension.browser.clone();
         let request = CaptureRequestState {
             id: id.clone(),
             requested_at: requested_at.clone(),
             source: source.clone(),
+            target_browser: Some(target_browser.clone()),
         };
         let mut status = CaptureRequestStatus {
             id,
             requested_at,
             source,
             picked_up_at: None,
-            browser,
+            browser: None,
+            requested_browser: Some(target_browser.clone()),
+            handling_browser: None,
             page: None,
             status: CAPTURE_STATUS_QUEUED.into(),
             completed_at: None,
-            message: Some("Capture request queued for the browser extension.".into()),
+            message: Some(format!("Capture request queued for {target_browser}.")),
         };
         if extension_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS) {
             config.pending_capture_request = Some(request);
             if status.source == "menu-bar" {
-                append_capture_diagnostic(
-                    &mut config,
-                    diagnostic_event(DiagnosticEventInput {
-                        component: "menu_bar",
-                        event: "menu_bar_capture_clicked",
-                        request_id: Some(&status.id),
-                        status: Some(&status.status),
-                        source: Some(&status.source),
-                        browser: status.browser.as_deref(),
-                        message: Some("Menu-bar capture requested."),
-                        page: None,
-                    }),
-                );
-            }
-            append_capture_diagnostic(
-                &mut config,
-                diagnostic_event(DiagnosticEventInput {
-                    component: "engine",
-                    event: "capture_request_queued",
+                let mut event = diagnostic_event(DiagnosticEventInput {
+                    component: "menu_bar",
+                    event: "menu_bar_capture_clicked",
                     request_id: Some(&status.id),
                     status: Some(&status.status),
                     source: Some(&status.source),
-                    browser: status.browser.as_deref(),
-                    message: status.message.as_deref(),
+                    browser: status.requested_browser.as_deref(),
+                    message: Some("Menu-bar capture requested."),
                     page: None,
-                }),
-            );
+                });
+                event
+                    .safe_metadata
+                    .insert("requested_browser".into(), target_browser.clone());
+                append_capture_diagnostic(&mut config, event);
+            }
+            let mut event = diagnostic_event(DiagnosticEventInput {
+                component: "engine",
+                event: "capture_request_queued",
+                request_id: Some(&status.id),
+                status: Some(&status.status),
+                source: Some(&status.source),
+                browser: status.requested_browser.as_deref(),
+                message: status.message.as_deref(),
+                page: None,
+            });
+            event
+                .safe_metadata
+                .insert("requested_browser".into(), target_browser.clone());
+            append_capture_diagnostic(&mut config, event);
         } else {
             status.status = CAPTURE_STATUS_EXTENSION_UNAVAILABLE.into();
             status.completed_at = Some(Utc::now().to_rfc3339());
@@ -1224,7 +1263,7 @@ impl Engine {
                 request_id: Some(&status.id),
                 status: Some(&status.status),
                 source: Some(&status.source),
-                browser: status.browser.as_deref(),
+                browser: status.requested_browser.as_deref(),
                 message: status.message.as_deref(),
                 page: None,
             });
@@ -1234,6 +1273,9 @@ impl Engine {
                 status.message.as_deref(),
                 status.page.as_ref(),
             );
+            event
+                .safe_metadata
+                .insert("requested_browser".into(), target_browser);
             append_capture_diagnostic(&mut config, event);
         }
         config.capture_request_status = Some(status.clone());
@@ -1241,11 +1283,22 @@ impl Engine {
         Ok(status)
     }
 
-    pub fn take_capture_request(&self) -> Result<Option<CaptureRequestState>> {
+    pub fn take_capture_request(
+        &self,
+        polling_browser: impl Into<Option<String>>,
+    ) -> Result<Option<CaptureRequestState>> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
         expire_stale_capture_request(&mut config);
-        let request = config.pending_capture_request.take();
+        let polling_browser = polling_browser
+            .into()
+            .and_then(|browser| normalize_target_browser(&browser));
+        let request = match config.pending_capture_request.as_ref() {
+            Some(request) if request_targets_browser(request, polling_browser.as_deref()) => {
+                config.pending_capture_request.take()
+            }
+            Some(_) | None => None,
+        };
         let picked_up_event = if let Some(request) = request.as_ref()
             && let Some(status) = config.capture_request_status.as_mut()
             && status.id == request.id
@@ -1253,17 +1306,33 @@ impl Engine {
         {
             status.status = CAPTURE_STATUS_PICKED_UP.into();
             status.picked_up_at = Some(Utc::now().to_rfc3339());
-            status.message = Some("Browser extension picked up the capture request.".into());
-            Some(diagnostic_event(DiagnosticEventInput {
+            status.handling_browser = polling_browser.clone();
+            status.browser = polling_browser.clone();
+            status.message = Some(format!(
+                "{} extension picked up the capture request.",
+                status.handling_browser.as_deref().unwrap_or("Browser")
+            ));
+            let mut event = diagnostic_event(DiagnosticEventInput {
                 component: "engine",
                 event: "capture_request_picked_up",
                 request_id: Some(&status.id),
                 status: Some(&status.status),
                 source: Some(&status.source),
-                browser: status.browser.as_deref(),
+                browser: status.handling_browser.as_deref(),
                 message: status.message.as_deref(),
                 page: status.page.clone(),
-            }))
+            });
+            if let Some(requested) = status.requested_browser.as_deref() {
+                event
+                    .safe_metadata
+                    .insert("requested_browser".into(), requested.into());
+            }
+            if let Some(handling) = status.handling_browser.as_deref() {
+                event
+                    .safe_metadata
+                    .insert("handling_browser".into(), handling.into());
+            }
+            Some(event)
         } else {
             None
         };
@@ -1292,10 +1361,16 @@ impl Engine {
         status: impl Into<String>,
         message: Option<String>,
         page: Option<CaptureRequestPageMetadata>,
+        handling_browser: Option<String>,
     ) -> Result<Option<CaptureRequestStatus>> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
-        let expired = expire_stale_capture_request(&mut config);
+        let requested_status = normalize_capture_request_status(&status.into());
+        let expired = if requested_status == CAPTURE_STATUS_SAVED {
+            false
+        } else {
+            expire_stale_capture_request(&mut config)
+        };
         let Some(mut request_status) = config.capture_request_status.clone() else {
             if expired {
                 store.save(&config)?;
@@ -1309,10 +1384,35 @@ impl Engine {
             return Ok(None);
         }
         if capture_status_is_terminal(&request_status.status) {
+            if requested_status == CAPTURE_STATUS_SAVED
+                && request_status.status == CAPTURE_STATUS_TIMED_OUT
+            {
+                request_status.status = CAPTURE_STATUS_SAVED.into();
+                request_status.completed_at = Some(Utc::now().to_rfc3339());
+                request_status.message =
+                    message.or_else(|| default_capture_status_message(CAPTURE_STATUS_SAVED));
+                request_status.handling_browser = handling_browser
+                    .and_then(|browser| normalize_target_browser(&browser))
+                    .or(request_status.handling_browser.clone());
+                request_status.browser = request_status.handling_browser.clone();
+                if let Some(page) = page {
+                    request_status.page = Some(sanitize_page_metadata(page));
+                }
+                config.pending_capture_request = None;
+                config.capture_request_status = Some(request_status.clone());
+                store.save(&config)?;
+                return Ok(Some(request_status));
+            }
             store.save(&config)?;
             return Ok(Some(request_status));
         }
-        let status = normalize_capture_request_status(&status.into());
+        let status = requested_status;
+        let handling_browser =
+            handling_browser.and_then(|browser| normalize_target_browser(&browser));
+        if let Some(browser) = handling_browser.clone() {
+            request_status.handling_browser = Some(browser.clone());
+            request_status.browser = Some(browser);
+        }
         request_status.status = status.clone();
         if status == CAPTURE_STATUS_PICKED_UP && request_status.picked_up_at.is_none() {
             request_status.picked_up_at = Some(Utc::now().to_rfc3339());
@@ -1333,7 +1433,7 @@ impl Engine {
             request_id: Some(&request_status.id),
             status: Some(&request_status.status),
             source: Some(&request_status.source),
-            browser: request_status.browser.as_deref(),
+            browser: request_status.handling_browser.as_deref(),
             message: diagnostic_message.as_deref(),
             page: request_status.page.clone(),
         });
@@ -1343,6 +1443,16 @@ impl Engine {
             request_status.message.as_deref(),
             request_status.page.as_ref(),
         );
+        if let Some(requested) = request_status.requested_browser.as_deref() {
+            event
+                .safe_metadata
+                .insert("requested_browser".into(), requested.into());
+        }
+        if let Some(handling) = request_status.handling_browser.as_deref() {
+            event
+                .safe_metadata
+                .insert("handling_browser".into(), handling.into());
+        }
         append_capture_diagnostic(&mut config, event);
         config.capture_request_status = Some(request_status.clone());
         store.save(&config)?;
@@ -1636,6 +1746,28 @@ fn token_fingerprint(value: &str) -> String {
         .collect()
 }
 
+fn normalize_target_browser(value: &str) -> Option<String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "chrome" | "google chrome" | "chromium" => Some("Chrome".into()),
+        "safari" => Some("Safari".into()),
+        "firefox" | "mozilla firefox" => Some("Firefox".into()),
+        _ => None,
+    }
+}
+
+fn request_targets_browser(request: &CaptureRequestState, polling_browser: Option<&str>) -> bool {
+    let Some(target) = request
+        .target_browser
+        .as_deref()
+        .and_then(normalize_target_browser)
+    else {
+        return false;
+    };
+    polling_browser
+        .and_then(normalize_target_browser)
+        .is_some_and(|browser| browser == target)
+}
+
 /// Rebuild a `CaptureInput` from an existing record, substituting a new topic
 /// set. Used to rewrite frontmatter in place via `Vault::replace` without
 /// losing any other metadata. The existing summary is preserved so it is not
@@ -1860,10 +1992,12 @@ mod tests {
             true,
         )?;
 
-        let request = engine.create_capture_request("test")?;
+        let request = engine.create_capture_request("test", "Chrome")?;
         assert_eq!(request.status, CAPTURE_STATUS_QUEUED);
 
-        let picked_up = engine.take_capture_request()?.expect("request available");
+        let picked_up = engine
+            .take_capture_request(Some("Chrome".into()))?
+            .expect("request available");
         assert_eq!(picked_up.id, request.id);
         let status = engine
             .capture_request_status(&request.id)?
@@ -1872,7 +2006,13 @@ mod tests {
         assert!(status.picked_up_at.is_some());
 
         let extracting = engine
-            .record_capture_request_result(&request.id, CAPTURE_STATUS_EXTRACTING, None, None)?
+            .record_capture_request_result(
+                &request.id,
+                CAPTURE_STATUS_EXTRACTING,
+                None,
+                None,
+                None,
+            )?
             .expect("extracting status");
         assert_eq!(extracting.status, CAPTURE_STATUS_EXTRACTING);
         assert!(extracting.completed_at.is_none());
@@ -1887,6 +2027,7 @@ mod tests {
                     url: Some("https://example.com/article".into()),
                     domain: Some("example.com".into()),
                 }),
+                None,
             )?
             .expect("posted status");
         assert_eq!(posted.status, CAPTURE_STATUS_POSTED);
@@ -1901,6 +2042,7 @@ mod tests {
                 CAPTURE_STATUS_SAVED,
                 Some("Saved to Starlee.".into()),
                 None,
+                None,
             )?
             .expect("saved status");
         assert_eq!(saved.status, CAPTURE_STATUS_SAVED);
@@ -1913,10 +2055,20 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
         engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar")?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
 
-        assert!(engine.take_capture_request()?.is_some());
-        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_EXTRACTING, None, None)?;
+        assert!(
+            engine
+                .take_capture_request(Some("Chrome".into()))?
+                .is_some()
+        );
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_EXTRACTING,
+            None,
+            None,
+            None,
+        )?;
         engine.record_capture_request_result(
             &request.id,
             CAPTURE_STATUS_POSTED,
@@ -1926,8 +2078,15 @@ mod tests {
                 url: Some("https://example.com/story?private=query".into()),
                 domain: Some("example.com".into()),
             }),
+            None,
         )?;
-        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_SAVED,
+            None,
+            None,
+            None,
+        )?;
 
         let diagnostics = engine.capture_diagnostics(10)?;
         let statuses = diagnostics
@@ -1969,8 +2128,14 @@ mod tests {
         engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
 
         for _ in 0..150 {
-            let request = engine.create_capture_request("menu-bar")?;
-            engine.record_capture_request_result(&request.id, CAPTURE_STATUS_FAILED, None, None)?;
+            let request = engine.create_capture_request("menu-bar", "Chrome")?;
+            engine.record_capture_request_result(
+                &request.id,
+                CAPTURE_STATUS_FAILED,
+                None,
+                None,
+                None,
+            )?;
         }
 
         assert_eq!(engine.local_config()?.capture_diagnostics.len(), 120);
@@ -1988,8 +2153,8 @@ mod tests {
             Some("codex/youtube-capture-diagnostic-harness@b965131".into()),
             true,
         )?;
-        let request = engine.create_capture_request("menu-bar")?;
-        engine.take_capture_request()?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
+        engine.take_capture_request(Some("Chrome".into()))?;
         engine.record_capture_diagnostic_event(CaptureDiagnosticEvent {
             timestamp: Utc::now().to_rfc3339(),
             component: "youtube_extractor".into(),
@@ -2012,7 +2177,13 @@ mod tests {
                 ),
             ]),
         })?;
-        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_FAILED, None, None)?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_FAILED,
+            None,
+            None,
+            None,
+        )?;
 
         let trace = engine.last_capture_trace()?;
         assert_eq!(trace.trace_version, 1);
@@ -2063,8 +2234,8 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar")?;
-        engine.take_capture_request()?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
+        engine.take_capture_request(Some("Chrome".into()))?;
         engine.record_capture_diagnostic_event(CaptureDiagnosticEvent {
             timestamp: Utc::now().to_rfc3339(),
             component: "youtube_extractor".into(),
@@ -2084,7 +2255,13 @@ mod tests {
             ]),
         })?;
         // The capture itself saved (metadata-only record); the transcript is the failure.
-        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_SAVED,
+            None,
+            None,
+            None,
+        )?;
 
         let trace = engine.last_capture_trace()?;
         assert_eq!(trace.terminal_status.as_deref(), Some(CAPTURE_STATUS_SAVED));
@@ -2235,14 +2412,14 @@ mod tests {
                 None,
                 true,
             )?;
-            let request = engine.create_capture_request("test")?;
+            let request = engine.create_capture_request("test", "Chrome")?;
             let failed = engine
-                .record_capture_request_result(&request.id, status, None, None)?
+                .record_capture_request_result(&request.id, status, None, None, None)?
                 .expect("terminal status");
             assert_eq!(failed.status, status);
             assert!(failed.completed_at.is_some());
             let ignored = engine
-                .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?
+                .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None, None)?
                 .expect("terminal status remains available");
             assert_eq!(ignored.status, status);
         }
@@ -2260,11 +2437,12 @@ mod tests {
             Some("safari-local@abc123".into()),
             true,
         )?;
-        let request = engine.create_capture_request("menu-bar")?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
         engine.record_capture_request_result(
             &request.id,
             CAPTURE_STATUS_CONTENT_SCRIPT_UNREACHABLE,
             Some("Private page body should not be reflected".into()),
+            None,
             None,
         )?;
 
@@ -2317,21 +2495,114 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("test")?;
+        let request = engine.create_capture_request("test", "Chrome")?;
 
         age_capture_request(temp.path(), 30)?;
 
-        assert!(engine.take_capture_request()?.is_none());
+        assert!(
+            engine
+                .take_capture_request(Some("Chrome".into()))?
+                .is_none()
+        );
         let status = engine
             .capture_request_status(&request.id)?
             .expect("timed out status");
         assert_eq!(status.status, CAPTURE_STATUS_TIMED_OUT);
         assert!(status.completed_at.is_some());
 
-        let ignored = engine
-            .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?
-            .expect("timed out status remains available");
-        assert_eq!(ignored.status, CAPTURE_STATUS_TIMED_OUT);
+        let saved = engine
+            .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None, None)?
+            .expect("late success wins over timeout");
+        assert_eq!(saved.status, CAPTURE_STATUS_SAVED);
+        Ok(())
+    }
+
+    #[test]
+    fn targeted_capture_requests_are_only_served_to_matching_browser() -> Result<()> {
+        for (target, wrong_a, wrong_b) in [
+            ("Safari", "Chrome", "Firefox"),
+            ("Firefox", "Chrome", "Safari"),
+            ("Chrome", "Safari", "Firefox"),
+        ] {
+            let temp = tempfile::tempdir()?;
+            let engine = Engine::new(temp.path().to_owned());
+            engine.record_extension_hello(Some(target.into()), Some("0.1.0".into()), None, true)?;
+            let request = engine.create_capture_request("menu-bar", target)?;
+
+            assert!(
+                engine
+                    .take_capture_request(Some(wrong_a.to_owned()))?
+                    .is_none(),
+                "{wrong_a} must ignore {target}-targeted requests"
+            );
+            assert!(
+                engine
+                    .take_capture_request(Some(wrong_b.to_owned()))?
+                    .is_none(),
+                "{wrong_b} must ignore {target}-targeted requests"
+            );
+
+            let picked_up = engine
+                .take_capture_request(Some(target.to_owned()))?
+                .expect("matching browser receives request");
+            assert_eq!(picked_up.id, request.id);
+            assert_eq!(picked_up.target_browser.as_deref(), Some(target));
+            let status = engine
+                .capture_request_status(&request.id)?
+                .expect("status available");
+            assert_eq!(status.status, CAPTURE_STATUS_PICKED_UP);
+            assert_eq!(status.requested_browser.as_deref(), Some(target));
+            assert_eq!(status.handling_browser.as_deref(), Some(target));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn capture_trace_distinguishes_requested_and_handling_browser() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
+        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar", "Safari")?;
+        engine.take_capture_request(Some("Safari".into()))?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_SAVED,
+            Some("Saved to Starlee.".into()),
+            None,
+            Some("Safari".into()),
+        )?;
+
+        let trace = engine.last_capture_trace()?;
+        assert_eq!(trace.requested_browser.as_deref(), Some("Safari"));
+        assert_eq!(trace.handling_browser.as_deref(), Some("Safari"));
+        assert_eq!(trace.browser.as_deref(), Some("Safari"));
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_health_treats_successful_menu_capture_as_setup_proof() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Firefox".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar", "Firefox")?;
+        engine.take_capture_request(Some("Firefox".into()))?;
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_SAVED,
+            Some("Saved to Starlee.".into()),
+            None,
+            Some("Firefox".into()),
+        )?;
+
+        let health = engine.bridge_health()?;
+        assert_eq!(health.browser_setup.state, "capture_test_passed");
+        assert!(health.browser_setup.capture_test_passed);
+        assert_eq!(
+            health.last_request_status.as_deref(),
+            Some(CAPTURE_STATUS_SAVED)
+        );
+        assert!(health.last_failure_reason.is_none());
         Ok(())
     }
 
@@ -2340,9 +2611,19 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
         engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar")?;
-        assert!(engine.take_capture_request()?.is_some());
-        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_EXTRACTING, None, None)?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
+        assert!(
+            engine
+                .take_capture_request(Some("Chrome".into()))?
+                .is_some()
+        );
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_EXTRACTING,
+            None,
+            None,
+            None,
+        )?;
         engine.record_capture_request_result(
             &request.id,
             CAPTURE_STATUS_POSTED,
@@ -2352,6 +2633,7 @@ mod tests {
                 url: Some("https://example.com/slow".into()),
                 domain: Some("example.com".into()),
             }),
+            None,
         )?;
         age_capture_request(temp.path(), 30)?;
 
@@ -2361,7 +2643,7 @@ mod tests {
         assert_eq!(still_running.status, CAPTURE_STATUS_POSTED);
 
         let saved = engine
-            .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?
+            .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None, None)?
             .expect("late save is accepted");
         assert_eq!(saved.status, CAPTURE_STATUS_SAVED);
         Ok(())
@@ -2372,9 +2654,19 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
         engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar")?;
-        assert!(engine.take_capture_request()?.is_some());
-        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_POSTED, None, None)?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
+        assert!(
+            engine
+                .take_capture_request(Some("Chrome".into()))?
+                .is_some()
+        );
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_POSTED,
+            None,
+            None,
+            None,
+        )?;
         age_capture_request(temp.path(), 4 * 60)?;
 
         let status = engine
@@ -2383,7 +2675,9 @@ mod tests {
         assert_eq!(status.status, CAPTURE_STATUS_TIMED_OUT);
         assert_eq!(
             status.message.as_deref(),
-            Some("The browser picked up the request, but capture did not finish in time.")
+            Some(
+                "The browser posted the capture, but the local save is still processing or did not finish in time."
+            )
         );
         Ok(())
     }
@@ -2393,12 +2687,12 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("test")?;
+        let request = engine.create_capture_request("test", "Chrome")?;
         age_capture_request(temp.path(), 30)?;
 
         assert!(
             engine
-                .record_capture_request_result("wrong-id", CAPTURE_STATUS_SAVED, None, None)?
+                .record_capture_request_result("wrong-id", CAPTURE_STATUS_SAVED, None, None, None)?
                 .is_none()
         );
         let status = engine
@@ -2414,7 +2708,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("test")?;
+        let request = engine.create_capture_request("test", "Chrome")?;
 
         let store = ConfigStore::new(temp.path());
         let mut config = store.load_or_create()?;
@@ -2443,7 +2737,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("test")?;
+        let request = engine.create_capture_request("test", "Chrome")?;
         let long_title = format!("  {}  ", "A".repeat(300));
         let long_url = format!("https://example.com/{}", "b".repeat(2100));
 
@@ -2457,6 +2751,7 @@ mod tests {
                     url: Some(long_url),
                     domain: Some("  example.com  ".into()),
                 }),
+                None,
             )?
             .expect("posted status");
         let page = posted.page.expect("safe page metadata");
@@ -2471,15 +2766,23 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("test")?;
+        let request = engine.create_capture_request("test", "Chrome")?;
 
         assert!(
             engine
-                .record_capture_request_result("wrong-id", CAPTURE_STATUS_SAVED, None, None)?
+                .record_capture_request_result("wrong-id", CAPTURE_STATUS_SAVED, None, None, None)?
                 .is_none()
         );
-        assert!(engine.take_capture_request()?.is_some());
-        assert!(engine.take_capture_request()?.is_none());
+        assert!(
+            engine
+                .take_capture_request(Some("Chrome".into()))?
+                .is_some()
+        );
+        assert!(
+            engine
+                .take_capture_request(Some("Chrome".into()))?
+                .is_none()
+        );
         let status = engine
             .capture_request_status(&request.id)?
             .expect("status remains for original id");
@@ -2492,10 +2795,14 @@ mod tests {
         let temp = tempfile::tempdir()?;
         install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
-        let request = engine.create_capture_request("menu-bar")?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
         assert_eq!(request.status, CAPTURE_STATUS_EXTENSION_UNAVAILABLE);
         assert!(request.completed_at.is_some());
-        assert!(engine.take_capture_request()?.is_none());
+        assert!(
+            engine
+                .take_capture_request(Some("Chrome".into()))?
+                .is_none()
+        );
         let trace = engine.last_capture_trace()?;
         assert_eq!(
             trace.terminal_status.as_deref(),
@@ -2595,7 +2902,7 @@ mod tests {
         install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar")?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
         engine.record_capture_request_result(
             &request.id,
             CAPTURE_STATUS_PERMISSION_DENIED,
@@ -2605,6 +2912,7 @@ mod tests {
                 url: Some("https://private.example/article".into()),
                 domain: Some("private.example".into()),
             }),
+            None,
         )?;
 
         let health = engine.bridge_health()?;
@@ -2640,11 +2948,12 @@ mod tests {
         let store = ConfigStore::new(temp.path());
         let config = store.load_or_create()?;
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar")?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
         engine.record_capture_request_result(
             &request.id,
             CAPTURE_STATUS_FAILED,
             Some("restricted body transcript selected text capture token".into()),
+            None,
             None,
         )?;
 
@@ -2702,11 +3011,21 @@ mod tests {
         install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
         engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar")?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
         assert_eq!(request.status, CAPTURE_STATUS_QUEUED);
 
-        assert!(engine.take_capture_request()?.is_some());
-        engine.record_capture_request_result(&request.id, CAPTURE_STATUS_EXTRACTING, None, None)?;
+        assert!(
+            engine
+                .take_capture_request(Some("Chrome".into()))?
+                .is_some()
+        );
+        engine.record_capture_request_result(
+            &request.id,
+            CAPTURE_STATUS_EXTRACTING,
+            None,
+            None,
+            None,
+        )?;
         engine.record_capture_request_result(
             &request.id,
             CAPTURE_STATUS_POSTED,
@@ -2716,9 +3035,10 @@ mod tests {
                 url: Some("https://www.youtube.com/watch?v=abc123".into()),
                 domain: Some("youtube.com".into()),
             }),
+            None,
         )?;
         let saved = engine
-            .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None)?
+            .record_capture_request_result(&request.id, CAPTURE_STATUS_SAVED, None, None, None)?
             .expect("saved status");
 
         let serialized = serde_json::to_string(&saved)?;
