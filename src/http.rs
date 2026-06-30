@@ -410,6 +410,7 @@ mod tests {
             capture_token: "secret-token".into(),
             query_relevance_floor: 0.35,
             extension: Default::default(),
+            extensions: Default::default(),
             pending_capture_request: None,
             capture_request_status: None,
             capture_diagnostics: Vec::new(),
