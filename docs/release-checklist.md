@@ -1,5 +1,24 @@
 # Release checklist
 
+## V1 release baseline
+
+Starlee v1 browser capture is Chrome-only. The branch
+`codex/chrome-only-capture-stabilization` is the baseline for promoting browser
+capture to production. The source-of-truth contract and manual QA record are in
+[`docs/chrome-capture-v1-baseline.md`](chrome-capture-v1-baseline.md).
+
+For v1 release readiness:
+
+- Onboarding mentions Chrome only.
+- `./scripts/install.sh` installs Starlee and generates
+  `~/Starlee/sensor-extension`; it does not install Safari by default.
+- `starlee doctor` and bridge health recommend Chrome, not Firefox or Safari.
+- Legacy Firefox/Safari extension state cannot make Chrome capture unhealthy.
+- Chrome article capture works on representative modern article pages.
+- Chrome YouTube capture saves timestamped transcript text when the rendered
+  transcript is available.
+- Paul Graham-style old/static pages may remain extraction edge cases for v1.
+
 ## Implemented gates
 
 - Markdown vault is canonical and fully reindexable.
@@ -27,13 +46,13 @@
 ## Validation commands
 
 ```sh
-make test
-./scripts/legal-invariants.sh
-cd sensor && npm run test:chrome-release
+cargo fmt --check
+cargo test --locked --quiet
+cargo clippy --all-targets --locked -- -D warnings
+ln -sfn "$(pwd)" /tmp/starlee-gui-test && /tmp/starlee-gui-test/scripts/test-gui.sh
+(cd sensor && npm run test:chrome-release)
 make package-chrome
 ./scripts/inspect-chrome-extension-package.sh release/chrome-extension/starlee-capture-0.1.0.zip
-make package-safari
-./scripts/inspect-safari-extension-package.sh release/safari-extension/starlee-safari-web-extension-0.1.0.zip
 make package
 ```
 
@@ -77,7 +96,11 @@ not hidden runtime dependencies.
   at least one induced failure. The trace must omit article bodies, transcript
   text, selected text, bearer tokens, and vault data.
 
-## Safari local extension gate
+## Future Safari local extension gate
+
+Safari is not part of the v1 production baseline. Use this gate only after a
+separate Safari branch proves it does not change the Chrome contract in
+[`docs/chrome-capture-v1-baseline.md`](chrome-capture-v1-baseline.md).
 
 - Build with `scripts/package-safari-extension.sh`.
 - Confirm Safari package inspection passes before loading into Xcode or Safari.

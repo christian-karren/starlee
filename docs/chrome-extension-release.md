@@ -5,6 +5,11 @@ sensor. It extracts the article or YouTube transcript the user chooses to save
 and sends that payload only to the local Starlee service at
 `http://127.0.0.1:47291`.
 
+For v1, this Chrome extension is the only supported browser capture release
+target. Firefox and Safari are future targets and must not be represented in
+onboarding, store copy, or production diagnostics as available v1 capture paths.
+See [`docs/chrome-capture-v1-baseline.md`](chrome-capture-v1-baseline.md).
+
 ## Permission decision
 
 MVP keeps a persistent content script on `http://*/*` and `https://*/*` plus
