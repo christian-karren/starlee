@@ -3,7 +3,7 @@ const state = {
   monthLabel: "Library",
   totalCount: 0,
   readiness: "",
-  backgroundSettings: window.starleeDefaultPixelDitherSettings,
+  backgroundSettings: window.starleeDefaultDitherSettings,
   editMode: false,
   sortMode: "newest",
 };
