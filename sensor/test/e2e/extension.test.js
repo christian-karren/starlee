@@ -63,9 +63,10 @@ function startServer() {
 
   return new Promise((resolve, reject) => {
     _server = http.createServer((req, res) => {
+      const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
       // Serve the article fixture so content scripts run (file:// is excluded
       // from the manifest's content_scripts matches).
-      if (req.method === "GET" && req.url === "/fixture.html") {
+      if (req.method === "GET" && requestUrl.pathname === "/fixture.html") {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(fixtureHtml);
         return;
@@ -88,7 +89,7 @@ function startServer() {
         };
 
         // Article / direct capture
-        if (req.method === "POST" && req.url === "/capture") {
+        if (req.method === "POST" && requestUrl.pathname === "/capture") {
           const parsed = JSON.parse(body || "{}");
           _captures.push(parsed);
           json(200, { ok: true, id: randomUUID() });
@@ -96,18 +97,18 @@ function startServer() {
         }
 
         // Menu-bar polling
-        if (req.method === "GET" && req.url === "/capture-request") {
+        if (req.method === "GET" && requestUrl.pathname === "/capture-request") {
           json(200, { request: _pendingRequest });
           return;
         }
-        if (req.method === "POST" && req.url === "/capture-request/result") {
+        if (req.method === "POST" && requestUrl.pathname === "/capture-request/result") {
           _captureRequestResults.push(JSON.parse(body || "{}"));
           json(200, { ok: true });
           return;
         }
 
         // Extension handshake + diagnostics (acknowledge silently)
-        if (req.method === "POST" && req.url === "/extension/hello") {
+        if (req.method === "POST" && requestUrl.pathname === "/extension/hello") {
           json(200, {
             ok: true,
             service: "starlee",
@@ -116,11 +117,11 @@ function startServer() {
           });
           return;
         }
-        if (req.method === "POST" && req.url === "/capture-diagnostics/event") {
+        if (req.method === "POST" && requestUrl.pathname === "/capture-diagnostics/event") {
           json(200, { ok: true });
           return;
         }
-        if (req.method === "GET" && req.url === "/bridge-health") {
+        if (req.method === "GET" && requestUrl.pathname === "/bridge-health") {
           json(200, { ok: true, recommended_next_action: "none" });
           return;
         }
