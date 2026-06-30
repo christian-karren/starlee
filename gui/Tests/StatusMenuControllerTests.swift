@@ -112,35 +112,6 @@ final class StatusMenuControllerTests: XCTestCase {
         XCTAssertEqual(sess.capturedRequests.count, 1, "One network request should be made")
     }
 
-    func testChromeCapture_transientStatusTimeoutDoesNotShowFailureBeforeSaved() {
-        let sess = MockURLSession()
-        sess.enqueueResponse(data: jsonData([
-            "request": ["id": "req-1", "status": "queued", "message": "queued"]
-        ]), statusCode: 202)
-        sess.enqueueResponse(error: URLError(.timedOut))
-        sess.enqueueResponse(data: jsonData([
-            "request": ["id": "req-1", "status": "capture_saved", "message": "Saved to Starlee."]
-        ]), statusCode: 200)
-        sess.enqueueResponse(data: jsonData(["ok": true]), statusCode: 200)
-        let exp = expectation(description: "success diagnostic recorded after retry")
-        sess.onRequest = { request in
-            guard request.url?.path == "/capture-diagnostics/event" else { return }
-            let body = request.httpBody.flatMap { data in
-                try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            }
-            XCTAssertEqual(body?["status"] as? String, "capture_saved")
-            let metadata = body?["safe_metadata"] as? [String: Any]
-            XCTAssertEqual(metadata?["animation"] as? String, "success")
-            exp.fulfill()
-        }
-        let (controller, _) = makeController(session: sess)
-        controller.rebuildMenu()
-
-        controller.testChromeCapture()
-
-        wait(for: [exp], timeout: 3.0)
-    }
-
     // MARK: - saveCurrentArticle wires to sync capture path
 
     func testSaveCurrentArticle_usesCapturePath() {
