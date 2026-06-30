@@ -876,10 +876,8 @@ impl Engine {
         checks.push(DoctorCheck {
             name: "extension_handshake".into(),
             ok: extension_seen,
-            detail: config
-                .extension
-                .last_handshake_at
-                .clone()
+            detail: latest_extension_state(&config)
+                .and_then(|extension| extension.last_handshake_at.clone())
                 .unwrap_or_else(|| "no extension handshake recorded".into()),
         });
         checks.push(DoctorCheck {
@@ -1818,9 +1816,23 @@ fn latest_extension_state(config: &LocalConfig) -> Option<&ExtensionState> {
     config
         .extensions
         .values()
+        .filter(|extension| {
+            extension
+                .browser
+                .as_deref()
+                .and_then(normalize_target_browser)
+                .as_deref()
+                == Some("Chrome")
+        })
         .filter(|extension| extension.last_handshake_at.is_some())
         .max_by(|left, right| left.last_handshake_at.cmp(&right.last_handshake_at))
         .or_else(|| {
+            config
+                .extension
+                .browser
+                .as_deref()
+                .and_then(normalize_target_browser)
+                .filter(|browser| browser == "Chrome")?;
             config
                 .extension
                 .last_handshake_at
@@ -2708,6 +2720,53 @@ mod tests {
                 .get("requested_browser")
                 .map(String::as_str),
             Some("Chrome")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_health_ignores_legacy_firefox_state_in_config() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let store = ConfigStore::new(temp.path());
+        let mut config = store.load_or_create()?;
+        let firefox_state = ExtensionState {
+            browser: Some("Firefox".into()),
+            extension_version: Some("0.1.0".into()),
+            extension_build: Some("codex/capture-routing-reliability@b803c7b+dirty".into()),
+            can_capture_active_tab: true,
+            last_handshake_at: Some(Utc::now().to_rfc3339()),
+        };
+        config.extension = firefox_state.clone();
+        config.extensions.insert("Firefox".into(), firefox_state);
+        store.save(&config)?;
+
+        let engine = Engine::new(temp.path().to_owned());
+        let health = engine.bridge_health()?;
+        let doctor = engine.doctor()?;
+
+        assert_eq!(health.browser.as_deref(), Some("Chrome"));
+        assert!(health.recommended_next_action.contains("Chrome"));
+        assert!(!health.recommended_next_action.contains("Firefox"));
+        assert!(
+            doctor
+                .checks
+                .iter()
+                .any(|check| check.name == "extension_handshake"
+                    && !check.ok
+                    && check.detail == "no extension handshake recorded")
+        );
+        assert!(
+            doctor
+                .next_actions
+                .iter()
+                .any(|action| action.contains("Chrome"))
+        );
+        assert!(
+            !doctor
+                .next_actions
+                .iter()
+                .any(|action| action.contains("Firefox"))
         );
         Ok(())
     }
