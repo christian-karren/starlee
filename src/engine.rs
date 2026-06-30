@@ -783,16 +783,6 @@ impl Engine {
                 ),
             },
         ];
-        if cfg!(target_os = "macos") {
-            let safari_app_path = user_home.join("Applications/Starlee Safari.app");
-            let safari_extension_path =
-                safari_app_path.join("Contents/PlugIns/Starlee Safari Extension.appex");
-            checks.push(DoctorCheck {
-                name: "safari_extension_installed".into(),
-                ok: safari_extension_path.exists(),
-                detail: safari_app_path.display().to_string(),
-            });
-        }
         let extension_seen = latest_extension_state(&config).is_some();
         if extension_path.join("manifest.json").exists() {
             let drift = crate::sensor_assets::installed_drift(&self.home);
@@ -909,9 +899,6 @@ impl Engine {
                 }
                 "mac_app_installed" => "Run `./scripts/install.sh` to install Starlee.app.",
                 "mac_app_running" => "Open `~/Applications/Starlee.app`.",
-                "safari_extension_installed" => {
-                    "Run `./scripts/install-safari-extension.sh`, then enable Starlee in Safari Settings > Extensions."
-                }
                 "codex_plugin_source" => {
                     "Run `./scripts/install.sh` to install the Codex plugin source."
                 }
@@ -1062,7 +1049,9 @@ impl Engine {
         let checked_in_recently = extension.is_some_and(|extension| {
             extension_heartbeat_is_fresh(extension, EXTENSION_HEARTBEAT_FRESHNESS)
         });
-        let browser = extension.and_then(|extension| extension.browser.clone());
+        let browser = extension
+            .and_then(|extension| extension.browser.clone())
+            .or_else(|| Some("Chrome".into()));
         let can_capture_active_tab = extension
             .map(|extension| extension.can_capture_active_tab)
             .unwrap_or(false);
@@ -1215,20 +1204,19 @@ impl Engine {
     ) -> Result<ExtensionState> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
-        let normalized_browser = browser
-            .as_deref()
-            .and_then(normalize_target_browser)
-            .or(browser);
+        let Some(normalized_browser) = browser.as_deref().and_then(normalize_target_browser) else {
+            return Ok(config.extension);
+        };
         config.extension = ExtensionState {
-            browser: normalized_browser.clone(),
+            browser: Some(normalized_browser.clone()),
             extension_version,
             extension_build,
             can_capture_active_tab,
             last_handshake_at: Some(Utc::now().to_rfc3339()),
         };
-        if let Some(browser) = normalized_browser {
-            config.extensions.insert(browser, config.extension.clone());
-        }
+        config
+            .extensions
+            .insert(normalized_browser, config.extension.clone());
         store.save(&config)?;
         Ok(config.extension)
     }
@@ -1242,9 +1230,8 @@ impl Engine {
         let mut config = store.load_or_create()?;
         expire_stale_capture_request(&mut config);
         let source = source.into();
-        let target_browser = normalize_target_browser(&target_browser.into()).ok_or_else(|| {
-            anyhow::anyhow!("capture request requires Chrome, Safari, or Firefox")
-        })?;
+        let target_browser = normalize_target_browser(&target_browser.into())
+            .ok_or_else(|| anyhow::anyhow!("capture request requires Chrome"))?;
         let id_material = format!(
             "{}:{}:{}:{}",
             config.capture_token,
@@ -1807,8 +1794,6 @@ fn token_fingerprint(value: &str) -> String {
 fn normalize_target_browser(value: &str) -> Option<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "chrome" | "google chrome" | "chromium" => Some("Chrome".into()),
-        "safari" => Some("Safari".into()),
-        "firefox" | "mozilla firefox" => Some("Firefox".into()),
         _ => None,
     }
 }
@@ -2607,42 +2592,36 @@ mod tests {
     }
 
     #[test]
-    fn targeted_capture_requests_are_only_served_to_matching_browser() -> Result<()> {
-        for (target, wrong_a, wrong_b) in [
-            ("Safari", "Chrome", "Firefox"),
-            ("Firefox", "Chrome", "Safari"),
-            ("Chrome", "Safari", "Firefox"),
-        ] {
-            let temp = tempfile::tempdir()?;
-            let engine = Engine::new(temp.path().to_owned());
-            engine.record_extension_hello(Some(target.into()), Some("0.1.0".into()), None, true)?;
-            let request = engine.create_capture_request("menu-bar", target)?;
+    fn chrome_capture_requests_are_only_served_to_chrome() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
 
-            assert!(
-                engine
-                    .take_capture_request(Some(wrong_a.to_owned()))?
-                    .is_none(),
-                "{wrong_a} must ignore {target}-targeted requests"
-            );
-            assert!(
-                engine
-                    .take_capture_request(Some(wrong_b.to_owned()))?
-                    .is_none(),
-                "{wrong_b} must ignore {target}-targeted requests"
-            );
+        assert!(
+            engine
+                .take_capture_request(Some("Firefox".to_owned()))?
+                .is_none(),
+            "Firefox must ignore Chrome-only requests"
+        );
+        assert!(
+            engine
+                .take_capture_request(Some("Safari".to_owned()))?
+                .is_none(),
+            "Safari must ignore Chrome-only requests"
+        );
 
-            let picked_up = engine
-                .take_capture_request(Some(target.to_owned()))?
-                .expect("matching browser receives request");
-            assert_eq!(picked_up.id, request.id);
-            assert_eq!(picked_up.target_browser.as_deref(), Some(target));
-            let status = engine
-                .capture_request_status(&request.id)?
-                .expect("status available");
-            assert_eq!(status.status, CAPTURE_STATUS_PICKED_UP);
-            assert_eq!(status.requested_browser.as_deref(), Some(target));
-            assert_eq!(status.handling_browser.as_deref(), Some(target));
-        }
+        let picked_up = engine
+            .take_capture_request(Some("Chrome".to_owned()))?
+            .expect("Chrome receives request");
+        assert_eq!(picked_up.id, request.id);
+        assert_eq!(picked_up.target_browser.as_deref(), Some("Chrome"));
+        let status = engine
+            .capture_request_status(&request.id)?
+            .expect("status available");
+        assert_eq!(status.status, CAPTURE_STATUS_PICKED_UP);
+        assert_eq!(status.requested_browser.as_deref(), Some("Chrome"));
+        assert_eq!(status.handling_browser.as_deref(), Some("Chrome"));
         Ok(())
     }
 
@@ -2722,13 +2701,7 @@ mod tests {
             .iter()
             .find(|event| event.event == "capture_request_rejected")
             .expect("rejection diagnostic event");
-        assert_eq!(
-            rejected
-                .safe_metadata
-                .get("last_extension_browser")
-                .map(String::as_str),
-            Some("Firefox")
-        );
+        assert_eq!(rejected.safe_metadata.get("last_extension_browser"), None);
         assert_eq!(
             rejected
                 .safe_metadata
@@ -2743,21 +2716,21 @@ mod tests {
     fn capture_trace_distinguishes_requested_and_handling_browser() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
-        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar", "Safari")?;
-        engine.take_capture_request(Some("Safari".into()))?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
+        engine.take_capture_request(Some("Chrome".into()))?;
         engine.record_capture_request_result(
             &request.id,
             CAPTURE_STATUS_SAVED,
             Some("Saved to Starlee.".into()),
             None,
-            Some("Safari".into()),
+            Some("Chrome".into()),
         )?;
 
         let trace = engine.last_capture_trace()?;
-        assert_eq!(trace.requested_browser.as_deref(), Some("Safari"));
-        assert_eq!(trace.handling_browser.as_deref(), Some("Safari"));
-        assert_eq!(trace.browser.as_deref(), Some("Safari"));
+        assert_eq!(trace.requested_browser.as_deref(), Some("Chrome"));
+        assert_eq!(trace.handling_browser.as_deref(), Some("Chrome"));
+        assert_eq!(trace.browser.as_deref(), Some("Chrome"));
         Ok(())
     }
 
@@ -2766,15 +2739,15 @@ mod tests {
         let temp = tempfile::tempdir()?;
         install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Firefox".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar", "Firefox")?;
-        engine.take_capture_request(Some("Firefox".into()))?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
+        engine.take_capture_request(Some("Chrome".into()))?;
         engine.record_capture_request_result(
             &request.id,
             CAPTURE_STATUS_SAVED,
             Some("Saved to Starlee.".into()),
             None,
-            Some("Firefox".into()),
+            Some("Chrome".into()),
         )?;
 
         let health = engine.bridge_health()?;

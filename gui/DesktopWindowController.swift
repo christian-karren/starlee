@@ -1901,7 +1901,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             lines.append("Capture test: \(passedAt)")
         }
         if lines.isEmpty {
-            return "Chrome and Firefox use the local extension folder. Safari uses the Starlee Capture extension wrapper."
+            return "Chrome uses the local extension folder. Firefox and Safari are disabled while capture is being stabilized."
         }
         return lines.joined(separator: "\n")
     }

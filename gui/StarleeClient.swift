@@ -354,19 +354,12 @@ final class StarleeClient {
         if let overrideTargetBrowser {
             return Self.normalizedBrowserName(overrideTargetBrowser)
         }
-        let app = NSWorkspace.shared.frontmostApplication
-        return Self.browserName(
-            bundleIdentifier: app?.bundleIdentifier,
-            localizedName: app?.localizedName
-        )
+        return "Chrome"
     }
 
     private func captureTargetForCurrentApp() -> CaptureTargetResult {
         guard let browser = targetBrowserForCapture() else {
-            return .failure("Open Chrome or Firefox to an article or YouTube page, then try again.")
-        }
-        if browser == "Safari" {
-            return .failure("Safari capture is not enabled in this build. Use Chrome or Firefox.")
+            return .failure("Open Chrome to an article or YouTube page, then try again.")
         }
         return .success(browser)
     }
@@ -374,12 +367,6 @@ final class StarleeClient {
     static func browserName(bundleIdentifier: String?, localizedName: String?) -> String? {
         let bundle = (bundleIdentifier ?? "").lowercased()
         let name = (localizedName ?? "").lowercased()
-        if bundle == "com.apple.safari" || name == "safari" {
-            return "Safari"
-        }
-        if bundle == "org.mozilla.firefox" || name.contains("firefox") {
-            return "Firefox"
-        }
         if bundle == "com.google.chrome" || name.contains("chrome") {
             return "Chrome"
         }
@@ -390,10 +377,6 @@ final class StarleeClient {
         switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "chrome", "google chrome", "chromium":
             return "Chrome"
-        case "safari":
-            return "Safari"
-        case "firefox", "mozilla firefox":
-            return "Firefox"
         default:
             return nil
         }

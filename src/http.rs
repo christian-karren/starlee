@@ -642,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn bridge_health_reports_firefox_setup_text_without_chrome_wording() -> Result<()> {
+    fn bridge_health_ignores_firefox_extension_hello_for_chrome_only_capture() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = test_engine(temp.path());
         write_extension_assets(temp.path(), true)?;
@@ -655,16 +655,14 @@ mod tests {
 
         let health = engine.bridge_health()?;
 
-        assert_eq!(health.browser.as_deref(), Some("Firefox"));
-        assert_eq!(health.browser_setup.state, "capture_test_needed");
-        assert!(health.browser_setup.detail.contains("Firefox is connected"));
+        assert_eq!(health.browser.as_deref(), Some("Chrome"));
+        assert_eq!(health.browser_setup.state, "check_in_needed");
         assert!(
             health
                 .browser_setup
                 .next_action
-                .contains("browser capture test")
+                .contains("Starlee extension in Chrome")
         );
-        assert!(!health.browser_setup.detail.contains("Chrome"));
         Ok(())
     }
 
