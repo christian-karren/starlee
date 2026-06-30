@@ -22,6 +22,20 @@ Starlee includes:
   menu-bar capture icon that can request capture from a browser extension after
   the user has loaded or installed that extension.
 
+## V1 browser baseline
+
+Starlee v1 is Chrome-only for browser capture. The supported production path is:
+
+1. install Starlee;
+2. load or install the Chrome extension;
+3. capture rendered articles and YouTube transcripts from Chrome through the
+   Chrome toolbar, in-page save button, or Starlee macOS menu-bar icon.
+
+Firefox and Safari are future browser targets. They must not affect v1
+onboarding, diagnostics, release readiness, or capture routing. See
+[docs/chrome-capture-v1-baseline.md](docs/chrome-capture-v1-baseline.md) for
+the source-of-truth contract and the known-good manual QA record.
+
 ## Download
 
 **[⬇ Download the latest Starlee for macOS](https://github.com/christian-karren/starlee/releases/latest)**
@@ -137,16 +151,8 @@ not include vault data, local config, model files, source maps, or build caches.
 See [docs/chrome-extension-release.md](docs/chrome-extension-release.md) for the
 permission rationale, store listing draft, and manual Chrome Web Store steps.
 
-For a local Safari Web Extension source package and, when full Xcode is
-installed, an Xcode wrapper app:
-
-```sh
-make package-safari
-./scripts/inspect-safari-extension-package.sh release/safari-extension/starlee-safari-web-extension-0.1.0.zip
-```
-
-See [docs/safari-web-extension-local.md](docs/safari-web-extension-local.md) for
-the local Safari run flow.
+Safari and Firefox package scripts are retained for future work, but they are
+not part of the v1 production release path.
 
 ## Try it
 
@@ -254,4 +260,4 @@ that terminal request metadata contains only sanitized status and record
 identity fields, not article bodies, selected text, transcripts, or tokens.
 
 This is a bridge harness, not full browser UI automation. It does not launch
-Chrome, exercise extension permissions, or validate Safari behavior.
+Chrome or exercise extension permissions.

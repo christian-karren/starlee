@@ -20,6 +20,8 @@ pub struct LocalConfig {
     #[serde(default)]
     pub extension: ExtensionState,
     #[serde(default)]
+    pub extensions: BTreeMap<String, ExtensionState>,
+    #[serde(default)]
     pub pending_capture_request: Option<CaptureRequestState>,
     #[serde(default)]
     pub capture_request_status: Option<CaptureRequestStatus>,
@@ -181,6 +183,7 @@ impl ConfigStore {
             capture_token: generate_token()?,
             query_relevance_floor: default_query_relevance_floor(),
             extension: ExtensionState::default(),
+            extensions: BTreeMap::new(),
             pending_capture_request: None,
             capture_request_status: None,
             capture_diagnostics: Vec::new(),
@@ -209,6 +212,12 @@ impl ConfigStore {
         }
         if config.query_relevance_floor <= 0.0 {
             config.query_relevance_floor = default_query_relevance_floor();
+        }
+        if let Some(browser) = config.extension.browser.clone()
+            && !browser.trim().is_empty()
+            && !config.extensions.contains_key(&browser)
+        {
+            config.extensions.insert(browser, config.extension.clone());
         }
         if config
             .spotify_redirect_uri
@@ -279,6 +288,7 @@ mod tests {
             capture_token: "abc123".into(),
             query_relevance_floor: default_query_relevance_floor(),
             extension: ExtensionState::default(),
+            extensions: BTreeMap::new(),
             pending_capture_request: None,
             capture_request_status: None,
             capture_diagnostics: Vec::new(),

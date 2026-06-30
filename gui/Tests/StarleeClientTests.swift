@@ -248,7 +248,7 @@ final class StarleeClientTests: XCTestCase {
         }
     }
 
-    func testRequestCapture_safariUnsupportedDoesNotEnqueueRequest() {
+    func testRequestCapture_safariOverrideDoesNotEnqueueRequest() {
         let session = MockURLSession()
         let client = StarleeClient(session: session)
         client.overrideConfig = ["capture_port": 47291 as NSNumber, "capture_token": "tok"]
@@ -259,7 +259,7 @@ final class StarleeClientTests: XCTestCase {
             XCTAssertFalse(result.ok)
             XCTAssertNil(result.requestId)
             XCTAssertEqual(result.status, "setup_required")
-            XCTAssertEqual(result.message, "Safari capture is not enabled in this build. Use Chrome or Firefox.")
+            XCTAssertEqual(result.message, "Open Chrome to an article or YouTube page, then try again.")
             exp.fulfill()
         }
         wait(for: [exp], timeout: 2)
@@ -278,7 +278,7 @@ final class StarleeClientTests: XCTestCase {
             XCTAssertFalse(result.ok)
             XCTAssertNil(result.requestId)
             XCTAssertEqual(result.status, "setup_required")
-            XCTAssertEqual(result.message, "Open Chrome or Firefox to an article or YouTube page, then try again.")
+            XCTAssertEqual(result.message, "Open Chrome to an article or YouTube page, then try again.")
             exp.fulfill()
         }
         wait(for: [exp], timeout: 2)
@@ -287,8 +287,8 @@ final class StarleeClientTests: XCTestCase {
     }
 
     func testBrowserNameMappingRecognizesSupportedBrowsersOnly() {
-        XCTAssertEqual(StarleeClient.browserName(bundleIdentifier: "com.apple.Safari", localizedName: "Safari"), "Safari")
-        XCTAssertEqual(StarleeClient.browserName(bundleIdentifier: "org.mozilla.firefox", localizedName: "Firefox"), "Firefox")
+        XCTAssertNil(StarleeClient.browserName(bundleIdentifier: "com.apple.Safari", localizedName: "Safari"))
+        XCTAssertNil(StarleeClient.browserName(bundleIdentifier: "org.mozilla.firefox", localizedName: "Firefox"))
         XCTAssertEqual(StarleeClient.browserName(bundleIdentifier: "com.google.Chrome", localizedName: "Google Chrome"), "Chrome")
         XCTAssertNil(StarleeClient.browserName(bundleIdentifier: "com.apple.finder", localizedName: "Finder"))
     }

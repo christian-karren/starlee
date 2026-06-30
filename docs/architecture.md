@@ -7,6 +7,9 @@
 3. Captured bodies stay on the local machine.
 4. Ambiguous access defaults to `restricted`.
 5. Every search hit includes source metadata and a local file path.
+6. Starlee v1 browser capture is Chrome-only. Firefox and Safari state must not
+   affect Chrome capture routing, bridge health, doctor output, onboarding, or
+   release readiness.
 
 ## Data flow
 

@@ -401,8 +401,7 @@ final class StatusMenuController: NSObject {
             Detail: \(setup["detail"] as? String ?? "unknown")
             Next: \(setup["next_action"] as? String ?? bridge["recommended_next_action"] as? String ?? "Reload the extension, then run the capture test.")
 
-            Safari:
-            Enable Starlee Capture in Safari Settings > Extensions, then allow it on the sites you want to save.
+            Firefox and Safari are disabled in this build while Chrome capture is being stabilized.
             """
         )
     }

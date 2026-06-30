@@ -580,8 +580,17 @@ impl Engine {
                     })
                     .map(|event| event.timestamp.clone())
             });
-        let checked_in_recently =
-            extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS);
+        let requested_browser_for_trace = request_status
+            .as_ref()
+            .and_then(|status| status.requested_browser.clone());
+        let trace_extension = if requested_browser_for_trace.is_some() {
+            extension_state_for_browser(&config, requested_browser_for_trace.as_deref())
+        } else {
+            latest_extension_state(&config)
+        };
+        let checked_in_recently = trace_extension.is_some_and(|extension| {
+            extension_heartbeat_is_fresh(extension, EXTENSION_HEARTBEAT_FRESHNESS)
+        });
         let bridge_browser = request_status
             .as_ref()
             .and_then(|status| {
@@ -590,7 +599,8 @@ impl Engine {
                     .as_deref()
                     .or(status.requested_browser.as_deref())
             })
-            .or(config.extension.browser.as_deref());
+            .or(requested_browser_for_trace.as_deref())
+            .or_else(|| trace_extension.and_then(|extension| extension.browser.as_deref()));
         let bridge_action = bridge_next_action(
             bridge_browser,
             self.home.join("sensor-extension/manifest.json").exists(),
@@ -598,7 +608,9 @@ impl Engine {
                 .join("sensor-extension/starlee-config.json")
                 .exists(),
             checked_in_recently,
-            config.extension.can_capture_active_tab,
+            trace_extension
+                .map(|extension| extension.can_capture_active_tab)
+                .unwrap_or(false),
             terminal_status
                 .as_deref()
                 .or_else(|| request_status.as_ref().map(|status| status.status.as_str())),
@@ -685,11 +697,16 @@ impl Engine {
             next_action: recommended_next_action,
             last_extension_check_in: LastExtensionCheckInState {
                 checked_in_recently,
-                can_capture_active_tab: config.extension.can_capture_active_tab,
-                last_hello_at: config.extension.last_handshake_at.clone(),
-                browser: config.extension.browser.clone(),
-                extension_version: config.extension.extension_version.clone(),
-                extension_build: config.extension.extension_build.clone(),
+                can_capture_active_tab: trace_extension
+                    .map(|extension| extension.can_capture_active_tab)
+                    .unwrap_or(false),
+                last_hello_at: trace_extension
+                    .and_then(|extension| extension.last_handshake_at.clone()),
+                browser: trace_extension.and_then(|extension| extension.browser.clone()),
+                extension_version: trace_extension
+                    .and_then(|extension| extension.extension_version.clone()),
+                extension_build: trace_extension
+                    .and_then(|extension| extension.extension_build.clone()),
             },
             runtime,
             request_status,
@@ -766,17 +783,7 @@ impl Engine {
                 ),
             },
         ];
-        if cfg!(target_os = "macos") {
-            let safari_app_path = user_home.join("Applications/Starlee Safari.app");
-            let safari_extension_path =
-                safari_app_path.join("Contents/PlugIns/Starlee Safari Extension.appex");
-            checks.push(DoctorCheck {
-                name: "safari_extension_installed".into(),
-                ok: safari_extension_path.exists(),
-                detail: safari_app_path.display().to_string(),
-            });
-        }
-        let extension_seen = config.extension.last_handshake_at.is_some();
+        let extension_seen = latest_extension_state(&config).is_some();
         if extension_path.join("manifest.json").exists() {
             let drift = crate::sensor_assets::installed_drift(&self.home);
             checks.push(DoctorCheck {
@@ -869,10 +876,8 @@ impl Engine {
         checks.push(DoctorCheck {
             name: "extension_handshake".into(),
             ok: extension_seen,
-            detail: config
-                .extension
-                .last_handshake_at
-                .clone()
+            detail: latest_extension_state(&config)
+                .and_then(|extension| extension.last_handshake_at.clone())
                 .unwrap_or_else(|| "no extension handshake recorded".into()),
         });
         checks.push(DoctorCheck {
@@ -892,9 +897,6 @@ impl Engine {
                 }
                 "mac_app_installed" => "Run `./scripts/install.sh` to install Starlee.app.",
                 "mac_app_running" => "Open `~/Applications/Starlee.app`.",
-                "safari_extension_installed" => {
-                    "Run `./scripts/install-safari-extension.sh`, then enable Starlee in Safari Settings > Extensions."
-                }
                 "codex_plugin_source" => {
                     "Run `./scripts/install.sh` to install the Codex plugin source."
                 }
@@ -943,12 +945,13 @@ impl Engine {
     }
 
     fn runtime_identity(&self, config: &LocalConfig) -> RuntimeIdentity {
+        let extension = latest_extension_state(config);
         RuntimeIdentity {
             starlee_version: env!("CARGO_PKG_VERSION").into(),
             app_build_identifier: std::env::var("STARLEE_APP_BUILD_IDENTIFIER").ok(),
-            browser: config.extension.browser.clone(),
-            extension_version: config.extension.extension_version.clone(),
-            extension_build: config.extension.extension_build.clone(),
+            browser: extension.and_then(|extension| extension.browser.clone()),
+            extension_version: extension.and_then(|extension| extension.extension_version.clone()),
+            extension_build: extension.and_then(|extension| extension.extension_build.clone()),
             git_commit: git_commit()
                 .or_else(|| option_env!("STARLEE_GIT_COMMIT").map(str::to_owned)),
             app_path: user_app_path(),
@@ -962,6 +965,7 @@ impl Engine {
     fn capture_diagnostic_metadata(
         &self,
         config: &LocalConfig,
+        target_browser: Option<&str>,
         status: &str,
         message: Option<&str>,
         page: Option<&CaptureRequestPageMetadata>,
@@ -969,8 +973,13 @@ impl Engine {
         let extension_path = self.home.join("sensor-extension");
         let extension_setup_present = extension_path.join("manifest.json").exists();
         let extension_config_present = extension_path.join("starlee-config.json").exists();
-        let checked_in_recently =
-            extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS);
+        let extension = extension_state_for_browser(config, target_browser);
+        let checked_in_recently = extension.is_some_and(|extension| {
+            extension_heartbeat_is_fresh(extension, EXTENSION_HEARTBEAT_FRESHNESS)
+        });
+        let can_capture_active_tab = extension
+            .map(|extension| extension.can_capture_active_tab)
+            .unwrap_or(false);
         let user_safe_message = safe_bridge_failure_message(status, message)
             .or_else(|| default_capture_status_message(status));
         let mut metadata = BTreeMap::new();
@@ -978,11 +987,12 @@ impl Engine {
         metadata.insert(
             "next_action".into(),
             bridge_next_action(
-                config.extension.browser.as_deref(),
+                target_browser
+                    .or_else(|| extension.and_then(|extension| extension.browser.as_deref())),
                 extension_setup_present,
                 extension_config_present,
                 checked_in_recently,
-                config.extension.can_capture_active_tab,
+                can_capture_active_tab,
                 Some(status),
             ),
         );
@@ -992,7 +1002,7 @@ impl Engine {
         );
         metadata.insert(
             "extension_can_capture_active_tab".into(),
-            config.extension.can_capture_active_tab.to_string(),
+            can_capture_active_tab.to_string(),
         );
         metadata.insert(
             "active_tab_category".into(),
@@ -1008,8 +1018,23 @@ impl Engine {
         if let Some(message) = user_safe_message {
             metadata.insert("user_safe_message".into(), message);
         }
-        if let Some(build) = config.extension.extension_build.as_deref() {
+        if let Some(browser) = target_browser {
+            metadata.insert("requested_browser".into(), browser.into());
+        }
+        if let Some(build) = extension.and_then(|extension| extension.extension_build.as_deref()) {
             metadata.insert("extension_build".into(), build.into());
+        }
+        if let Some(last) = latest_extension_state(config) {
+            if let Some(browser) = last.browser.as_deref() {
+                metadata.insert("last_extension_browser".into(), browser.into());
+            }
+            if let Some(build) = last.extension_build.as_deref() {
+                metadata.insert("last_extension_build".into(), build.into());
+            }
+            metadata.insert(
+                "last_extension_checked_in_recently".into(),
+                extension_heartbeat_is_fresh(last, EXTENSION_HEARTBEAT_FRESHNESS).to_string(),
+            );
         }
         metadata
     }
@@ -1018,8 +1043,16 @@ impl Engine {
         let extension_path = self.home.join("sensor-extension");
         let extension_setup_present = extension_path.join("manifest.json").exists();
         let extension_config_present = extension_path.join("starlee-config.json").exists();
-        let checked_in_recently =
-            extension_heartbeat_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS);
+        let extension = latest_extension_state(config);
+        let checked_in_recently = extension.is_some_and(|extension| {
+            extension_heartbeat_is_fresh(extension, EXTENSION_HEARTBEAT_FRESHNESS)
+        });
+        let browser = extension
+            .and_then(|extension| extension.browser.clone())
+            .or_else(|| Some("Chrome".into()));
+        let can_capture_active_tab = extension
+            .map(|extension| extension.can_capture_active_tab)
+            .unwrap_or(false);
         let last_request_status = config
             .capture_request_status
             .as_ref()
@@ -1040,22 +1073,22 @@ impl Engine {
             safe_bridge_failure_message(&status.status, status.message.as_deref())
         });
         let recommended_next_action = bridge_next_action(
-            config.extension.browser.as_deref(),
+            browser.as_deref(),
             extension_setup_present,
             extension_config_present,
             checked_in_recently,
-            config.extension.can_capture_active_tab,
+            can_capture_active_tab,
             config
                 .capture_request_status
                 .as_ref()
                 .map(|status| status.status.as_str()),
         );
         let browser_setup = Self::browser_setup_status(
-            config.extension.browser.as_deref(),
+            browser.as_deref(),
             extension_setup_present,
             extension_config_present,
             checked_in_recently,
-            config.extension.can_capture_active_tab,
+            can_capture_active_tab,
             capture_test_passed,
             capture_test_passed_at,
             last_request_status.as_deref(),
@@ -1064,7 +1097,7 @@ impl Engine {
         let ok = extension_setup_present
             && extension_config_present
             && checked_in_recently
-            && config.extension.can_capture_active_tab;
+            && can_capture_active_tab;
         BridgeHealth {
             ok,
             chrome_setup: browser_setup.clone(),
@@ -1072,11 +1105,11 @@ impl Engine {
             extension_setup_present,
             extension_config_present,
             checked_in_recently,
-            browser: config.extension.browser.clone(),
-            extension_version: config.extension.extension_version.clone(),
-            extension_build: config.extension.extension_build.clone(),
-            can_capture_active_tab: config.extension.can_capture_active_tab,
-            last_hello_at: config.extension.last_handshake_at.clone(),
+            browser,
+            extension_version: extension.and_then(|extension| extension.extension_version.clone()),
+            extension_build: extension.and_then(|extension| extension.extension_build.clone()),
+            can_capture_active_tab,
+            last_hello_at: extension.and_then(|extension| extension.last_handshake_at.clone()),
             last_request_status,
             last_failure_reason,
             last_failure_message,
@@ -1169,13 +1202,19 @@ impl Engine {
     ) -> Result<ExtensionState> {
         let store = ConfigStore::new(&self.home);
         let mut config = store.load_or_create()?;
+        let Some(normalized_browser) = browser.as_deref().and_then(normalize_target_browser) else {
+            return Ok(config.extension);
+        };
         config.extension = ExtensionState {
-            browser,
+            browser: Some(normalized_browser.clone()),
             extension_version,
             extension_build,
             can_capture_active_tab,
             last_handshake_at: Some(Utc::now().to_rfc3339()),
         };
+        config
+            .extensions
+            .insert(normalized_browser, config.extension.clone());
         store.save(&config)?;
         Ok(config.extension)
     }
@@ -1189,9 +1228,8 @@ impl Engine {
         let mut config = store.load_or_create()?;
         expire_stale_capture_request(&mut config);
         let source = source.into();
-        let target_browser = normalize_target_browser(&target_browser.into()).ok_or_else(|| {
-            anyhow::anyhow!("capture request requires Chrome, Safari, or Firefox")
-        })?;
+        let target_browser = normalize_target_browser(&target_browser.into())
+            .ok_or_else(|| anyhow::anyhow!("capture request requires Chrome"))?;
         let id_material = format!(
             "{}:{}:{}:{}",
             config.capture_token,
@@ -1220,7 +1258,10 @@ impl Engine {
             completed_at: None,
             message: Some(format!("Capture request queued for {target_browser}.")),
         };
-        if extension_is_fresh(&config.extension, EXTENSION_HEARTBEAT_FRESHNESS) {
+        let target_extension = extension_state_for_browser(&config, Some(&target_browser));
+        if target_extension
+            .is_some_and(|extension| extension_is_fresh(extension, EXTENSION_HEARTBEAT_FRESHNESS))
+        {
             config.pending_capture_request = Some(request);
             if status.source == "menu-bar" {
                 let mut event = diagnostic_event(DiagnosticEventInput {
@@ -1269,6 +1310,7 @@ impl Engine {
             });
             event.safe_metadata = self.capture_diagnostic_metadata(
                 &config,
+                Some(&target_browser),
                 &status.status,
                 status.message.as_deref(),
                 status.page.as_ref(),
@@ -1439,6 +1481,7 @@ impl Engine {
         });
         event.safe_metadata = self.capture_diagnostic_metadata(
             &config,
+            request_status.requested_browser.as_deref(),
             &request_status.status,
             request_status.message.as_deref(),
             request_status.page.as_ref(),
@@ -1749,10 +1792,53 @@ fn token_fingerprint(value: &str) -> String {
 fn normalize_target_browser(value: &str) -> Option<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "chrome" | "google chrome" | "chromium" => Some("Chrome".into()),
-        "safari" => Some("Safari".into()),
-        "firefox" | "mozilla firefox" => Some("Firefox".into()),
         _ => None,
     }
+}
+
+fn extension_state_for_browser<'a>(
+    config: &'a LocalConfig,
+    browser: Option<&str>,
+) -> Option<&'a ExtensionState> {
+    let browser = browser.and_then(normalize_target_browser)?;
+    config.extensions.get(&browser).or_else(|| {
+        config
+            .extension
+            .browser
+            .as_deref()
+            .and_then(normalize_target_browser)
+            .filter(|legacy_browser| legacy_browser == &browser)
+            .map(|_| &config.extension)
+    })
+}
+
+fn latest_extension_state(config: &LocalConfig) -> Option<&ExtensionState> {
+    config
+        .extensions
+        .values()
+        .filter(|extension| {
+            extension
+                .browser
+                .as_deref()
+                .and_then(normalize_target_browser)
+                .as_deref()
+                == Some("Chrome")
+        })
+        .filter(|extension| extension.last_handshake_at.is_some())
+        .max_by(|left, right| left.last_handshake_at.cmp(&right.last_handshake_at))
+        .or_else(|| {
+            config
+                .extension
+                .browser
+                .as_deref()
+                .and_then(normalize_target_browser)
+                .filter(|browser| browser == "Chrome")?;
+            config
+                .extension
+                .last_handshake_at
+                .as_ref()
+                .map(|_| &config.extension)
+        })
 }
 
 fn request_targets_browser(request: &CaptureRequestState, polling_browser: Option<&str>) -> bool {
@@ -2054,7 +2140,7 @@ mod tests {
     fn capture_request_diagnostics_record_safe_lifecycle_trace() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
-        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("menu-bar", "Chrome")?;
 
         assert!(
@@ -2125,7 +2211,7 @@ mod tests {
     fn capture_request_diagnostics_are_bounded() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
 
         for _ in 0..150 {
             let request = engine.create_capture_request("menu-bar", "Chrome")?;
@@ -2432,9 +2518,9 @@ mod tests {
         install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
         engine.record_extension_hello(
-            Some("Safari".into()),
+            Some("Chrome".into()),
             Some("0.1.0".into()),
-            Some("safari-local@abc123".into()),
+            Some("chrome-local@abc123".into()),
             true,
         )?;
         let request = engine.create_capture_request("menu-bar", "Chrome")?;
@@ -2472,7 +2558,7 @@ mod tests {
                 .safe_metadata
                 .get("extension_build")
                 .map(String::as_str),
-            Some("safari-local@abc123")
+            Some("chrome-local@abc123")
         );
         assert_eq!(
             terminal
@@ -2518,42 +2604,170 @@ mod tests {
     }
 
     #[test]
-    fn targeted_capture_requests_are_only_served_to_matching_browser() -> Result<()> {
-        for (target, wrong_a, wrong_b) in [
-            ("Safari", "Chrome", "Firefox"),
-            ("Firefox", "Chrome", "Safari"),
-            ("Chrome", "Safari", "Firefox"),
-        ] {
-            let temp = tempfile::tempdir()?;
-            let engine = Engine::new(temp.path().to_owned());
-            engine.record_extension_hello(Some(target.into()), Some("0.1.0".into()), None, true)?;
-            let request = engine.create_capture_request("menu-bar", target)?;
+    fn chrome_capture_requests_are_only_served_to_chrome() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
 
-            assert!(
-                engine
-                    .take_capture_request(Some(wrong_a.to_owned()))?
-                    .is_none(),
-                "{wrong_a} must ignore {target}-targeted requests"
-            );
-            assert!(
-                engine
-                    .take_capture_request(Some(wrong_b.to_owned()))?
-                    .is_none(),
-                "{wrong_b} must ignore {target}-targeted requests"
-            );
+        assert!(
+            engine
+                .take_capture_request(Some("Firefox".to_owned()))?
+                .is_none(),
+            "Firefox must ignore Chrome-only requests"
+        );
+        assert!(
+            engine
+                .take_capture_request(Some("Safari".to_owned()))?
+                .is_none(),
+            "Safari must ignore Chrome-only requests"
+        );
 
-            let picked_up = engine
-                .take_capture_request(Some(target.to_owned()))?
-                .expect("matching browser receives request");
-            assert_eq!(picked_up.id, request.id);
-            assert_eq!(picked_up.target_browser.as_deref(), Some(target));
-            let status = engine
-                .capture_request_status(&request.id)?
-                .expect("status available");
-            assert_eq!(status.status, CAPTURE_STATUS_PICKED_UP);
-            assert_eq!(status.requested_browser.as_deref(), Some(target));
-            assert_eq!(status.handling_browser.as_deref(), Some(target));
-        }
+        let picked_up = engine
+            .take_capture_request(Some("Chrome".to_owned()))?
+            .expect("Chrome receives request");
+        assert_eq!(picked_up.id, request.id);
+        assert_eq!(picked_up.target_browser.as_deref(), Some("Chrome"));
+        let status = engine
+            .capture_request_status(&request.id)?
+            .expect("status available");
+        assert_eq!(status.status, CAPTURE_STATUS_PICKED_UP);
+        assert_eq!(status.requested_browser.as_deref(), Some("Chrome"));
+        assert_eq!(status.handling_browser.as_deref(), Some("Chrome"));
+        Ok(())
+    }
+
+    #[test]
+    fn target_browser_extension_state_isolated_from_stale_firefox_checkin() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(
+            Some("Chrome".into()),
+            Some("0.1.0".into()),
+            Some("codex/latest-chrome-extension-package@a65708c".into()),
+            true,
+        )?;
+        engine.record_extension_hello(
+            Some("Firefox".into()),
+            Some("0.1.0".into()),
+            Some("codex/capture-routing-reliability@b803c7b+dirty".into()),
+            true,
+        )?;
+        age_extension_hello_for_browser(temp.path(), "Firefox", 10 * 60)?;
+
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
+
+        assert_eq!(request.status, CAPTURE_STATUS_QUEUED);
+        assert_eq!(request.requested_browser.as_deref(), Some("Chrome"));
+        let trace = engine.last_capture_trace()?;
+        assert_eq!(trace.requested_browser.as_deref(), Some("Chrome"));
+        assert_eq!(
+            trace.last_extension_check_in.browser.as_deref(),
+            Some("Chrome")
+        );
+        assert_eq!(
+            trace.last_extension_check_in.extension_build.as_deref(),
+            Some("codex/latest-chrome-extension-package@a65708c")
+        );
+        assert!(trace.last_extension_check_in.checked_in_recently);
+        assert!(!trace.next_action.contains("Firefox"));
+        assert!(
+            engine
+                .take_capture_request(Some("Firefox".into()))?
+                .is_none()
+        );
+        assert!(
+            engine
+                .take_capture_request(Some("Chrome".into()))?
+                .is_some()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn chrome_request_without_chrome_checkin_does_not_recommend_firefox() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let engine = Engine::new(temp.path().to_owned());
+        engine.record_extension_hello(
+            Some("Firefox".into()),
+            Some("0.1.0".into()),
+            Some("codex/capture-routing-reliability@b803c7b+dirty".into()),
+            true,
+        )?;
+        age_extension_hello_for_browser(temp.path(), "Firefox", 10 * 60)?;
+
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
+
+        assert_eq!(request.status, CAPTURE_STATUS_EXTENSION_UNAVAILABLE);
+        assert_eq!(request.requested_browser.as_deref(), Some("Chrome"));
+        let trace = engine.last_capture_trace()?;
+        assert_eq!(trace.requested_browser.as_deref(), Some("Chrome"));
+        assert_eq!(trace.last_extension_check_in.browser, None);
+        assert!(!trace.last_extension_check_in.checked_in_recently);
+        assert!(trace.next_action.contains("Chrome"));
+        assert!(!trace.next_action.contains("Firefox"));
+        let rejected = trace
+            .events
+            .iter()
+            .find(|event| event.event == "capture_request_rejected")
+            .expect("rejection diagnostic event");
+        assert_eq!(rejected.safe_metadata.get("last_extension_browser"), None);
+        assert_eq!(
+            rejected
+                .safe_metadata
+                .get("requested_browser")
+                .map(String::as_str),
+            Some("Chrome")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_health_ignores_legacy_firefox_state_in_config() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        install_extension_setup(temp.path())?;
+        let store = ConfigStore::new(temp.path());
+        let mut config = store.load_or_create()?;
+        let firefox_state = ExtensionState {
+            browser: Some("Firefox".into()),
+            extension_version: Some("0.1.0".into()),
+            extension_build: Some("codex/capture-routing-reliability@b803c7b+dirty".into()),
+            can_capture_active_tab: true,
+            last_handshake_at: Some(Utc::now().to_rfc3339()),
+        };
+        config.extension = firefox_state.clone();
+        config.extensions.insert("Firefox".into(), firefox_state);
+        store.save(&config)?;
+
+        let engine = Engine::new(temp.path().to_owned());
+        let health = engine.bridge_health()?;
+        let doctor = engine.doctor()?;
+
+        assert_eq!(health.browser.as_deref(), Some("Chrome"));
+        assert!(health.recommended_next_action.contains("Chrome"));
+        assert!(!health.recommended_next_action.contains("Firefox"));
+        assert!(
+            doctor
+                .checks
+                .iter()
+                .any(|check| check.name == "extension_handshake"
+                    && !check.ok
+                    && check.detail == "no extension handshake recorded")
+        );
+        assert!(
+            doctor
+                .next_actions
+                .iter()
+                .any(|action| action.contains("Chrome"))
+        );
+        assert!(
+            !doctor
+                .next_actions
+                .iter()
+                .any(|action| action.contains("Firefox"))
+        );
         Ok(())
     }
 
@@ -2561,21 +2775,21 @@ mod tests {
     fn capture_trace_distinguishes_requested_and_handling_browser() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::with_embedder(temp.path().to_owned(), Arc::new(StaticTestEmbedder));
-        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar", "Safari")?;
-        engine.take_capture_request(Some("Safari".into()))?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
+        engine.take_capture_request(Some("Chrome".into()))?;
         engine.record_capture_request_result(
             &request.id,
             CAPTURE_STATUS_SAVED,
             Some("Saved to Starlee.".into()),
             None,
-            Some("Safari".into()),
+            Some("Chrome".into()),
         )?;
 
         let trace = engine.last_capture_trace()?;
-        assert_eq!(trace.requested_browser.as_deref(), Some("Safari"));
-        assert_eq!(trace.handling_browser.as_deref(), Some("Safari"));
-        assert_eq!(trace.browser.as_deref(), Some("Safari"));
+        assert_eq!(trace.requested_browser.as_deref(), Some("Chrome"));
+        assert_eq!(trace.handling_browser.as_deref(), Some("Chrome"));
+        assert_eq!(trace.browser.as_deref(), Some("Chrome"));
         Ok(())
     }
 
@@ -2584,15 +2798,15 @@ mod tests {
         let temp = tempfile::tempdir()?;
         install_extension_setup(temp.path())?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Firefox".into()), Some("0.1.0".into()), None, true)?;
-        let request = engine.create_capture_request("menu-bar", "Firefox")?;
-        engine.take_capture_request(Some("Firefox".into()))?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
+        let request = engine.create_capture_request("menu-bar", "Chrome")?;
+        engine.take_capture_request(Some("Chrome".into()))?;
         engine.record_capture_request_result(
             &request.id,
             CAPTURE_STATUS_SAVED,
             Some("Saved to Starlee.".into()),
             None,
-            Some("Firefox".into()),
+            Some("Chrome".into()),
         )?;
 
         let health = engine.bridge_health()?;
@@ -2610,7 +2824,7 @@ mod tests {
     fn picked_up_capture_request_allows_slow_local_save() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("menu-bar", "Chrome")?;
         assert!(
             engine
@@ -2653,7 +2867,7 @@ mod tests {
     fn picked_up_capture_request_times_out_after_in_progress_window() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let engine = Engine::new(temp.path().to_owned());
-        engine.record_extension_hello(Some("Safari".into()), Some("0.1.0".into()), None, true)?;
+        engine.record_extension_hello(Some("Chrome".into()), Some("0.1.0".into()), None, true)?;
         let request = engine.create_capture_request("menu-bar", "Chrome")?;
         assert!(
             engine
@@ -3070,8 +3284,30 @@ mod tests {
     fn age_extension_hello(home: &std::path::Path, seconds: i64) -> Result<()> {
         let store = ConfigStore::new(home);
         let mut config = store.load_or_create()?;
-        config.extension.last_handshake_at =
-            Some((Utc::now() - chrono::TimeDelta::seconds(seconds)).to_rfc3339());
+        let old = (Utc::now() - chrono::TimeDelta::seconds(seconds)).to_rfc3339();
+        config.extension.last_handshake_at = Some(old.clone());
+        if let Some(browser) = config.extension.browser.clone()
+            && let Some(extension) = config.extensions.get_mut(&browser)
+        {
+            extension.last_handshake_at = Some(old);
+        }
+        store.save(&config)
+    }
+
+    fn age_extension_hello_for_browser(
+        home: &std::path::Path,
+        browser: &str,
+        seconds: i64,
+    ) -> Result<()> {
+        let store = ConfigStore::new(home);
+        let mut config = store.load_or_create()?;
+        let old = (Utc::now() - chrono::TimeDelta::seconds(seconds)).to_rfc3339();
+        if let Some(extension) = config.extensions.get_mut(browser) {
+            extension.last_handshake_at = Some(old.clone());
+        }
+        if config.extension.browser.as_deref() == Some(browser) {
+            config.extension.last_handshake_at = Some(old);
+        }
         store.save(&config)
     }
 

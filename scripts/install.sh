@@ -38,7 +38,7 @@ if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_APP:-1}" != "0" ]; then
   open "$APP_DEST/Starlee.app"
 fi
 
-if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_SAFARI:-1}" != "0" ]; then
+if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_SAFARI:-0}" != "0" ]; then
   if ! "$ROOT/scripts/install-safari-extension.sh"; then
     printf 'Warning: Safari extension install did not complete. Run: ./scripts/install-safari-extension.sh\n' >&2
   fi
@@ -89,7 +89,7 @@ printf 'Initialized local vault at %s\n' "$HOME/Starlee"
 if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_APP:-1}" != "0" ]; then
   printf 'Installed Starlee app to %s\n' "${STARLEE_APP_DIR:-$HOME/Applications}/Starlee.app"
 fi
-if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_SAFARI:-1}" != "0" ]; then
+if [ "$(uname -s)" = "Darwin" ] && [ "${STARLEE_INSTALL_SAFARI:-0}" != "0" ]; then
   printf 'Installed Starlee Safari app to %s\n' "${STARLEE_APP_DIR:-$HOME/Applications}/Starlee Safari.app"
 fi
 printf 'Installed Codex plugin source at %s\n' "$PLUGIN_HOME/starlee"
