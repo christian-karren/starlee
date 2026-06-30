@@ -1,9 +1,14 @@
 import { browserNameFromUserAgent, createExtensionApi } from "./browser.js";
 import {
+  CAPTURE_STATUS,
+  captureErrorForResult,
+  captureStatusForResult,
+  errorResult
+} from "./capture-status.js";
+import {
   activeTabLookupFailure,
   activeTabProblem,
   classifyContentScriptMessageError,
-  CONTENT_SCRIPT_UNREACHABLE,
   contentScriptFailureResult,
   probeContentScriptReadiness,
   safeTabMetadata,
@@ -29,16 +34,6 @@ const MESSAGE = Object.freeze({
   captureNow: "STARLEE_CAPTURE_NOW",
   bridgeHealth: "STARLEE_BRIDGE_HEALTH",
   diagnostic: "STARLEE_CAPTURE_DIAGNOSTIC"
-});
-const CAPTURE_STATUS = Object.freeze({
-  saved: "capture_saved",
-  failed: "capture_failed",
-  pickedUp: "picked_up",
-  extracting: "extracting",
-  posted: "posted",
-  permissionDenied: "permission_denied",
-  unsupportedPage: "unsupported_page",
-  contentScriptUnreachable: CONTENT_SCRIPT_UNREACHABLE
 });
 let bundledConfigPromise;
 let buildInfoPromise;
@@ -100,7 +95,7 @@ startLocalBridge();
 async function sendCapture(payload, options = {}) {
   const { token, port } = await localSettings();
   if (!token) {
-    const result = errorResult("token_missing", "Open Starlee Capture settings and connect the local Starlee app.");
+    const result = errorResult(CAPTURE_STATUS.tokenMissing, "Open Starlee Capture settings and connect the local Starlee app.");
     await recordCaptureResult(result, options.source);
     await recordCaptureRequestResult(options.requestId, result);
     return result;
@@ -129,10 +124,10 @@ async function sendCapture(payload, options = {}) {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       const code = response.status === 401
-        ? "token_invalid"
+        ? CAPTURE_STATUS.tokenInvalid
         : response.status === 413
-          ? "payload_too_large"
-          : "capture_failed";
+          ? CAPTURE_STATUS.payloadTooLarge
+          : CAPTURE_STATUS.failed;
       const result = errorResult(code, body.error || `Starlee rejected the capture with HTTP ${response.status}.`);
       await recordDiagnosticEvent({
         component: "extension",
@@ -149,7 +144,7 @@ async function sendCapture(payload, options = {}) {
       await recordCaptureRequestResult(options.requestId, result);
       return result;
     }
-    const result = { ok: true, code: "capture_saved", record: body };
+    const result = { ok: true, code: CAPTURE_STATUS.saved, record: body };
     await recordDiagnosticEvent({
       component: "extension",
       event: "capture_saved",
@@ -164,7 +159,7 @@ async function sendCapture(payload, options = {}) {
     await recordCaptureRequestResult(options.requestId, result);
     return result;
   } catch {
-    const result = errorResult("service_down", "Local Starlee is not reachable. Open Starlee or run starlee serve.");
+    const result = errorResult(CAPTURE_STATUS.serviceDown, "Local Starlee is not reachable. Open Starlee or run starlee serve.");
     await recordDiagnosticEvent({
       component: "extension",
       event: "capture_failed",
@@ -189,7 +184,7 @@ async function captureTab(tab) {
   } catch (error) {
     const classified = classifyContentScriptMessageError(error);
     return classified.status === CAPTURE_STATUS.permissionDenied
-      ? errorResult("permission_denied", `${browserName()} has not granted Starlee access to this page, or this page cannot run extensions.`)
+      ? errorResult(CAPTURE_STATUS.permissionDenied, `${browserName()} has not granted Starlee access to this page, or this page cannot run extensions.`)
       : contentScriptFailureResult(browserName());
   }
 }
@@ -225,7 +220,7 @@ function keepAlive() {
 async function hello(_options = {}) {
   const { token, port } = await localSettings();
   if (!token) {
-    const result = errorResult("token_missing", "Capture token is not configured.");
+    const result = errorResult(CAPTURE_STATUS.tokenMissing, "Capture token is not configured.");
     await recordHandshake(result);
     return result;
   }
@@ -242,7 +237,7 @@ async function hello(_options = {}) {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const result = errorResult(response.status === 401 ? "token_invalid" : "service_error", body.error || `HTTP ${response.status}`);
+      const result = errorResult(response.status === 401 ? CAPTURE_STATUS.tokenInvalid : CAPTURE_STATUS.serviceError, body.error || `HTTP ${response.status}`);
       await recordHandshake(result);
       return result;
     }
@@ -251,7 +246,7 @@ async function hello(_options = {}) {
     await recordHandshake(result);
     return result;
   } catch {
-    const result = errorResult("service_down", "Local Starlee is not reachable.");
+    const result = errorResult(CAPTURE_STATUS.serviceDown, "Local Starlee is not reachable.");
     await recordHandshake(result);
     return result;
   }
@@ -266,7 +261,7 @@ async function pollCaptureRequest() {
     await ext.storage.local.set({
       lastMenuRequestId: request.id || "",
       lastMenuRequestAt: new Date().toISOString(),
-      lastMenuRequestStatus: tab.result.code || CAPTURE_STATUS.failed
+      lastMenuRequestStatus: captureStatusForResult(tab.result)
     });
     await showResult(tab.result);
     return;
@@ -275,7 +270,7 @@ async function pollCaptureRequest() {
   await ext.storage.local.set({
     lastMenuRequestId: request.id || "",
     lastMenuRequestAt: new Date().toISOString(),
-    lastMenuRequestStatus: result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed
+    lastMenuRequestStatus: captureStatusForResult(result)
   });
   await showResult(result);
 }
@@ -384,7 +379,7 @@ async function captureTabForRequest(tab, request) {
 
 async function takeCaptureRequest() {
   const { token, port } = await localSettings();
-  if (!token) return { ok: false, request: null, code: "token_missing" };
+  if (!token) return { ok: false, request: null, code: CAPTURE_STATUS.tokenMissing };
   await refreshHelloIfNeeded();
   let request;
   try {
@@ -394,7 +389,7 @@ async function takeCaptureRequest() {
     if (!response.ok) return { ok: false, request: null, code: `http_${response.status}` };
     request = (await response.json()).request;
   } catch {
-    return { ok: false, request: null, code: "service_down" };
+    return { ok: false, request: null, code: CAPTURE_STATUS.serviceDown };
   }
   if (!request) return { ok: true, request: null };
   if (request.id && processedRequests.has(request.id)) return { ok: true, request: null };
@@ -516,8 +511,8 @@ async function recordCaptureResult(result, source = "unknown") {
   await ext.storage.local.set({
     lastCaptureAt: new Date().toISOString(),
     lastCaptureSource: source,
-    lastCaptureStatus: result.code || (result.ok ? CAPTURE_STATUS.saved : CAPTURE_STATUS.failed),
-    lastCaptureError: result.ok ? "" : result.error
+    lastCaptureStatus: captureStatusForResult(result),
+    lastCaptureError: captureErrorForResult(result)
   });
 }
 
@@ -533,8 +528,8 @@ async function recordCaptureRequestResult(requestId, result) {
   if (!requestId) return;
   await recordCaptureRequestStatus(
     requestId,
-    result.ok ? CAPTURE_STATUS.saved : result.code || CAPTURE_STATUS.failed,
-    result.ok ? "Saved to Starlee." : result.error
+    captureStatusForResult(result),
+    result.ok ? result.message || "Saved to Starlee." : result.error
   );
 }
 
@@ -558,7 +553,7 @@ async function recordCaptureRequestStatus(requestId, status, message, page) {
 async function recordDiagnosticEvent(event = {}) {
   if (!event.request_id) return { ok: false, code: "missing_request_id" };
   const { token, port } = await localSettings();
-  if (!token) return { ok: false, code: "token_missing" };
+  if (!token) return { ok: false, code: CAPTURE_STATUS.tokenMissing };
   const payload = {
     timestamp: new Date().toISOString(),
     component: event.component || "extension",
@@ -594,10 +589,6 @@ async function showResult(result) {
     console.warn(`Starlee capture ${result.code}: ${result.error}`);
   }
   return { title, ...result };
-}
-
-function errorResult(code, error) {
-  return { ok: false, code, error };
 }
 
 function safePageMetadata(payload) {

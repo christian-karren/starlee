@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { browserNameFromUserAgent, createExtensionApi } from "../src/browser.js";
+import {
+  CAPTURE_STATUS,
+  captureErrorForResult,
+  captureStatusForResult,
+  errorResult
+} from "../src/capture-status.js";
 
 test("detects Safari instead of falling back to Chrome", () => {
   assert.equal(
@@ -81,4 +87,30 @@ test("browser adapter supports Chrome callback-style APIs", async () => {
   } finally {
     globalThis.chrome = previousChrome;
   }
+});
+
+test("maps capture results to persisted status diagnostics", () => {
+  assert.equal(captureStatusForResult({ ok: true }), CAPTURE_STATUS.saved);
+  assert.equal(captureErrorForResult({ ok: true }), "");
+
+  assert.equal(
+    captureStatusForResult({
+      ok: true,
+      warning: true,
+      code: CAPTURE_STATUS.warning
+    }),
+    CAPTURE_STATUS.warning
+  );
+  assert.match(
+    captureErrorForResult({
+      ok: true,
+      warning: true,
+      message: "Saved video metadata, but transcript is unavailable."
+    }),
+    /transcript/
+  );
+
+  const offline = errorResult(CAPTURE_STATUS.serviceDown, "offline");
+  assert.equal(captureStatusForResult(offline), CAPTURE_STATUS.serviceDown);
+  assert.equal(captureErrorForResult(offline), "offline");
 });

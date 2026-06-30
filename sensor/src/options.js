@@ -1,4 +1,5 @@
 import { createExtensionApi } from "./browser.js";
+import { CAPTURE_STATUS } from "./capture-status.js";
 
 const ext = createExtensionApi();
 const form = document.querySelector("form");
@@ -86,8 +87,8 @@ function setupLabel(setup) {
 
 function statusLabel(state) {
   if (!state.hasToken) return "Capture token is not configured.";
-  if (state.lastHandshakeStatus === "token_invalid") return "Capture token was rejected by local Starlee.";
-  if (state.lastHandshakeStatus === "service_down") return "Local Starlee is not reachable. Open Starlee or run starlee serve.";
+  if (state.lastHandshakeStatus === CAPTURE_STATUS.tokenInvalid) return "Capture token was rejected by local Starlee.";
+  if (state.lastHandshakeStatus === CAPTURE_STATUS.serviceDown) return "Local Starlee is not reachable. Open Starlee or run starlee serve.";
   if (state.lastHandshakeError) return state.lastHandshakeError;
   return "Not connected yet. Click Test connection.";
 }
