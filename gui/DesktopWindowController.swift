@@ -2390,6 +2390,7 @@ private final class SidebarTreeRowButton: NSButton {
     var scope: SidebarScope?
     private var isExpanded: Bool
     private var isHovering = false
+    private var isPressing = false
     private var isSelectedRow = false
     private var trackingAreaRef: NSTrackingArea?
 
@@ -2416,7 +2417,7 @@ private final class SidebarTreeRowButton: NSButton {
         setButtonType(.momentaryChange)
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 260).isActive = true
-        heightAnchor.constraint(equalToConstant: isSectionHeader ? 22 : (isPrimaryLibrary ? 34 : 28)).isActive = true
+        heightAnchor.constraint(equalToConstant: isSectionHeader ? 24 : (isPrimaryLibrary ? 36 : 30)).isActive = true
     }
 
     required init?(coder: NSCoder) {
@@ -2452,6 +2453,14 @@ private final class SidebarTreeRowButton: NSButton {
         needsDisplay = true
     }
 
+    override func mouseDown(with event: NSEvent) {
+        isPressing = true
+        needsDisplay = true
+        super.mouseDown(with: event)
+        isPressing = false
+        needsDisplay = true
+    }
+
     func setSelected(_ selected: Bool) {
         guard isSelectedRow != selected else { return }
         isSelectedRow = selected
@@ -2464,20 +2473,24 @@ private final class SidebarTreeRowButton: NSButton {
             return
         }
 
-        let rect = bounds.insetBy(dx: 2, dy: 1)
+        var rect = bounds.insetBy(dx: isPrimaryLibrary ? 1.5 : 3, dy: 2)
+        if isPressing {
+            rect = rect.offsetBy(dx: 1, dy: -1)
+        }
         if isPrimaryLibrary || isSelectedRow || isHovering {
-            let surface = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
+            let radius = min(9, rect.height / 2.7)
+            let surface = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
             if isSelectedRow {
                 Self.cream.setFill()
             } else if isPrimaryLibrary {
-                Self.white.withAlphaComponent(0.13).setFill()
+                Self.white.withAlphaComponent(isPressing ? 0.18 : 0.14).setFill()
             } else {
-                Self.white.withAlphaComponent(0.08).setFill()
+                Self.white.withAlphaComponent(isPressing ? 0.13 : 0.09).setFill()
             }
             surface.fill()
             if isSelectedRow || isPrimaryLibrary {
                 (isSelectedRow ? Self.black.withAlphaComponent(0.22) : Self.cream.withAlphaComponent(0.72)).setStroke()
-                surface.lineWidth = isSelectedRow ? 1.2 : 1
+                surface.lineWidth = isSelectedRow ? 1.1 : 1
                 surface.stroke()
             }
         }
@@ -2494,7 +2507,8 @@ private final class SidebarTreeRowButton: NSButton {
             .foregroundColor: Self.cream.withAlphaComponent(0.76),
             .kern: 1.2
         ]
-        NSAttributedString(string: text, attributes: attributes).draw(at: NSPoint(x: 8, y: 5))
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        attributed.draw(at: NSPoint(x: 9, y: bounds.midY - attributed.size().height / 2))
     }
 
     private func drawDisclosure() {
@@ -2504,25 +2518,27 @@ private final class SidebarTreeRowButton: NSButton {
             .font: NSFont.systemFont(ofSize: 11, weight: .bold),
             .foregroundColor: isSelectedRow ? Self.black.withAlphaComponent(0.76) : Self.cream.withAlphaComponent(0.86)
         ]
-        NSAttributedString(string: symbol, attributes: attributes).draw(at: NSPoint(x: CGFloat(8 + indent * 14), y: bounds.midY - 7))
+        let attributed = NSAttributedString(string: symbol, attributes: attributes)
+        attributed.draw(at: NSPoint(x: CGFloat(9 + indent * 15), y: bounds.midY - attributed.size().height / 2))
     }
 
     private func drawLabel() {
-        let x = CGFloat(8 + indent * 14 + (hasChildren ? 16 : 0))
+        let x = CGFloat(10 + indent * 15 + (hasChildren ? 17 : 0))
         let countWidth: CGFloat
         if let count {
             countWidth = NSAttributedString(
                 string: "\(count)",
                 attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)]
-            ).size().width + 22
+            ).size().width + 26
         } else {
-            countWidth = 10
+            countWidth = 12
         }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
+        let fontSize: CGFloat = isPrimaryLibrary ? 14.5 : 12.5
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.inter(ofSize: isPrimaryLibrary ? 14 : 12, weight: isPrimaryLibrary ? .heavy : .semibold),
-            .foregroundColor: isSelectedRow ? Self.black : Self.white,
+            .font: NSFont.inter(ofSize: fontSize, weight: isPrimaryLibrary ? .heavy : .semibold),
+            .foregroundColor: isSelectedRow ? Self.black : Self.white.withAlphaComponent(isPrimaryLibrary ? 1 : 0.94),
             .kern: isPrimaryLibrary ? 0.6 : 0,
             .paragraphStyle: paragraph
         ]
@@ -2539,7 +2555,7 @@ private final class SidebarTreeRowButton: NSButton {
             .foregroundColor: isSelectedRow ? Self.black.withAlphaComponent(0.72) : Self.cream.withAlphaComponent(0.82)
         ]
         let attributed = NSAttributedString(string: text, attributes: attributes)
-        attributed.draw(at: NSPoint(x: bounds.maxX - attributed.size().width - 10, y: bounds.midY - attributed.size().height / 2))
+        attributed.draw(at: NSPoint(x: bounds.maxX - attributed.size().width - 11, y: bounds.midY - attributed.size().height / 2))
     }
 }
 
