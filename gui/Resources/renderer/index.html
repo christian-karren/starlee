@@ -12,7 +12,7 @@
       <main class="library-shell" aria-label="Starlee Library">
         <section class="library-header" aria-label="Library tools">
           <div class="title-box">
-            <h1>Library</h1>
+            <h1 id="library-title">Library</h1>
           </div>
           <div class="library-actions">
             <button id="upload-button" class="action-btn" type="button" aria-label="Upload documents" title="Upload documents (PDF, Word, text, Markdown)">
@@ -29,11 +29,11 @@
                 <button class="sort-option" type="button" data-sort="source" aria-pressed="false">Source A-Z</button>
               </div>
             </div>
-            <button id="settings-button" class="action-btn" type="button" aria-label="Open settings" title="Settings">
-              <img class="action-icon action-icon-settings" src="./icons/settings.svg" alt="" aria-hidden="true">
-            </button>
             <button id="edit-toggle" class="action-btn" type="button" aria-pressed="false" aria-label="Enter edit mode" title="Edit mode: delete captures">
               <img class="action-icon action-icon-edit" src="./icons/edit.png" alt="" aria-hidden="true">
+            </button>
+            <button id="settings-button" class="action-btn" type="button" aria-label="Open settings" title="Settings">
+              <img class="action-icon action-icon-settings" src="./icons/settings.svg" alt="" aria-hidden="true">
             </button>
           </div>
           <label class="search-shell">
@@ -46,7 +46,15 @@
           <div id="card-row" class="card-row" aria-live="polite"></div>
           <p id="no-results-state" class="empty-state no-results-state" hidden>No captures match this search.</p>
           <div id="empty-library-state" class="empty-library-state" hidden>
-            <p>When you're on the page of an article or video you want to log, click the Starlee icon in the menu bar at the top to capture it!</p>
+            <div class="empty-card" role="status" aria-live="polite">
+              <img class="empty-starlee-logo" src="./icons/starlee_white_black.png" alt="">
+              <p class="empty-headline">Your library is empty.</p>
+              <div class="empty-steps">
+                <p><span>1</span>Open an article or video in Chrome.</p>
+                <p><span>2</span>Click the Starlee icon in your macOS menu bar.</p>
+                <p><span>3</span>It lands in your Library, which you can query with the Starlee Codex Plugin</p>
+              </div>
+            </div>
           </div>
         </section>
       </main>
@@ -118,8 +126,6 @@
         <div class="onb-menubar-arrow" aria-hidden="true">▲<span>Starlee lives here</span></div>
       </div>
     </div>
-    <script src="./pixel-dither-background.js"></script>
-    <script src="./flow-background.js"></script>
     <script src="./aurora-background.js"></script>
     <script src="./dither-background.js"></script>
     <script src="./glass-background.js"></script>

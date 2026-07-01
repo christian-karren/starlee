@@ -3,7 +3,7 @@ const state = {
   monthLabel: "Library",
   totalCount: 0,
   readiness: "",
-  backgroundSettings: window.starleeDefaultPixelDitherSettings,
+  backgroundSettings: window.starleeDefaultDitherSettings,
   editMode: false,
   sortMode: "newest",
 };
@@ -25,6 +25,7 @@ const elements = {
   readerTopics: document.querySelector("#reader-topics"),
   readerActions: document.querySelector("#reader-actions"),
   readerBody: document.querySelector("#reader-body"),
+  libraryTitle: document.querySelector("#library-title"),
 };
 
 const pixelBackground = window.createStarleeBackground(
@@ -90,6 +91,9 @@ function render() {
   const query = elements.search.value.trim().toLowerCase();
   const captures = state.captures.filter((capture) => matchesQuery(capture, query));
   const visibleCaptures = sortedCaptures(captures);
+  if (elements.libraryTitle) {
+    elements.libraryTitle.textContent = state.monthLabel || "My Library";
+  }
 
   if (elements.sortToggle) {
     elements.sortToggle.classList.toggle("active", state.sortMode !== "newest");
@@ -100,10 +104,15 @@ function render() {
       button.setAttribute("aria-pressed", String(button.dataset.sort === state.sortMode));
     });
   }
-  const libraryEmpty = state.captures.length === 0;
+  const libraryEmpty = state.totalCount === 0;
   const noResults = !libraryEmpty && visibleCaptures.length === 0;
   if (elements.emptyLibrary) elements.emptyLibrary.hidden = !libraryEmpty;
-  if (elements.noResults) elements.noResults.hidden = !noResults;
+  if (elements.noResults) {
+    elements.noResults.hidden = !noResults;
+    elements.noResults.textContent = state.monthLabel === "Favorites"
+      ? "No favorites yet."
+      : `No captures match this ${state.monthLabel || "view"}.`;
+  }
   elements.row.classList.toggle("editing", state.editMode);
 
   elements.row.innerHTML = visibleCaptures
@@ -111,15 +120,22 @@ function render() {
       const id = escapeHtml(capture.id);
       const title = escapeHtml(capture.title || "Untitled");
       const date = escapeHtml(capture.date || "Undated");
+      const favorite = Boolean(capture.favorite);
       const deleteButton = `
         <button class="card-delete" type="button" data-delete="${id}"
                 aria-label="Delete ${title}" title="Delete permanently" tabindex="-1">−</button>`;
+      const favoriteButton = `
+        <button class="card-favorite${favorite ? " active" : ""}" type="button"
+                data-favorite="${id}" aria-pressed="${favorite}"
+                aria-label="${favorite ? "Unfavorite" : "Favorite"} ${title}"
+                title="${favorite ? "Remove from Favorites" : "Add to Favorites"}">★</button>`;
 
       return `
         <article class="capture-card" tabindex="0" role="button"
                  data-id="${id}" data-title="${title}"
                  aria-label="Open ${title}">
           ${deleteButton}
+          ${favoriteButton}
           <div class="card-copy">
             <h3>${title}</h3>
           </div>
@@ -331,6 +347,18 @@ elements.row.addEventListener("click", (event) => {
     event.stopPropagation();
     const card = deleteButton.closest(".capture-card");
     requestDelete(deleteButton.dataset.delete, card?.dataset.title);
+    return;
+  }
+  const favoriteButton = event.target.closest("[data-favorite]");
+  if (favoriteButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = favoriteButton.dataset.favorite;
+    const capture = state.captures.find((item) => item.id === id);
+    if (!capture) return;
+    capture.favorite = !Boolean(capture.favorite);
+    postToHost({ action: "toggleFavorite", id, favorite: capture.favorite });
+    render();
     return;
   }
   if (state.editMode) return;

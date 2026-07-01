@@ -17,15 +17,16 @@ SDK=$(xcrun --show-sdk-path --sdk macosx)
 XCTEST_FW_PATH="${XCODE_DEV}/Platforms/MacOSX.platform/Developer/Library/Frameworks"
 XCTEST_LIB_PATH="${XCODE_DEV}/Platforms/MacOSX.platform/Developer/usr/lib"
 
-# All production Swift files (excluding the @main entry point)
-SOURCES=$(find "$GUI" -maxdepth 1 -name "*.swift" ! -name "StarleeMain.swift" | sort | tr '\n' ' ')
-# All test Swift files (main.swift provides the entry point)
-TEST_SOURCES=$(find "$TESTS" -name "*.swift" | sort | tr '\n' ' ')
+# All production Swift files (excluding the @main entry point), followed by tests.
+# Feed paths through xargs -0 so checkouts in folders with spaces still compile.
+SOURCE_LIST="$OUT/swift-sources.list"
+{
+  find "$GUI" -maxdepth 1 -name "*.swift" ! -name "StarleeMain.swift" -print0
+  find "$TESTS" -name "*.swift" -print0
+} | sort -z > "$SOURCE_LIST"
 
 echo "Compiling Swift tests..."
-# main.swift in Tests/ acts as the entry point; no -parse-as-library.
-# shellcheck disable=SC2086
-xcrun swiftc \
+xargs -0 xcrun swiftc \
   -sdk "$SDK" \
   -F "$XCTEST_FW_PATH" \
   -I "$XCTEST_LIB_PATH" \
@@ -37,8 +38,8 @@ xcrun swiftc \
   -lXCTestSwiftSupport \
   -Xlinker -rpath -Xlinker "$XCTEST_FW_PATH" \
   -Xlinker -rpath -Xlinker "$XCTEST_LIB_PATH" \
-  $SOURCES $TEST_SOURCES \
-  -o "$BINARY"
+  -o "$BINARY" \
+  < "$SOURCE_LIST"
 
 echo "Running Swift tests..."
 export DYLD_FRAMEWORK_PATH="${XCTEST_FW_PATH}${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"

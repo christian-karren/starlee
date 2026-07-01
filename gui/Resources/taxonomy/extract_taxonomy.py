@@ -9,6 +9,10 @@ TOPIC_RULES = [
         " ai ", "artificial intelligence", "machine learning", "llm", "large language model",
         "model", "openai", "anthropic", "claude", "chatgpt", "inference", "training",
     ]),
+    ("Tech / AI Infrastructure", [
+        "ai infrastructure", "data center", "datacenter", "compute cluster", "gpu cluster",
+        "inference infrastructure", "training cluster", "cloud gpu", "accelerator",
+    ]),
     ("Tech / Enterprise SaaS", [
         "figma", "salesforce", "saas", "enterprise software", "enterprise", "b2b software",
         "productivity software", "collaboration software", "workflow", "design tool",
@@ -39,6 +43,38 @@ TOPIC_RULES = [
     ("Tech / Cybersecurity", [
         "cybersecurity", "security", "ransomware", "malware", "phishing", "zero trust",
         "breach", "vulnerability",
+    ]),
+    ("Politics / Presidency", [
+        "president", "presidency", "white house", "executive order", "administration",
+        "trump", "biden",
+    ]),
+    ("Politics / House", [
+        "house of representatives", "speaker of the house", "congressman", "congresswoman",
+        "house republican", "house democrat",
+    ]),
+    ("Politics / Senate", [
+        "senate", "senator", "filibuster", "majority leader", "minority leader",
+    ]),
+    ("Politics / Elections", [
+        "election", "campaign", "primary", "polling", "ballot", "voter", "electoral",
+    ]),
+    ("Politics / Middle East", [
+        "middle east", "israel", "iran", "gaza", "hamas", "hezbollah", "netanyahu",
+        "saudi arabia",
+    ]),
+    ("Business / Markets", [
+        "stock market", "markets", "earnings", "revenue", "profit", "ipo", "valuation",
+        "acquisition", "merger",
+    ]),
+    ("Business / Oil & Gas", [
+        "oil", "gas", "opec", "crude", "lng", "shale", "refinery", "energy market",
+    ]),
+    ("Business / Retail", [
+        "retail", "consumer spending", "store", "stores", "brand", "supply chain",
+    ]),
+    ("News / General", [
+        "breaking", "report", "reported", "according to", "new york times", "washington post",
+        "associated press", "reuters", "bloomberg",
     ]),
 ]
 
@@ -74,7 +110,7 @@ def extract_topics(text):
     for topic, needles in TOPIC_RULES:
         if any(contains(lower, needle) for needle in needles):
             topics.append(topic)
-    return topics or ["General"]
+    return topics or ["News / General"]
 
 
 def extract_companies(text):

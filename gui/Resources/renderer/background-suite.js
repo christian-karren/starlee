@@ -4,18 +4,17 @@
 // `.apply(settings)`. On a kind change it destroys the previous engine (stopping
 // its loop/observers) AND swaps in a fresh canvas before building the new one —
 // a single <canvas> can only ever hold one context type, so moving between a 2D
-// engine (pixel-dither / dither / glass / flow) and the WebGL aurora requires a
+// engine (dither / glass) and the WebGL aurora requires a
 // clean canvas.
 (function () {
-  function kindOf(settings) { return (settings && settings.kind) || "pixel-dither"; }
+  function kindOf(settings) { return (settings && settings.kind) || "dither"; }
 
   function make(canvas, settings) {
     var k = kindOf(settings);
-    if (k === "flow" && window.createStarleeFlowBackground) return window.createStarleeFlowBackground(canvas, settings);
     if (k === "aurora" && window.createStarleeAuroraBackground) return window.createStarleeAuroraBackground(canvas, settings);
     if (k === "dither" && window.createStarleeDitherBackground) return window.createStarleeDitherBackground(canvas, settings);
     if (k === "glass" && window.createStarleeGlassBackground) return window.createStarleeGlassBackground(canvas, settings);
-    return window.createStarleePixelDitherBackground(canvas, settings);
+    return window.createStarleeDitherBackground(canvas, window.starleeDefaultDitherSettings);
   }
 
   function freshCanvas(old) {

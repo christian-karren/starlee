@@ -4,7 +4,7 @@ struct FluidBackgroundSettings: Equatable {
     static let defaultPixelColor = "#062F64"
     static let defaultBackgroundColor = "#F9E4B6"
 
-    // Background engine: "pixel-dither", "flow", "aurora", "dither", "glass".
+    // Background engine exposed in Settings: "dither", "aurora", or "glass".
     var kind: String
     // pixelColor doubles as "navy" and backgroundColor as "cream" for the
     // aurora/dither/glass engines; black/white are used only by those.
@@ -86,6 +86,8 @@ struct FluidBackgroundSettings: Equatable {
             if let v = payload[key] as? Double { return v }
             return fallback
         }
+        let requestedKind = str("kind", d.kind)
+        let kind = FluidBackgroundSettings.supportedKinds.contains(requestedKind) ? requestedKind : d.kind
         self.init(
             pixelColor: str("pixelColor", d.pixelColor),
             backgroundColor: str("backgroundColor", d.backgroundColor),
@@ -93,7 +95,7 @@ struct FluidBackgroundSettings: Equatable {
             threshold: num("threshold", d.threshold),
             speed: num("speed", d.speed),
             zoom: num("zoom", d.zoom),
-            kind: str("kind", d.kind),
+            kind: kind,
             black: str("black", d.black),
             white: str("white", d.white),
             flowFinish: str("flowFinish", d.flowFinish),
@@ -128,6 +130,8 @@ struct FluidBackgroundSettings: Equatable {
         ditherNavyBuffer: 1.4
     )
 
+    static let supportedKinds: Set<String> = ["dither", "aurora", "glass"]
+
     var isFlow: Bool { kind == "flow" }
 
     var webPayload: [String: Any] {
@@ -161,7 +165,7 @@ struct FluidBackgroundSettings: Equatable {
             let data = try? JSONSerialization.data(withJSONObject: webPayload, options: []),
             let json = String(data: data, encoding: .utf8)
         else {
-            return ##"{"kind":"pixel-dither","pixelColor":"#062F64","backgroundColor":"#F9E4B6","pixelSize":6,"threshold":0.31,"speed":0.02,"zoom":4.8}"##
+            return ##"{"kind":"dither","pixelColor":"#13284B","backgroundColor":"#F2E3B6","black":"#000000","white":"#FFFFFF","speed":0,"ditherDotSize":3,"ditherContrast":1.3,"ditherNavyBuffer":1.4}"##
         }
         return json
     }
@@ -198,46 +202,14 @@ struct FluidBackgroundLook {
 }
 
 enum FluidBackgroundLooks {
-    // Brand palette shared by the aurora / dither / glass engines.
+    // Brand palette shared by the three supported background looks.
     static let navy = "#13284B"
     static let cream = "#F2E3B6"
 
     static let all: [FluidBackgroundLook] = [
         FluidBackgroundLook(
-            name: "Navy Cream ·175",
-            settings: FluidBackgroundSettings(
-                pixelColor: "#062F64",
-                backgroundColor: "#F9E4B6",
-                pixelSize: 6,
-                threshold: 0.175,
-                speed: 0.02,
-                zoom: 4.8
-            )
-        ),
-        FluidBackgroundLook(
-            name: "Navy Cream ·366",
-            settings: FluidBackgroundSettings(
-                pixelColor: "#062F64",
-                backgroundColor: "#F9E4B6",
-                pixelSize: 6,
-                threshold: 0.366,
-                speed: 0.02,
-                zoom: 4.8
-            )
-        ),
-        FluidBackgroundLook(
-            name: "Ribbon",
-            settings: FluidBackgroundSettings(
-                pixelColor: "#102A57",
-                backgroundColor: "#F2E0AE",
-                pixelSize: 6,
-                threshold: 0.31,
-                speed: 0.018,
-                zoom: 4.6,
-                kind: "flow",
-                flowFinish: "sharp",
-                flowSeed: 0.42
-            )
+            name: "Dither",
+            settings: FluidBackgroundSettings.default
         ),
         FluidBackgroundLook(
             name: "Aurora",
@@ -246,27 +218,11 @@ enum FluidBackgroundLooks {
                 backgroundColor: cream,
                 pixelSize: 6,
                 threshold: 0.31,
-                speed: 0.7,
+                speed: 0.1,
                 zoom: 4.8,
                 kind: "aurora",
                 flowSeed: 0.61,
                 auroraIntensity: 0.55
-            )
-        ),
-        FluidBackgroundLook(
-            name: "Dither",
-            settings: FluidBackgroundSettings(
-                pixelColor: navy,
-                backgroundColor: cream,
-                pixelSize: 6,
-                threshold: 0.31,
-                speed: 0,
-                zoom: 4.8,
-                kind: "dither",
-                flowSeed: 0.5,
-                ditherDotSize: 3,
-                ditherContrast: 1.3,
-                ditherNavyBuffer: 1.4
             )
         ),
         FluidBackgroundLook(
@@ -276,14 +232,14 @@ enum FluidBackgroundLooks {
                 backgroundColor: cream,
                 pixelSize: 6,
                 threshold: 0.31,
-                speed: 0.004,
+                speed: 0.002,
                 zoom: 4.8,
                 kind: "glass",
                 flowSeed: 0.78,
-                glassMode: "panes",
+                glassMode: "blur",
                 glassPanes: 18,
-                glassSoftness: 14,
-                glassBrightness: 1.0,
+                glassSoftness: 9,
+                glassBrightness: 0.6,
                 glassRefraction: 0.02
             )
         )
@@ -291,6 +247,8 @@ enum FluidBackgroundLooks {
 }
 
 final class FluidBackgroundSettingsStore {
+    private static let currentEngineVersion = 2
+
     private enum Key {
         static let kind = "StarleeFluidKind"
         static let pixelColor = "StarleeFluidPixelColor"
@@ -323,7 +281,7 @@ final class FluidBackgroundSettingsStore {
 
     func load() -> FluidBackgroundSettings {
         let fallback = FluidBackgroundSettings.default
-        if defaults.integer(forKey: Key.engineVersion) < 1 {
+        if defaults.integer(forKey: Key.engineVersion) < Self.currentEngineVersion {
             save(fallback)
             return fallback
         }
@@ -353,6 +311,10 @@ final class FluidBackgroundSettingsStore {
             save(fallback)
             return fallback
         }
+        if !FluidBackgroundSettings.supportedKinds.contains(settings.kind) {
+            save(fallback)
+            return fallback
+        }
         return settings
     }
 
@@ -377,7 +339,7 @@ final class FluidBackgroundSettingsStore {
         defaults.set(settings.glassSoftness, forKey: Key.glassSoftness)
         defaults.set(settings.glassBrightness, forKey: Key.glassBrightness)
         defaults.set(settings.glassRefraction, forKey: Key.glassRefraction)
-        defaults.set(1, forKey: Key.engineVersion)
+        defaults.set(Self.currentEngineVersion, forKey: Key.engineVersion)
     }
 
     private func value(for key: String, fallback: Double) -> Double {

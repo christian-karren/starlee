@@ -7,10 +7,10 @@ private let kInterWeightAxis: Int = 0x77676874
 
 private enum SidebarScope: Hashable {
     case all
-    case year(String)
+    case favorites
     case month(String)
     case topic(String)
-    case company(String)
+    case source(String)
     case settings
 }
 
@@ -39,6 +39,33 @@ private extension NSFont {
     }
 }
 
+private final class FavoritesStore {
+    private let url: URL
+
+    init(fileManager: FileManager = .default) {
+        let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let directory = base.appendingPathComponent("Starlee", isDirectory: true)
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        url = directory.appendingPathComponent("favorites.json")
+    }
+
+    func load() -> Set<String> {
+        guard
+            let data = try? Data(contentsOf: url),
+            let value = try? JSONSerialization.jsonObject(with: data) as? [String]
+        else { return [] }
+        return Set(value.filter { !$0.isEmpty })
+    }
+
+    func save(_ ids: Set<String>) {
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: Array(ids).sorted(), options: [.prettyPrinted])
+        else { return }
+        try? data.write(to: url, options: [.atomic])
+    }
+}
+
 final class DesktopWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, WKNavigationDelegate, WKScriptMessageHandler {
     private enum PrimaryView {
         case library
@@ -59,6 +86,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let topics: [String]
         let taxonomyTopics: [String]
         let companies: [String]
+        let favorite: Bool
 
         var monthKey: String {
             guard let capturedAt else { return "undated" }
@@ -76,6 +104,26 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             }
             if let site, !site.isEmpty { return site }
             return URL(fileURLWithPath: filePath).lastPathComponent
+        }
+
+        var sourceKind: String {
+            switch type {
+            case "youtube", "spotify_episode":
+                return "media"
+            default:
+                return "article"
+            }
+        }
+
+        var sourceLabel: String {
+            if sourceKind == "media", let author, !author.isEmpty {
+                return Self.cleanMediaSourceLabel(author)
+            }
+            return Self.cleanArticleSourceLabel(source)
+        }
+
+        var sourceKey: String {
+            "\(sourceKind):\(sourceLabel.lowercased())"
         }
 
         var transcriptStatus: String {
@@ -102,6 +150,45 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             formatter.dateFormat = "MMMM yyyy"
             return formatter
         }()
+
+        private static func cleanArticleSourceLabel(_ value: String) -> String {
+            let lower = value.lowercased()
+                .replacingOccurrences(of: "www.", with: "")
+                .replacingOccurrences(of: "m.", with: "")
+            let known = [
+                "stratechery.com": "Stratechery",
+                "nytimes.com": "New York Times",
+                "newyorktimes.com": "New York Times",
+                "wsj.com": "Wall Street Journal",
+                "washingtonpost.com": "Washington Post",
+                "bloomberg.com": "Bloomberg",
+                "theinformation.com": "The Information",
+                "semianalysis.com": "SemiAnalysis",
+                "substack.com": "Substack",
+                "youtube.com": "YouTube"
+            ]
+            if let label = known[lower] { return label }
+            let withoutTLD = lower
+                .replacingOccurrences(of: ".com", with: "")
+                .replacingOccurrences(of: ".org", with: "")
+                .replacingOccurrences(of: ".net", with: "")
+                .replacingOccurrences(of: ".io", with: "")
+                .replacingOccurrences(of: ".co", with: "")
+            return withoutTLD
+                .split(separator: ".")
+                .last
+                .map { $0.split(separator: "-").map { $0.capitalized }.joined(separator: " ") }
+                ?? value
+        }
+
+        private static func cleanMediaSourceLabel(_ value: String) -> String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            let withoutPrefix = trimmed.hasPrefix("The ") ? String(trimmed.dropFirst(4)) : trimmed
+            if let colon = withoutPrefix.firstIndex(of: ":") {
+                return String(withoutPrefix[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return withoutPrefix
+        }
     }
 
     private struct MonthGroup {
@@ -131,7 +218,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private var groups: [MonthGroup] = []
     private var filteredCaptures: [LibraryCapture] = []
     private var selectedSidebarScope: SidebarScope = .all
-    private var expandedSidebarNodeIDs: Set<String> = ["my-library", "time", "topics", "companies"]
+    private var expandedSidebarNodeIDs: Set<String> = ["my-library", "topics", "time", "sources", "source-articles", "source-media"]
+    private var favoriteIDs: Set<String> = []
+    private let favoritesStore = FavoritesStore()
     private lazy var fluidBackground = fluidBackgroundStore.load()
 
     private let sidebarBackground = SidebarBackgroundView()
@@ -180,6 +269,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     init(client: StarleeClient, menuController: StatusMenuController) {
         self.client = client
         self.menuController = menuController
+        favoriteIDs = favoritesStore.load()
         let savedExpandedIDs = UserDefaults.standard.stringArray(forKey: Self.sidebarExpandedNodeIDsKey)
         if let savedExpandedIDs, !savedExpandedIDs.isEmpty {
             expandedSidebarNodeIDs.formUnion(savedExpandedIDs)
@@ -1150,7 +1240,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             snippet: value["snippet"] as? String ?? "",
             topics: (value["topics"] as? [String]) ?? [],
             taxonomyTopics: [],
-            companies: []
+            companies: [],
+            favorite: false
         )
     }
 
@@ -1203,6 +1294,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             })
             return captures.map { capture in
                 let generated = byID[capture.id]
+                let fallback = enrichTaxonomyFallback(capture)
                 return LibraryCapture(
                     id: capture.id,
                     title: capture.title,
@@ -1215,8 +1307,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                     filePath: capture.filePath,
                     snippet: capture.snippet,
                     topics: capture.topics,
-                    taxonomyTopics: generated?.0 ?? enrichTaxonomyFallback(capture).taxonomyTopics,
-                    companies: generated?.1 ?? enrichTaxonomyFallback(capture).companies
+                    taxonomyTopics: generated?.0 ?? fallback.taxonomyTopics,
+                    companies: generated?.1 ?? fallback.companies,
+                    favorite: favoriteIDs.contains(capture.id)
                 )
             }
         } catch {
@@ -1234,6 +1327,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             topics.append(topic)
         }
         add("Tech / AI", when: [" ai ", "artificial intelligence", "machine learning", "model", "llm", "openai", "anthropic", "claude", "chatgpt"])
+        add("Tech / AI Infrastructure", when: ["ai infrastructure", "data center", "datacenter", "compute cluster", "gpu cluster", "accelerator"])
         add("Tech / Enterprise SaaS", when: ["figma", "salesforce", "enterprise software", "enterprise", "saas", "b2b software", "design tool"])
         add("Tech / Semiconductors", when: ["semiconductor", "chip", "chips", "gpu", "nvidia", "tsmc", "amd", "foundry", "wafer"])
         add("Tech / Fintech", when: ["fintech", "stripe", "payments", "banking", "neobank", "lending", "stablecoin"])
@@ -1242,6 +1336,15 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         add("Tech / Digital Advertising", when: ["advertising", "adtech", "ads", "digital ads", "performance marketing", "targeting"])
         add("Tech / E-commerce", when: ["e-commerce", "ecommerce", "shopify", "marketplace", "online shopping", "merchant"])
         add("Tech / Cybersecurity", when: ["cybersecurity", "security", "ransomware", "malware", "phishing", "zero trust", "breach"])
+        add("Politics / Presidency", when: ["president", "presidency", "white house", "executive order", "administration", "trump", "biden"])
+        add("Politics / House", when: ["house of representatives", "speaker of the house", "congressman", "congresswoman", "house republican", "house democrat"])
+        add("Politics / Senate", when: ["senate", "senator", "filibuster", "majority leader", "minority leader"])
+        add("Politics / Elections", when: ["election", "campaign", "primary", "polling", "ballot", "voter", "electoral"])
+        add("Politics / Middle East", when: ["middle east", "israel", "iran", "gaza", "hamas", "hezbollah", "netanyahu", "saudi arabia"])
+        add("Business / Markets", when: ["stock market", "markets", "earnings", "revenue", "profit", "ipo", "valuation", "acquisition", "merger"])
+        add("Business / Oil & Gas", when: [" oil ", " gas ", "opec", "crude", "lng", "shale", "refinery", "energy market"])
+        add("Business / Retail", when: ["retail", "consumer spending", "store", "stores", "brand", "supply chain"])
+        add("News / General", when: ["breaking", "report", "reported", "according to", "new york times", "washington post", "associated press", "reuters", "bloomberg"])
         let knownCompanies = ["AMD", "Adobe", "Airbnb", "Amazon", "Anthropic", "Apple", "Cursor", "Databricks", "Figma", "Google", "Intel", "Meta", "Microsoft", "Netflix", "NVIDIA", "OpenAI", "Palantir", "Salesforce", "Shopify", "SpaceX", "Stripe", "Tesla", "TSMC"]
         let companies = knownCompanies.filter { company in
             text.range(of: #"(?<![A-Za-z0-9])\#(NSRegularExpression.escapedPattern(for: company))(?![A-Za-z0-9])"#, options: [.regularExpression, .caseInsensitive]) != nil
@@ -1258,8 +1361,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             filePath: capture.filePath,
             snippet: capture.snippet,
             topics: capture.topics,
-            taxonomyTopics: topics.isEmpty ? ["General"] : topics,
-            companies: companies
+            taxonomyTopics: topics.isEmpty ? ["News / General"] : topics,
+            companies: companies,
+            favorite: favoriteIDs.contains(capture.id)
         )
     }
 
@@ -1328,29 +1432,18 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private func sidebarTree() -> [NavNode] {
         [
             NavNode(id: "my-library", label: "My Library", count: captures.count, scope: .all, children: [
-                NavNode(id: "time", label: "Time", count: nil, scope: nil, children: timeNodes()),
+                NavNode(id: "favorites", label: "Favorites", count: captures.filter(\.favorite).count, scope: .favorites, children: []),
                 NavNode(id: "topics", label: "Topics", count: nil, scope: nil, children: topicNodes()),
-                NavNode(id: "companies", label: "Companies", count: nil, scope: nil, children: companyNodes())
+                NavNode(id: "time", label: "Time", count: nil, scope: nil, children: timeNodes()),
+                NavNode(id: "sources", label: "Sources", count: nil, scope: nil, children: sourceNodes())
             ])
         ]
     }
 
     private func timeNodes() -> [NavNode] {
-        let yearFormatter = DateFormatter()
-        yearFormatter.calendar = Calendar(identifier: .gregorian)
-        yearFormatter.locale = Locale(identifier: "en_US_POSIX")
-        yearFormatter.dateFormat = "yyyy"
-        let groupedByYear = Dictionary(grouping: groups) { group -> String in
-            guard let first = group.captures.first?.capturedAt else { return "Undated" }
-            return yearFormatter.string(from: first)
+        groups.map { group in
+            NavNode(id: "month:\(group.id)", label: group.label, count: group.captures.count, scope: .month(group.id), children: [])
         }
-        return groupedByYear.map { year, monthGroups in
-            let children = monthGroups.sorted { $0.id > $1.id }.map { group in
-                NavNode(id: "month:\(group.id)", label: group.label, count: group.captures.count, scope: .month(group.id), children: [])
-            }
-            return NavNode(id: "year:\(year)", label: year, count: monthGroups.reduce(0) { $0 + $1.captures.count }, scope: .year(year), children: children)
-        }
-        .sorted { $0.label > $1.label }
     }
 
     private func topicNodes() -> [NavNode] {
@@ -1358,15 +1451,21 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let counts = Dictionary(grouping: topics, by: { $0 }).mapValues(\.count)
-        let roots = Set(topics.map { $0.components(separatedBy: " / ").first ?? $0 })
-        return roots.sorted().map { root in
+        let roots = ["Tech", "Politics", "Business", "News"].filter { root in
+            topics.contains { $0 == root || $0.hasPrefix(root + " / ") }
+        }
+        return roots.map { root in
             let children = counts.keys
                 .filter { $0.hasPrefix(root + " / ") }
+                .filter { topic in
+                    root == "Tech" || counts[topic, default: 0] >= 3
+                }
                 .sorted { lhs, rhs in
                     counts[lhs, default: 0] == counts[rhs, default: 0]
                         ? lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
                         : counts[lhs, default: 0] > counts[rhs, default: 0]
                 }
+                .prefix(10)
                 .map { topic -> NavNode in
                     let label = topic.components(separatedBy: " / ").last ?? topic
                     return NavNode(id: "topic:\(topic)", label: label, count: counts[topic], scope: .topic(topic), children: [])
@@ -1378,15 +1477,28 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         }
     }
 
-    private func companyNodes() -> [NavNode] {
-        let companies = captures.flatMap(\.companies)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let counts = Dictionary(grouping: companies, by: { $0 }).mapValues(\.count)
-        return counts.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-            .map { company in
-                NavNode(id: "company:\(company)", label: company, count: counts[company], scope: .company(company), children: [])
+    private func sourceNodes() -> [NavNode] {
+        let grouped = Dictionary(grouping: captures) { $0.sourceKind }
+        return [
+            sourceGroupNode(id: "source-articles", label: "Articles", captures: grouped["article"] ?? []),
+            sourceGroupNode(id: "source-media", label: "Media", captures: grouped["media"] ?? [])
+        ].compactMap { $0 }
+    }
+
+    private func sourceGroupNode(id: String, label: String, captures: [LibraryCapture]) -> NavNode? {
+        guard !captures.isEmpty else { return nil }
+        let byKey = Dictionary(grouping: captures, by: \.sourceKey)
+        let children = byKey.map { key, captures in
+            let label = captures.first?.sourceLabel ?? "Unknown"
+            return NavNode(id: "source:\(key)", label: label, count: captures.count, scope: .source(key), children: [])
+        }
+        .sorted { lhs, rhs in
+            if (lhs.count ?? 0) == (rhs.count ?? 0) {
+                return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
             }
+            return (lhs.count ?? 0) > (rhs.count ?? 0)
+        }
+        return NavNode(id: id, label: label, count: captures.count, scope: nil, children: children)
     }
 
     private func updateSidebarSelection() {
@@ -1402,7 +1514,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             filteredCaptures = scopedCaptures
         } else {
             filteredCaptures = scopedCaptures.filter { capture in
-                [capture.title, capture.source, capture.type, capture.snippet]
+                ([capture.title, capture.sourceLabel, capture.source, capture.type, capture.snippet] + capture.taxonomyTopics)
                     .joined(separator: " ")
                     .lowercased()
                     .contains(query)
@@ -1415,23 +1527,16 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         switch selectedSidebarScope {
         case .all:
             return captures
-        case .year(let year):
-            let formatter = DateFormatter()
-            formatter.calendar = Calendar(identifier: .gregorian)
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "yyyy"
-            return captures.filter { capture in
-                guard let capturedAt = capture.capturedAt else { return year == "Undated" }
-                return formatter.string(from: capturedAt) == year
-            }
+        case .favorites:
+            return captures.filter(\.favorite)
         case .month(let id):
             return groups.first { $0.id == id }?.captures ?? captures
         case .topic(let topic):
             return captures.filter { capture in
                 capture.taxonomyTopics.contains { $0 == topic || $0.hasPrefix(topic + " / ") }
             }
-        case .company(let company):
-            return captures.filter { $0.companies.contains(company) }
+        case .source(let key):
+            return captures.filter { $0.sourceKey == key }
         case .settings:
             return captures
         }
@@ -1461,7 +1566,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                     "url": capture.url?.absoluteString ?? "",
                     "filePath": capture.filePath,
                     "topics": capture.taxonomyTopics,
-                    "companies": capture.companies
+                    "companies": capture.companies,
+                    "favorite": capture.favorite
                 ]
             }
         ]
@@ -1479,14 +1585,14 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         switch selectedSidebarScope {
         case .all:
             return "My Library"
-        case .year(let year):
-            return year
+        case .favorites:
+            return "Favorites"
         case .month(let id):
             return groups.first { $0.id == id }?.label ?? "My Library"
         case .topic(let topic):
-            return topic
-        case .company(let company):
-            return company
+            return topic.components(separatedBy: " / ").last ?? topic
+        case .source(let key):
+            return captures.first { $0.sourceKey == key }?.sourceLabel ?? "Source"
         case .settings:
             return "Settings"
         }
@@ -1595,6 +1701,10 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             if let id = body["id"] as? String {
                 confirmAndDelete(id: id, title: (body["title"] as? String) ?? "this capture")
             }
+        case "toggleFavorite":
+            if let id = body["id"] as? String {
+                setFavorite(id: id, favorite: (body["favorite"] as? Bool) ?? false)
+            }
         case "openURL":
             if let urlString = body["url"] as? String, let url = URL(string: urlString) {
                 NSWorkspace.shared.open(url)
@@ -1622,6 +1732,39 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         default:
             break
         }
+    }
+
+    private func setFavorite(id: String, favorite: Bool) {
+        if favorite {
+            favoriteIDs.insert(id)
+        } else {
+            favoriteIDs.remove(id)
+        }
+        favoritesStore.save(favoriteIDs)
+        captures = captures.map { capture in
+            guard capture.id == id else { return capture }
+            return LibraryCapture(
+                id: capture.id,
+                title: capture.title,
+                type: capture.type,
+                site: capture.site,
+                author: capture.author,
+                url: capture.url,
+                capturedAt: capture.capturedAt,
+                capturedAtText: capture.capturedAtText,
+                filePath: capture.filePath,
+                snippet: capture.snippet,
+                topics: capture.topics,
+                taxonomyTopics: capture.taxonomyTopics,
+                companies: capture.companies,
+                favorite: favorite
+            )
+        }
+        if selectedSidebarScope == .favorites && favorite == false {
+            applyFilters()
+        }
+        rebuildSidebarTree()
+        renderLibraryPayload()
     }
 
     /// Export an audited, shareable copy of the vault. Restricted bodies are
@@ -1806,6 +1949,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             guard let self else { return }
             _ = self.client.run(["delete", id])
             DispatchQueue.main.async {
+                self.favoriteIDs.remove(id)
+                self.favoritesStore.save(self.favoriteIDs)
                 self.libraryWebView?.evaluateJavaScript(
                     "if (window.closeStarleeReader) { window.closeStarleeReader(); }",
                     completionHandler: nil
@@ -2245,6 +2390,7 @@ private final class SidebarTreeRowButton: NSButton {
     var scope: SidebarScope?
     private var isExpanded: Bool
     private var isHovering = false
+    private var isPressing = false
     private var isSelectedRow = false
     private var trackingAreaRef: NSTrackingArea?
 
@@ -2271,7 +2417,7 @@ private final class SidebarTreeRowButton: NSButton {
         setButtonType(.momentaryChange)
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 260).isActive = true
-        heightAnchor.constraint(equalToConstant: isSectionHeader ? 22 : (isPrimaryLibrary ? 34 : 28)).isActive = true
+        heightAnchor.constraint(equalToConstant: isSectionHeader ? 24 : (isPrimaryLibrary ? 36 : 30)).isActive = true
     }
 
     required init?(coder: NSCoder) {
@@ -2307,6 +2453,14 @@ private final class SidebarTreeRowButton: NSButton {
         needsDisplay = true
     }
 
+    override func mouseDown(with event: NSEvent) {
+        isPressing = true
+        needsDisplay = true
+        super.mouseDown(with: event)
+        isPressing = false
+        needsDisplay = true
+    }
+
     func setSelected(_ selected: Bool) {
         guard isSelectedRow != selected else { return }
         isSelectedRow = selected
@@ -2319,22 +2473,24 @@ private final class SidebarTreeRowButton: NSButton {
             return
         }
 
-        let rect = bounds.insetBy(dx: 2, dy: 1)
+        var rect = bounds.insetBy(dx: isPrimaryLibrary ? 1.5 : 3, dy: 2)
+        if isPressing {
+            rect = rect.offsetBy(dx: 1, dy: -1)
+        }
         if isPrimaryLibrary || isSelectedRow || isHovering {
-            let surface = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
-            let alpha: CGFloat
+            let radius = min(9, rect.height / 2.7)
+            let surface = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
             if isSelectedRow {
-                alpha = 0.82
+                Self.cream.setFill()
             } else if isPrimaryLibrary {
-                alpha = 0.54
+                Self.white.withAlphaComponent(isPressing ? 0.18 : 0.14).setFill()
             } else {
-                alpha = 0.22
+                Self.white.withAlphaComponent(isPressing ? 0.13 : 0.09).setFill()
             }
-            Self.navy.withAlphaComponent(alpha).setFill()
             surface.fill()
             if isSelectedRow || isPrimaryLibrary {
-                Self.cream.withAlphaComponent(isSelectedRow ? 1.0 : 0.72).setStroke()
-                surface.lineWidth = isSelectedRow ? 1.2 : 1
+                (isSelectedRow ? Self.black.withAlphaComponent(0.22) : Self.cream.withAlphaComponent(0.72)).setStroke()
+                surface.lineWidth = isSelectedRow ? 1.1 : 1
                 surface.stroke()
             }
         }
@@ -2351,7 +2507,8 @@ private final class SidebarTreeRowButton: NSButton {
             .foregroundColor: Self.cream.withAlphaComponent(0.76),
             .kern: 1.2
         ]
-        NSAttributedString(string: text, attributes: attributes).draw(at: NSPoint(x: 8, y: 5))
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        attributed.draw(at: NSPoint(x: 9, y: bounds.midY - attributed.size().height / 2))
     }
 
     private func drawDisclosure() {
@@ -2359,20 +2516,35 @@ private final class SidebarTreeRowButton: NSButton {
         let symbol = isExpanded ? "▾" : "▸"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11, weight: .bold),
-            .foregroundColor: Self.cream.withAlphaComponent(0.86)
+            .foregroundColor: isSelectedRow ? Self.black.withAlphaComponent(0.76) : Self.cream.withAlphaComponent(0.86)
         ]
-        NSAttributedString(string: symbol, attributes: attributes).draw(at: NSPoint(x: CGFloat(8 + indent * 14), y: bounds.midY - 7))
+        let attributed = NSAttributedString(string: symbol, attributes: attributes)
+        attributed.draw(at: NSPoint(x: CGFloat(9 + indent * 15), y: bounds.midY - attributed.size().height / 2))
     }
 
     private func drawLabel() {
-        let x = CGFloat(8 + indent * 14 + (hasChildren ? 16 : 0))
+        let x = CGFloat(10 + indent * 15 + (hasChildren ? 17 : 0))
+        let countWidth: CGFloat
+        if let count {
+            countWidth = NSAttributedString(
+                string: "\(count)",
+                attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)]
+            ).size().width + 26
+        } else {
+            countWidth = 12
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        let fontSize: CGFloat = isPrimaryLibrary ? 14.5 : 12.5
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.inter(ofSize: isPrimaryLibrary ? 14 : 12, weight: isPrimaryLibrary ? .heavy : .semibold),
-            .foregroundColor: Self.white,
-            .kern: isPrimaryLibrary ? 0.6 : 0
+            .font: NSFont.inter(ofSize: fontSize, weight: isPrimaryLibrary ? .heavy : .semibold),
+            .foregroundColor: isSelectedRow ? Self.black : Self.white.withAlphaComponent(isPrimaryLibrary ? 1 : 0.94),
+            .kern: isPrimaryLibrary ? 0.6 : 0,
+            .paragraphStyle: paragraph
         ]
         let text = NSAttributedString(string: rowLabel, attributes: attributes)
-        text.draw(at: NSPoint(x: x, y: bounds.midY - text.size().height / 2))
+        let maxWidth = max(20, bounds.width - x - countWidth)
+        text.draw(in: NSRect(x: x, y: bounds.midY - text.size().height / 2, width: maxWidth, height: text.size().height))
     }
 
     private func drawCount() {
@@ -2380,10 +2552,10 @@ private final class SidebarTreeRowButton: NSButton {
         let text = "\(count)"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: Self.cream.withAlphaComponent(0.82)
+            .foregroundColor: isSelectedRow ? Self.black.withAlphaComponent(0.72) : Self.cream.withAlphaComponent(0.82)
         ]
         let attributed = NSAttributedString(string: text, attributes: attributes)
-        attributed.draw(at: NSPoint(x: bounds.maxX - attributed.size().width - 10, y: bounds.midY - attributed.size().height / 2))
+        attributed.draw(at: NSPoint(x: bounds.maxX - attributed.size().width - 11, y: bounds.midY - attributed.size().height / 2))
     }
 }
 

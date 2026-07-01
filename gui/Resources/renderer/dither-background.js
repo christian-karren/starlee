@@ -6,6 +6,19 @@
 // black never borders cream directly — a navy zone always separates them, and
 // the "navy buffer" widens that zone. Motion is a very slow drift.
 (function () {
+  window.starleeDefaultDitherSettings = {
+    kind: "dither",
+    pixelColor: "#13284B",
+    backgroundColor: "#F2E3B6",
+    black: "#000000",
+    white: "#FFFFFF",
+    speed: 0,
+    flowSeed: 0.5,
+    ditherDotSize: 3,
+    ditherContrast: 1.3,
+    ditherNavyBuffer: 1.4
+  };
+
   function hex2bytes(h) {
     var n = parseInt(String(h || "").replace("#", ""), 16);
     if (isNaN(n)) return [0, 0, 0];
