@@ -466,7 +466,7 @@ time {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 28px;
   pointer-events: none;
 }
 
@@ -475,31 +475,74 @@ time {
 }
 
 .empty-card {
-  width: min(480px, 100%);
+  width: min(496px, calc(100vw - 56px));
   display: grid;
+  align-content: start;
   justify-items: center;
-  gap: 8px;
+  gap: 14px;
   border: var(--control-border);
-  border-radius: var(--control-radius);
+  border-radius: 18px;
   background: var(--white);
   color: var(--black);
-  padding: 28px 34px 30px;
+  padding: 11px 38px 37px;
   box-shadow: var(--control-shadow);
   text-align: center;
 }
 
 .empty-card p {
-  max-width: 390px;
+  max-width: 408px;
   margin: 0;
-  font: 650 15px/1.45 var(--sans);
+  font: 650 14.5px/1.35 var(--sans);
   color: var(--black);
 }
 
+.empty-card .empty-headline {
+  font: 850 24px/1.08 var(--sans);
+  letter-spacing: 0;
+  margin-top: -2px;
+}
+
+.empty-steps {
+  width: min(376px, 100%);
+  display: grid;
+  gap: 8px;
+  margin-top: 3px;
+}
+
+.empty-steps p {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  min-height: 46px;
+  padding: 10px 16px;
+  border: var(--control-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--control-shadow-small);
+  text-align: left;
+  font: 650 14.5px/1.25 var(--sans);
+}
+
+.empty-steps span {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.92), rgba(242, 227, 182, 0.95));
+  color: var(--black);
+  font: 850 14px/1 var(--sans);
+}
+
 .empty-starlee-logo {
-  width: 56px;
-  height: 56px;
+  width: 176px;
+  height: 90px;
   object-fit: contain;
-  margin-bottom: 4px;
+  margin: -2px 0 0;
 }
 
 /* --- Reader -------------------------------------------------------------- */
