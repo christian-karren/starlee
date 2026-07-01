@@ -105,11 +105,15 @@ p {
 }
 
 h1 {
+  min-width: 0;
+  overflow: hidden;
   font-size: 25.5px;
   line-height: 1;
   font-weight: 850;
   letter-spacing: 0;
+  text-overflow: ellipsis;
   text-wrap: balance;
+  white-space: nowrap;
 }
 
 h2 {
@@ -404,9 +408,47 @@ details.advanced[open] > summary::before {
   display: flex;
 }
 
+.card-row.editing .card-favorite {
+  display: none;
+}
+
 .card-delete:hover {
   background: #d4362d;
   transform: scale(1.06);
+}
+
+.card-favorite {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--white);
+  font: 900 24px/1 var(--sans);
+  cursor: pointer;
+  text-shadow:
+    0 1px 0 var(--black),
+    1px 0 0 var(--black),
+    0 -1px 0 var(--black),
+    -1px 0 0 var(--black);
+  transition: transform var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out);
+}
+
+.card-favorite.active,
+.card-favorite[aria-pressed="true"] {
+  color: var(--cream);
+}
+
+.card-favorite:hover,
+.card-favorite:focus-visible {
+  transform: translateY(-1px);
+  outline: none;
 }
 
 .card-row.editing .capture-card {
@@ -1022,6 +1064,16 @@ time {
   transform: translate(-50%, -50%);
 }
 
+.card-favorite::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
 .topic-remove {
   position: relative;
 }
@@ -1039,6 +1091,7 @@ time {
 /* A small tactile press on controls that lack the brutalist shadow-shift. */
 .reader-close,
 .topic-chip,
+.card-favorite,
 .card-delete {
   transition-property: transform, background, box-shadow;
   transition-duration: var(--dur-press);
