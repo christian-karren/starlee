@@ -28,13 +28,10 @@ jobs:
         run: |
           set -eu
           VERSION="${GITHUB_REF_NAME#v}"
-          APP="target/release/Starlee.app"
-          STAGE="$(mktemp -d)/Starlee"
-          mkdir -p "$STAGE"
-          cp -R "$APP" "$STAGE/Starlee.app"
-          ln -s /Applications "$STAGE/Applications"
+          ARCH="$(uname -m)"
+          ./scripts/package.sh
+          cp "release/Starlee-${VERSION}-macos-${ARCH}.dmg" "Starlee-${VERSION}.dmg"
           DMG="Starlee-${VERSION}.dmg"
-          hdiutil create -volname "Starlee" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
           echo "DMG=$DMG" >> "$GITHUB_ENV"
 
       - name: Publish GitHub Release
