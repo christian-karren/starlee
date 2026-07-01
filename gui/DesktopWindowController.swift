@@ -404,14 +404,37 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         sidebarStack.spacing = 3
         sidebarStack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 4)
         sidebarStack.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(sidebarStack)
-        stack.addArrangedSubview(NSView())
+
+        let sidebarScrollView = NSScrollView()
+        sidebarScrollView.translatesAutoresizingMaskIntoConstraints = false
+        sidebarScrollView.borderType = .noBorder
+        sidebarScrollView.drawsBackground = false
+        sidebarScrollView.hasVerticalScroller = true
+        sidebarScrollView.hasHorizontalScroller = false
+        sidebarScrollView.autohidesScrollers = true
+        sidebarScrollView.scrollerStyle = .overlay
+
+        let sidebarDocumentView = NSView()
+        sidebarDocumentView.translatesAutoresizingMaskIntoConstraints = false
+        sidebarDocumentView.addSubview(sidebarStack)
+        sidebarScrollView.documentView = sidebarDocumentView
+        stack.addArrangedSubview(sidebarScrollView)
 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             stack.topAnchor.constraint(equalTo: sidebar.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor)
+            stack.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+
+            sidebarDocumentView.leadingAnchor.constraint(equalTo: sidebarScrollView.contentView.leadingAnchor),
+            sidebarDocumentView.trailingAnchor.constraint(equalTo: sidebarScrollView.contentView.trailingAnchor),
+            sidebarDocumentView.topAnchor.constraint(equalTo: sidebarScrollView.contentView.topAnchor),
+            sidebarDocumentView.widthAnchor.constraint(equalTo: sidebarScrollView.contentView.widthAnchor),
+
+            sidebarStack.leadingAnchor.constraint(equalTo: sidebarDocumentView.leadingAnchor),
+            sidebarStack.trailingAnchor.constraint(lessThanOrEqualTo: sidebarDocumentView.trailingAnchor),
+            sidebarStack.topAnchor.constraint(equalTo: sidebarDocumentView.topAnchor),
+            sidebarStack.bottomAnchor.constraint(equalTo: sidebarDocumentView.bottomAnchor)
         ])
         rebuildSidebarTree()
         return sidebar
