@@ -10,6 +10,7 @@ private enum SidebarScope: Hashable {
     case favorites
     case month(String)
     case topic(String)
+    case sourceKind(String)
     case source(String)
     case company(String)
     case country(String)
@@ -1551,8 +1552,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private func sourceNodes() -> [NavNode] {
         let grouped = Dictionary(grouping: captures) { $0.sourceKind }
         return [
-            sourceGroupNode(id: "source-articles", label: "Articles", captures: grouped["article"] ?? []),
-            sourceGroupNode(id: "source-media", label: "Media", captures: grouped["media"] ?? [])
+            sourceGroupNode(id: "source-articles", label: "Articles", sourceKind: "article", captures: grouped["article"] ?? []),
+            sourceGroupNode(id: "source-media", label: "Media", sourceKind: "media", captures: grouped["media"] ?? [])
         ].compactMap { $0 }
     }
 
@@ -1601,7 +1602,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             }
     }
 
-    private func sourceGroupNode(id: String, label: String, captures: [LibraryCapture]) -> NavNode? {
+    private func sourceGroupNode(id: String, label: String, sourceKind: String, captures: [LibraryCapture]) -> NavNode? {
         guard !captures.isEmpty else { return nil }
         let byKey = Dictionary(grouping: captures, by: \.sourceKey)
         let children = byKey.map { key, captures in
@@ -1614,7 +1615,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             }
             return (lhs.count ?? 0) > (rhs.count ?? 0)
         }
-        return NavNode(id: id, label: label, count: captures.count, scope: nil, children: children)
+        return NavNode(id: id, label: label, count: captures.count, scope: .sourceKind(sourceKind), children: children)
     }
 
     private func updateSidebarSelection() {
@@ -1651,6 +1652,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             return captures.filter { capture in
                 capture.taxonomyTopics.contains { $0 == topic || $0.hasPrefix(topic + " / ") }
             }
+        case .sourceKind(let kind):
+            return captures.filter { $0.sourceKind == kind }
         case .source(let key):
             return captures.filter { $0.sourceKey == key }
         case .company(let company):
@@ -1715,6 +1718,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             return groups.first { $0.id == id }?.label ?? "My Library"
         case .topic(let topic):
             return topic.components(separatedBy: " / ").last ?? topic
+        case .sourceKind(let kind):
+            return kind == "media" ? "Media" : "Articles"
         case .source(let key):
             return captures.first { $0.sourceKey == key }?.sourceLabel ?? "Source"
         case .company(let company):
@@ -2296,7 +2301,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             return menuBarSettings.topics
         case .month:
             return menuBarSettings.time
-        case .source:
+        case .sourceKind, .source:
             return menuBarSettings.sources
         case .company:
             return menuBarSettings.companies
@@ -2342,7 +2347,17 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 
     @objc private func selectSidebarNode(_ sender: SidebarTreeRowButton) {
-        if sender.hasChildren {
+        let shouldToggleExpansion: Bool = {
+            switch sender.scope {
+            case nil:
+                return true
+            case .all?, .sourceKind?:
+                return false
+            default:
+                return true
+            }
+        }()
+        if sender.hasChildren && shouldToggleExpansion {
             let id = sender.identifier?.rawValue ?? ""
             if expandedSidebarNodeIDs.contains(id) {
                 expandedSidebarNodeIDs.remove(id)
