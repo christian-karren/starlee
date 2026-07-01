@@ -2649,7 +2649,7 @@ private final class SidebarTreeRowButton: NSButton {
         if isPressing {
             rect = rect.offsetBy(dx: 1, dy: -1)
         }
-        if isPrimaryLibrary || isSelectedRow || isHovering {
+        if isPrimaryLibrary || isSelectedRow || isPressing {
             let radius = min(12, rect.height / 2.6)
             let surface = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
             if isSelectedRow {
