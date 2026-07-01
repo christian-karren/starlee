@@ -29,13 +29,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 button.title = ""
                 button.image = image
                 button.imagePosition = .imageOnly
+                button.imageScaling = .scaleProportionallyDown
             } else {
                 button.title = "★ Starlee"
                 button.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
                 button.contentTintColor = .labelColor
             }
+            button.alignment = .center
             button.toolTip = "Starlee — click to save, Option-click for tools"
             button.setAccessibilityLabel("Starlee menu bar")
+            button.setAccessibilityHelp("Click to save the current page. Option-click to open Starlee tools.")
         }
         NSLog("Starlee menu-bar status item created")
 

@@ -6,6 +6,7 @@ import XCTest
 // We list all test suites explicitly so the runner knows what to execute.
 var testSuites: [XCTestSuite] = [
     XCTestSuite(forTestCaseClass: StarleeClientTests.self),
+    XCTestSuite(forTestCaseClass: MenuBarSettingsTests.self),
     XCTestSuite(forTestCaseClass: MenuBarIconTests.self),
     XCTestSuite(forTestCaseClass: StatusMenuControllerTests.self),
 ]

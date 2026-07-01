@@ -31,6 +31,16 @@
 
   const NAVY = "#13284B";
   const CREAM = "#F2E3B6";
+  const MENU_DEFAULTS = {
+    favorites: true,
+    topics: true,
+    time: true,
+    sources: true,
+    companies: false,
+    countries: false,
+    customEntities: false,
+    showEmptySections: false,
+  };
 
   const PRESETS = [
     { name: "Dither", s: { kind: "dither", pixelColor: NAVY, backgroundColor: CREAM, speed: 0, ditherDotSize: 3, ditherContrast: 1.3, ditherNavyBuffer: 1.4 } },
@@ -40,6 +50,7 @@
   const SUPPORTED_KINDS = new Set(PRESETS.map((preset) => preset.s.kind));
 
   let state = Object.assign({}, DEFAULTS);
+  let menuBarState = Object.assign({}, MENU_DEFAULTS);
   let sections = [];
 
   const canvas = document.getElementById("pixel-dither-background");
@@ -52,11 +63,25 @@
   function postAction(action) {
     try { window.webkit.messageHandlers.starlee.postMessage({ action: action }); } catch (e) {}
   }
+  function postMenuBar() {
+    try { window.webkit.messageHandlers.starlee.postMessage({ action: "setMenuBarSettings", settings: menuBarState }); } catch (e) {}
+  }
+  function postMenuBarReset() {
+    try { window.webkit.messageHandlers.starlee.postMessage({ action: "resetMenuBarSettings" }); } catch (e) {}
+  }
   function applyLive() { background.apply(state); }
 
   function normalizedSettings(settings) {
     const next = Object.assign({}, DEFAULTS, settings || {});
     if (!SUPPORTED_KINDS.has(next.kind)) return Object.assign({}, DEFAULTS);
+    return next;
+  }
+
+  function normalizedMenuBar(settings) {
+    const next = Object.assign({}, MENU_DEFAULTS, settings || {});
+    Object.keys(MENU_DEFAULTS).forEach((key) => {
+      next[key] = Boolean(next[key]);
+    });
     return next;
   }
 
@@ -67,6 +92,7 @@
         if (k === "class") node.className = attrs[k];
         else if (k === "text") node.textContent = attrs[k];
         else if (k.slice(0, 2) === "on") node.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+        else if (attrs[k] == null) {}
         else node.setAttribute(k, attrs[k]);
       }
     }
@@ -209,6 +235,77 @@
     renderBgControls();
   }
 
+  function toggleRow(key, label, detail, options) {
+    const input = h("input", {
+      type: "checkbox",
+      checked: menuBarState[key] ? "" : null,
+      onchange: () => {
+        menuBarState[key] = input.checked;
+        postMenuBar();
+        renderMenuBarPanel();
+      },
+    });
+    if (options && options.disabled) {
+      input.disabled = true;
+      input.checked = true;
+    }
+    const text = h("span", { class: "toggle-copy" }, [
+      h("span", { class: "toggle-label", text: label }),
+      detail ? h("span", { class: "toggle-detail", text: detail }) : null,
+    ]);
+    return h("label", { class: "toggle-row" + ((options && options.locked) ? " locked" : "") }, [
+      h("span", { class: "toggle-control" }, [input, h("span", { class: "toggle-knob" })]),
+      text,
+    ]);
+  }
+
+  let menuBarPanel = null;
+  function renderMenuBarPanel() {
+    if (!menuBarPanel) return;
+    menuBarPanel.textContent = "";
+    menuBarPanel.appendChild(h("div", { class: "panel-head menu-panel-head" }, [
+      h("div", {}, [
+        h("div", { class: "panel-title", text: "Menu Bar" }),
+        h("div", { class: "panel-sub", text: "Choose which Library sections appear in the left menu." }),
+      ]),
+      h("button", {
+        class: "btn btn-subtle",
+        type: "button",
+        text: "Reset",
+        onclick: () => {
+          menuBarState = Object.assign({}, MENU_DEFAULTS);
+          postMenuBarReset();
+          renderMenuBarPanel();
+        },
+      }),
+    ]));
+
+    menuBarPanel.appendChild(h("div", { class: "menu-grid" }, [
+      h("section", { class: "menu-group" }, [
+        h("div", { class: "menu-group-title", text: "Pinned" }),
+        toggleRow("myLibrary", "My Library", "Always on, always first.", { disabled: true, locked: true }),
+      ]),
+      h("section", { class: "menu-group" }, [
+        h("div", { class: "menu-group-title", text: "Default sections" }),
+        toggleRow("favorites", "Favorites", "Saved items you mark as important."),
+        toggleRow("topics", "Topics", "Tech, Politics, Business, and News."),
+        toggleRow("time", "Time", "Month-based groups like June 2026."),
+        toggleRow("sources", "Sources", "Articles and media grouped by source."),
+      ]),
+      h("section", { class: "menu-group advanced-menu-group" }, [
+        h("div", { class: "menu-group-title", text: "Advanced sections" }),
+        h("p", { class: "menu-note", text: "Optional metadata views for people who want a more tuned personal brain." }),
+        toggleRow("companies", "Companies", "Uses available company metadata."),
+        toggleRow("countries", "Countries", "Ready for country metadata when present."),
+        toggleRow("customEntities", "Custom Entities", "Scaffold for future custom metadata."),
+      ]),
+      h("section", { class: "menu-group" }, [
+        h("div", { class: "menu-group-title", text: "Display" }),
+        toggleRow("showEmptySections", "Show empty sections", "Off by default to keep the menu calm."),
+      ]),
+    ]));
+  }
+
   function utilCard(section) {
     const kids = [
       h("div", { class: "util-title", text: section.title }),
@@ -229,6 +326,10 @@
     content.appendChild(bgPanel);
     renderBackgroundPanel();
 
+    menuBarPanel = h("div", { class: "panel menu-bar-panel" });
+    content.appendChild(menuBarPanel);
+    renderMenuBarPanel();
+
     if (sections.length) {
       content.appendChild(h("div", { class: "caption", text: "System" }));
       const grid = h("div", { class: "card-grid" });
@@ -239,6 +340,7 @@
 
   window.renderStarleeSettings = function (payload) {
     if (payload && payload.background) state = normalizedSettings(payload.background);
+    if (payload && payload.menuBar) menuBarState = normalizedMenuBar(payload.menuBar);
     if (payload && Array.isArray(payload.sections)) sections = payload.sections;
     applyLive();
     render();

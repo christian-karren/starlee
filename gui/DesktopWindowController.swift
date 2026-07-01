@@ -10,7 +10,11 @@ private enum SidebarScope: Hashable {
     case favorites
     case month(String)
     case topic(String)
+    case sourceKind(String)
     case source(String)
+    case company(String)
+    case country(String)
+    case customEntity(String)
     case settings
 }
 
@@ -86,6 +90,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         let topics: [String]
         let taxonomyTopics: [String]
         let companies: [String]
+        let countries: [String]
+        let customEntities: [String]
         let favorite: Bool
 
         var monthKey: String {
@@ -212,16 +218,28 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private let client: StarleeClient
     private weak var menuController: StatusMenuController?
     private let fluidBackgroundStore = FluidBackgroundSettingsStore()
+    private let menuBarSettingsStore = MenuBarSettingsStore()
     private var primaryView: PrimaryView = .library
     private var doctor: [String: Any]?
     private var captures: [LibraryCapture] = []
     private var groups: [MonthGroup] = []
     private var filteredCaptures: [LibraryCapture] = []
     private var selectedSidebarScope: SidebarScope = .all
-    private var expandedSidebarNodeIDs: Set<String> = ["my-library", "topics", "time", "sources", "source-articles", "source-media"]
+    private var expandedSidebarNodeIDs: Set<String> = [
+        "my-library",
+        "topics",
+        "time",
+        "sources",
+        "source-articles",
+        "source-media",
+        "companies",
+        "countries",
+        "custom-entities"
+    ]
     private var favoriteIDs: Set<String> = []
     private let favoritesStore = FavoritesStore()
     private lazy var fluidBackground = fluidBackgroundStore.load()
+    private lazy var menuBarSettings = menuBarSettingsStore.load()
 
     private let sidebarBackground = SidebarBackgroundView()
     private let sidebarStack = NSStackView()
@@ -387,14 +405,37 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         sidebarStack.spacing = 3
         sidebarStack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 4)
         sidebarStack.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(sidebarStack)
-        stack.addArrangedSubview(NSView())
+
+        let sidebarScrollView = NSScrollView()
+        sidebarScrollView.translatesAutoresizingMaskIntoConstraints = false
+        sidebarScrollView.borderType = .noBorder
+        sidebarScrollView.drawsBackground = false
+        sidebarScrollView.hasVerticalScroller = true
+        sidebarScrollView.hasHorizontalScroller = false
+        sidebarScrollView.autohidesScrollers = true
+        sidebarScrollView.scrollerStyle = .overlay
+
+        let sidebarDocumentView = SidebarScrollDocumentView()
+        sidebarDocumentView.translatesAutoresizingMaskIntoConstraints = false
+        sidebarDocumentView.addSubview(sidebarStack)
+        sidebarScrollView.documentView = sidebarDocumentView
+        stack.addArrangedSubview(sidebarScrollView)
 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             stack.topAnchor.constraint(equalTo: sidebar.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor)
+            stack.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+
+            sidebarDocumentView.leadingAnchor.constraint(equalTo: sidebarScrollView.contentView.leadingAnchor),
+            sidebarDocumentView.trailingAnchor.constraint(equalTo: sidebarScrollView.contentView.trailingAnchor),
+            sidebarDocumentView.topAnchor.constraint(equalTo: sidebarScrollView.contentView.topAnchor),
+            sidebarDocumentView.widthAnchor.constraint(equalTo: sidebarScrollView.contentView.widthAnchor),
+
+            sidebarStack.leadingAnchor.constraint(equalTo: sidebarDocumentView.leadingAnchor),
+            sidebarStack.trailingAnchor.constraint(lessThanOrEqualTo: sidebarDocumentView.trailingAnchor),
+            sidebarStack.topAnchor.constraint(equalTo: sidebarDocumentView.topAnchor),
+            sidebarStack.bottomAnchor.constraint(equalTo: sidebarDocumentView.bottomAnchor)
         ])
         rebuildSidebarTree()
         return sidebar
@@ -669,6 +710,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         ]
         let payload: [String: Any] = [
             "background": fluidBackground.webPayload,
+            "menuBar": menuBarSettings.webPayload,
             "sections": sections
         ]
         guard
@@ -1241,6 +1283,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             topics: (value["topics"] as? [String]) ?? [],
             taxonomyTopics: [],
             companies: [],
+            countries: (value["countries"] as? [String]) ?? [],
+            customEntities: (value["custom_entities"] as? [String]) ?? (value["customEntities"] as? [String]) ?? [],
             favorite: false
         )
     }
@@ -1309,6 +1353,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                     topics: capture.topics,
                     taxonomyTopics: generated?.0 ?? fallback.taxonomyTopics,
                     companies: generated?.1 ?? fallback.companies,
+                    countries: capture.countries,
+                    customEntities: capture.customEntities,
                     favorite: favoriteIDs.contains(capture.id)
                 )
             }
@@ -1363,6 +1409,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             topics: capture.topics,
             taxonomyTopics: topics.isEmpty ? ["News / General"] : topics,
             companies: companies,
+            countries: capture.countries,
+            customEntities: capture.customEntities,
             favorite: favoriteIDs.contains(capture.id)
         )
     }
@@ -1430,14 +1478,38 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 
     private func sidebarTree() -> [NavNode] {
-        [
-            NavNode(id: "my-library", label: "My Library", count: captures.count, scope: .all, children: [
-                NavNode(id: "favorites", label: "Favorites", count: captures.filter(\.favorite).count, scope: .favorites, children: []),
-                NavNode(id: "topics", label: "Topics", count: nil, scope: nil, children: topicNodes()),
-                NavNode(id: "time", label: "Time", count: nil, scope: nil, children: timeNodes()),
-                NavNode(id: "sources", label: "Sources", count: nil, scope: nil, children: sourceNodes())
-            ])
+        var children: [NavNode] = []
+        if menuBarSettings.favorites {
+            children.append(NavNode(id: "favorites", label: "Favorites", count: captures.filter(\.favorite).count, scope: .favorites, children: []))
+        }
+        if menuBarSettings.topics, let node = optionalGroupNode(id: "topics", label: "Topics", children: topicNodes()) {
+            children.append(node)
+        }
+        if menuBarSettings.time, let node = optionalGroupNode(id: "time", label: "Time", children: timeNodes()) {
+            children.append(node)
+        }
+        if menuBarSettings.sources, let node = optionalGroupNode(id: "sources", label: "Sources", children: sourceNodes()) {
+            children.append(node)
+        }
+        if menuBarSettings.companies, let node = optionalGroupNode(id: "companies", label: "Companies", children: companyNodes()) {
+            children.append(node)
+        }
+        if menuBarSettings.countries, let node = optionalGroupNode(id: "countries", label: "Countries", children: countryNodes()) {
+            children.append(node)
+        }
+        if menuBarSettings.customEntities, let node = optionalGroupNode(id: "custom-entities", label: "Custom Entities", children: customEntityNodes()) {
+            children.append(node)
+        }
+        return [
+            NavNode(id: "my-library", label: "My Library", count: captures.count, scope: .all, children: children)
         ]
+    }
+
+    private func optionalGroupNode(id: String, label: String, children: [NavNode]) -> NavNode? {
+        if children.isEmpty && !menuBarSettings.showEmptySections {
+            return nil
+        }
+        return NavNode(id: id, label: label, count: nil, scope: nil, children: children)
     }
 
     private func timeNodes() -> [NavNode] {
@@ -1452,7 +1524,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             .filter { !$0.isEmpty }
         let counts = Dictionary(grouping: topics, by: { $0 }).mapValues(\.count)
         let roots = ["Tech", "Politics", "Business", "News"].filter { root in
-            topics.contains { $0 == root || $0.hasPrefix(root + " / ") }
+            menuBarSettings.showEmptySections || topics.contains { $0 == root || $0.hasPrefix(root + " / ") }
         }
         return roots.map { root in
             let children = counts.keys
@@ -1480,12 +1552,57 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     private func sourceNodes() -> [NavNode] {
         let grouped = Dictionary(grouping: captures) { $0.sourceKind }
         return [
-            sourceGroupNode(id: "source-articles", label: "Articles", captures: grouped["article"] ?? []),
-            sourceGroupNode(id: "source-media", label: "Media", captures: grouped["media"] ?? [])
+            sourceGroupNode(id: "source-articles", label: "Articles", sourceKind: "article", captures: grouped["article"] ?? []),
+            sourceGroupNode(id: "source-media", label: "Media", sourceKind: "media", captures: grouped["media"] ?? [])
         ].compactMap { $0 }
     }
 
-    private func sourceGroupNode(id: String, label: String, captures: [LibraryCapture]) -> NavNode? {
+    private func companyNodes() -> [NavNode] {
+        metadataNodes(
+            idPrefix: "company",
+            values: captures.flatMap(\.companies),
+            scope: { .company($0) }
+        )
+    }
+
+    private func countryNodes() -> [NavNode] {
+        metadataNodes(
+            idPrefix: "country",
+            values: captures.flatMap(\.countries),
+            scope: { .country($0) }
+        )
+    }
+
+    private func customEntityNodes() -> [NavNode] {
+        metadataNodes(
+            idPrefix: "custom-entity",
+            values: captures.flatMap(\.customEntities),
+            scope: { .customEntity($0) }
+        )
+    }
+
+    private func metadataNodes(
+        idPrefix: String,
+        values: [String],
+        scope: (String) -> SidebarScope
+    ) -> [NavNode] {
+        let cleaned = values
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let counts = Dictionary(grouping: cleaned, by: { $0 }).mapValues(\.count)
+        return counts.keys
+            .sorted { lhs, rhs in
+                counts[lhs, default: 0] == counts[rhs, default: 0]
+                    ? lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+                    : counts[lhs, default: 0] > counts[rhs, default: 0]
+            }
+            .prefix(12)
+            .map { value in
+                NavNode(id: "\(idPrefix):\(value)", label: value, count: counts[value], scope: scope(value), children: [])
+            }
+    }
+
+    private func sourceGroupNode(id: String, label: String, sourceKind: String, captures: [LibraryCapture]) -> NavNode? {
         guard !captures.isEmpty else { return nil }
         let byKey = Dictionary(grouping: captures, by: \.sourceKey)
         let children = byKey.map { key, captures in
@@ -1498,7 +1615,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             }
             return (lhs.count ?? 0) > (rhs.count ?? 0)
         }
-        return NavNode(id: id, label: label, count: captures.count, scope: nil, children: children)
+        return NavNode(id: id, label: label, count: captures.count, scope: .sourceKind(sourceKind), children: children)
     }
 
     private func updateSidebarSelection() {
@@ -1535,8 +1652,16 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             return captures.filter { capture in
                 capture.taxonomyTopics.contains { $0 == topic || $0.hasPrefix(topic + " / ") }
             }
+        case .sourceKind(let kind):
+            return captures.filter { $0.sourceKind == kind }
         case .source(let key):
             return captures.filter { $0.sourceKey == key }
+        case .company(let company):
+            return captures.filter { $0.companies.contains(company) }
+        case .country(let country):
+            return captures.filter { $0.countries.contains(country) }
+        case .customEntity(let entity):
+            return captures.filter { $0.customEntities.contains(entity) }
         case .settings:
             return captures
         }
@@ -1567,6 +1692,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                     "filePath": capture.filePath,
                     "topics": capture.taxonomyTopics,
                     "companies": capture.companies,
+                    "countries": capture.countries,
+                    "customEntities": capture.customEntities,
                     "favorite": capture.favorite
                 ]
             }
@@ -1591,8 +1718,16 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             return groups.first { $0.id == id }?.label ?? "My Library"
         case .topic(let topic):
             return topic.components(separatedBy: " / ").last ?? topic
+        case .sourceKind(let kind):
+            return kind == "media" ? "Media" : "Articles"
         case .source(let key):
             return captures.first { $0.sourceKey == key }?.sourceLabel ?? "Source"
+        case .company(let company):
+            return company
+        case .country(let country):
+            return country
+        case .customEntity(let entity):
+            return entity
         case .settings:
             return "Settings"
         }
@@ -1685,6 +1820,14 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                 fluidBackground = FluidBackgroundSettings(payload: settings)
                 saveAndApplyFluidBackground()
             }
+        case "setMenuBarSettings":
+            if let settings = body["settings"] as? [String: Any] {
+                menuBarSettings = MenuBarSettings(payload: settings)
+                saveAndApplyMenuBarSettings()
+            }
+        case "resetMenuBarSettings":
+            menuBarSettings = .default
+            saveAndApplyMenuBarSettings()
         case "openVault":
             menuController?.openVault()
         case "openBrowserSetup":
@@ -1757,6 +1900,8 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
                 topics: capture.topics,
                 taxonomyTopics: capture.taxonomyTopics,
                 companies: capture.companies,
+                countries: capture.countries,
+                customEntities: capture.customEntities,
                 favorite: favorite
             )
         }
@@ -2135,6 +2280,38 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         applyFluidBackground()
     }
 
+    private func saveAndApplyMenuBarSettings() {
+        menuBarSettingsStore.save(menuBarSettings)
+        if !isSidebarScopeEnabled(selectedSidebarScope) {
+            selectedSidebarScope = .all
+            primaryView = .library
+        }
+        rebuildSidebarTree()
+        renderLibraryPayload()
+        renderSettingsPayload()
+    }
+
+    private func isSidebarScopeEnabled(_ scope: SidebarScope) -> Bool {
+        switch scope {
+        case .all, .settings:
+            return true
+        case .favorites:
+            return menuBarSettings.favorites
+        case .topic:
+            return menuBarSettings.topics
+        case .month:
+            return menuBarSettings.time
+        case .sourceKind, .source:
+            return menuBarSettings.sources
+        case .company:
+            return menuBarSettings.companies
+        case .country:
+            return menuBarSettings.countries
+        case .customEntity:
+            return menuBarSettings.customEntities
+        }
+    }
+
     private func updateFluidBackgroundRenderers() {
         let script = "if (window.applyStarleeBackgroundSettings) { window.applyStarleeBackgroundSettings(\(fluidBackground.webPayloadJSON)); }"
         appBackgroundWebView?.evaluateJavaScript(script, completionHandler: nil)
@@ -2170,7 +2347,19 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
     }
 
     @objc private func selectSidebarNode(_ sender: SidebarTreeRowButton) {
-        if sender.hasChildren {
+        let shouldToggleExpansion: Bool = {
+            switch sender.scope {
+            case nil:
+                return true
+            case .all?:
+                return sender.clickedDisclosure
+            case .sourceKind?:
+                return false
+            default:
+                return true
+            }
+        }()
+        if sender.hasChildren && shouldToggleExpansion {
             let id = sender.identifier?.rawValue ?? ""
             if expandedSidebarNodeIDs.contains(id) {
                 expandedSidebarNodeIDs.remove(id)
@@ -2388,6 +2577,7 @@ private final class SidebarTreeRowButton: NSButton {
     let isSectionHeader: Bool
     let isPrimaryLibrary: Bool
     var scope: SidebarScope?
+    private(set) var clickedDisclosure = false
     private var isExpanded: Bool
     private var isHovering = false
     private var isPressing = false
@@ -2417,7 +2607,7 @@ private final class SidebarTreeRowButton: NSButton {
         setButtonType(.momentaryChange)
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 260).isActive = true
-        heightAnchor.constraint(equalToConstant: isSectionHeader ? 24 : (isPrimaryLibrary ? 36 : 30)).isActive = true
+        heightAnchor.constraint(equalToConstant: isSectionHeader ? 26 : 40).isActive = true
     }
 
     required init?(coder: NSCoder) {
@@ -2454,6 +2644,8 @@ private final class SidebarTreeRowButton: NSButton {
     }
 
     override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        clickedDisclosure = hasChildren && disclosureHitRect.contains(point)
         isPressing = true
         needsDisplay = true
         super.mouseDown(with: event)
@@ -2473,31 +2665,29 @@ private final class SidebarTreeRowButton: NSButton {
             return
         }
 
-        var rect = bounds.insetBy(dx: isPrimaryLibrary ? 1.5 : 3, dy: 2)
+        var rect = bounds.insetBy(dx: 3, dy: 3)
         if isPressing {
             rect = rect.offsetBy(dx: 1, dy: -1)
         }
-        if isPrimaryLibrary || isSelectedRow || isHovering {
-            let radius = min(9, rect.height / 2.7)
+        if isSelectedRow || isPressing {
+            let radius = min(12, rect.height / 2.6)
             let surface = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-            if isSelectedRow {
-                Self.cream.setFill()
-            } else if isPrimaryLibrary {
-                Self.white.withAlphaComponent(isPressing ? 0.18 : 0.14).setFill()
-            } else {
-                Self.white.withAlphaComponent(isPressing ? 0.13 : 0.09).setFill()
-            }
+            let shadowRect = rect.offsetBy(dx: 3, dy: 3)
+            let shadow = NSBezierPath(roundedRect: shadowRect, xRadius: radius, yRadius: radius)
+
+            Self.navy.setFill()
+            shadow.fill()
+
+            Self.white.setFill()
             surface.fill()
-            if isSelectedRow || isPrimaryLibrary {
-                (isSelectedRow ? Self.black.withAlphaComponent(0.22) : Self.cream.withAlphaComponent(0.72)).setStroke()
-                surface.lineWidth = isSelectedRow ? 1.1 : 1
-                surface.stroke()
-            }
+            Self.black.setStroke()
+            surface.lineWidth = 1
+            surface.stroke()
         }
 
         drawDisclosure()
+        drawPinnedMarker()
         drawLabel()
-        drawCount()
     }
 
     private func drawSectionHeader() {
@@ -2508,7 +2698,7 @@ private final class SidebarTreeRowButton: NSButton {
             .kern: 1.2
         ]
         let attributed = NSAttributedString(string: text, attributes: attributes)
-        attributed.draw(at: NSPoint(x: 9, y: bounds.midY - attributed.size().height / 2))
+        attributed.draw(at: NSPoint(x: 10, y: bounds.midY - attributed.size().height / 2))
     }
 
     private func drawDisclosure() {
@@ -2516,46 +2706,57 @@ private final class SidebarTreeRowButton: NSButton {
         let symbol = isExpanded ? "▾" : "▸"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11, weight: .bold),
-            .foregroundColor: isSelectedRow ? Self.black.withAlphaComponent(0.76) : Self.cream.withAlphaComponent(0.86)
+            .foregroundColor: isSelectedRow ? Self.black : Self.cream.withAlphaComponent(0.86)
         ]
         let attributed = NSAttributedString(string: symbol, attributes: attributes)
-        attributed.draw(at: NSPoint(x: CGFloat(9 + indent * 15), y: bounds.midY - attributed.size().height / 2))
+        let size = attributed.size()
+        attributed.draw(at: NSPoint(x: glyphCenter.x - size.width / 2, y: glyphCenter.y - size.height / 2 + 0.5))
+    }
+
+    private func drawPinnedMarker() {
+        guard scope == .favorites else { return }
+        let center = glyphCenter
+        let outerRadius: CGFloat = 4
+        let innerRadius: CGFloat = 1.9
+        let path = NSBezierPath()
+        for index in 0..<10 {
+            let angle = (-CGFloat.pi / 2) + CGFloat(index) * CGFloat.pi / 5
+            let radius = index.isMultiple(of: 2) ? outerRadius : innerRadius
+            let point = NSPoint(
+                x: center.x + cos(angle) * radius,
+                y: center.y + sin(angle) * radius
+            )
+            index == 0 ? path.move(to: point) : path.line(to: point)
+        }
+        path.close()
+        (isSelectedRow ? Self.black : Self.cream.withAlphaComponent(0.86)).setFill()
+        path.fill()
+    }
+
+    private var glyphCenter: NSPoint {
+        NSPoint(x: CGFloat(13 + indent * 15), y: bounds.midY + 0.5)
+    }
+
+    private var disclosureHitRect: NSRect {
+        NSRect(x: CGFloat(indent * 15), y: 0, width: 44, height: bounds.height)
     }
 
     private func drawLabel() {
-        let x = CGFloat(10 + indent * 15 + (hasChildren ? 17 : 0))
-        let countWidth: CGFloat
-        if let count {
-            countWidth = NSAttributedString(
-                string: "\(count)",
-                attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)]
-            ).size().width + 26
-        } else {
-            countWidth = 12
-        }
+        let hasLeadingGlyph = hasChildren || scope == .favorites
+        let x = CGFloat(12 + indent * 15 + (hasLeadingGlyph ? 17 : 0))
+        let trailingPadding: CGFloat = 12
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         let fontSize: CGFloat = isPrimaryLibrary ? 14.5 : 12.5
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.inter(ofSize: fontSize, weight: isPrimaryLibrary ? .heavy : .semibold),
             .foregroundColor: isSelectedRow ? Self.black : Self.white.withAlphaComponent(isPrimaryLibrary ? 1 : 0.94),
-            .kern: isPrimaryLibrary ? 0.6 : 0,
+            .kern: 0,
             .paragraphStyle: paragraph
         ]
         let text = NSAttributedString(string: rowLabel, attributes: attributes)
-        let maxWidth = max(20, bounds.width - x - countWidth)
+        let maxWidth = max(20, bounds.width - x - trailingPadding)
         text.draw(in: NSRect(x: x, y: bounds.midY - text.size().height / 2, width: maxWidth, height: text.size().height))
-    }
-
-    private func drawCount() {
-        guard let count else { return }
-        let text = "\(count)"
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: isSelectedRow ? Self.black.withAlphaComponent(0.72) : Self.cream.withAlphaComponent(0.82)
-        ]
-        let attributed = NSAttributedString(string: text, attributes: attributes)
-        attributed.draw(at: NSPoint(x: bounds.maxX - attributed.size().width - 11, y: bounds.midY - attributed.size().height / 2))
     }
 }
 
@@ -2563,5 +2764,11 @@ private final class SidebarBackgroundView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.setFill()
         bounds.fill()
+    }
+}
+
+private final class SidebarScrollDocumentView: NSView {
+    override var isFlipped: Bool {
+        true
     }
 }
