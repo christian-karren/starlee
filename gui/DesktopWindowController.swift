@@ -2351,7 +2351,9 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
             switch sender.scope {
             case nil:
                 return true
-            case .all?, .sourceKind?:
+            case .all?:
+                return sender.clickedDisclosure
+            case .sourceKind?:
                 return false
             default:
                 return true
@@ -2575,6 +2577,7 @@ private final class SidebarTreeRowButton: NSButton {
     let isSectionHeader: Bool
     let isPrimaryLibrary: Bool
     var scope: SidebarScope?
+    private(set) var clickedDisclosure = false
     private var isExpanded: Bool
     private var isHovering = false
     private var isPressing = false
@@ -2641,6 +2644,8 @@ private final class SidebarTreeRowButton: NSButton {
     }
 
     override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        clickedDisclosure = hasChildren && disclosureHitRect.contains(point)
         isPressing = true
         needsDisplay = true
         super.mouseDown(with: event)
@@ -2704,6 +2709,10 @@ private final class SidebarTreeRowButton: NSButton {
         ]
         let attributed = NSAttributedString(string: symbol, attributes: attributes)
         attributed.draw(at: NSPoint(x: CGFloat(10 + indent * 15), y: bounds.midY - attributed.size().height / 2 + 0.5))
+    }
+
+    private var disclosureHitRect: NSRect {
+        NSRect(x: CGFloat(indent * 15), y: 0, width: 44, height: bounds.height)
     }
 
     private func drawLabel() {
