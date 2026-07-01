@@ -2645,37 +2645,24 @@ private final class SidebarTreeRowButton: NSButton {
             return
         }
 
-        var rect = bounds.insetBy(dx: isPrimaryLibrary ? 1.5 : 3, dy: 3)
+        var rect = bounds.insetBy(dx: 3, dy: 3)
         if isPressing {
             rect = rect.offsetBy(dx: 1, dy: -1)
         }
-        if isPrimaryLibrary || isSelectedRow || isPressing {
+        if isSelectedRow || isPressing {
             let radius = min(12, rect.height / 2.6)
             let surface = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-            if isSelectedRow {
-                NSGraphicsContext.saveGraphicsState()
-                let shadow = NSShadow()
-                shadow.shadowColor = Self.black.withAlphaComponent(0.18)
-                shadow.shadowOffset = NSSize(width: 0, height: -1)
-                shadow.shadowBlurRadius = 4
-                shadow.set()
-                Self.cream.setFill()
-                surface.fill()
-                NSGraphicsContext.restoreGraphicsState()
-            }
-            if isSelectedRow {
-                Self.cream.setFill()
-            } else if isPrimaryLibrary {
-                Self.white.withAlphaComponent(isPressing ? 0.18 : 0.14).setFill()
-            } else {
-                Self.white.withAlphaComponent(isPressing ? 0.13 : 0.09).setFill()
-            }
+            let shadowRect = rect.offsetBy(dx: 3, dy: 3)
+            let shadow = NSBezierPath(roundedRect: shadowRect, xRadius: radius, yRadius: radius)
+
+            Self.navy.setFill()
+            shadow.fill()
+
+            Self.white.setFill()
             surface.fill()
-            if isSelectedRow || isPrimaryLibrary {
-                (isSelectedRow ? Self.black.withAlphaComponent(0.18) : Self.cream.withAlphaComponent(0.72)).setStroke()
-                surface.lineWidth = isSelectedRow ? 1.1 : 1
-                surface.stroke()
-            }
+            Self.black.setStroke()
+            surface.lineWidth = 1
+            surface.stroke()
         }
 
         drawDisclosure()
@@ -2698,7 +2685,7 @@ private final class SidebarTreeRowButton: NSButton {
         let symbol = isExpanded ? "▾" : "▸"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11, weight: .bold),
-            .foregroundColor: isSelectedRow ? Self.black.withAlphaComponent(0.76) : Self.cream.withAlphaComponent(0.86)
+            .foregroundColor: isSelectedRow ? Self.black : Self.cream.withAlphaComponent(0.86)
         ]
         let attributed = NSAttributedString(string: symbol, attributes: attributes)
         attributed.draw(at: NSPoint(x: CGFloat(10 + indent * 15), y: bounds.midY - attributed.size().height / 2 + 0.5))
