@@ -414,7 +414,7 @@ final class DesktopWindowController: NSWindowController, NSTableViewDataSource, 
         sidebarScrollView.autohidesScrollers = true
         sidebarScrollView.scrollerStyle = .overlay
 
-        let sidebarDocumentView = NSView()
+        let sidebarDocumentView = SidebarScrollDocumentView()
         sidebarDocumentView.translatesAutoresizingMaskIntoConstraints = false
         sidebarDocumentView.addSubview(sidebarStack)
         sidebarScrollView.documentView = sidebarDocumentView
@@ -2726,5 +2726,11 @@ private final class SidebarBackgroundView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.setFill()
         bounds.fill()
+    }
+}
+
+private final class SidebarScrollDocumentView: NSView {
+    override var isFlipped: Bool {
+        true
     }
 }
