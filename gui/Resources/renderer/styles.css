@@ -17,9 +17,17 @@
   --cream: #F2E3B6;
   --navy: #13284B;
   --control-radius: 12px;
+  --control-inner-radius: 8px;
+  --menu-popover-radius: 20px;
   --control-border: 1.5px solid var(--black);
   --control-shadow: 3px 3px 0 var(--black);
   --control-shadow-small: 2px 2px 0 var(--black);
+  --card-shadow:
+    3px 3px 0 var(--black),
+    0 12px 24px -18px rgba(0, 0, 0, 0.48);
+  --card-shadow-hover:
+    4px 4px 0 var(--black),
+    0 16px 30px -18px rgba(0, 0, 0, 0.56);
   --control-active: var(--cream);
   --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
   --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -229,7 +237,20 @@ time {
   cursor: pointer;
   overflow: visible;
   box-shadow: var(--control-shadow-small);
-  transition: transform 90ms ease, box-shadow 90ms ease, background 90ms ease;
+  transform-origin: center;
+  transition-property: transform, box-shadow, background-color;
+  transition-duration: var(--dur-press);
+  transition-timing-function: var(--ease-out);
+}
+
+.action-btn::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(44px, 100%);
+  height: max(44px, 100%);
+  transform: translate(-50%, -50%);
 }
 
 .action-icon {
@@ -256,7 +277,7 @@ time {
 }
 
 .action-btn:active {
-  transform: translate(2px, 2px);
+  transform: translate(2px, 2px) scale(0.96);
   box-shadow: 2px 2px 0 var(--black);
 }
 
@@ -327,7 +348,7 @@ details.advanced[open] > summary::before {
   width: 280px;
   padding: 16px;
   border: var(--control-border);
-  border-radius: var(--control-radius);
+  border-radius: var(--menu-popover-radius);
   background: #fbf4e2;
   color: var(--black);
   box-shadow: var(--control-shadow);
@@ -344,15 +365,18 @@ details.advanced[open] > summary::before {
 }
 
 .sort-option {
-  min-height: 34px;
+  min-height: 40px;
   padding: 0 10px;
   border: 2px solid var(--black);
-  border-radius: 8px;
+  border-radius: var(--control-inner-radius);
   background: var(--white);
   color: var(--black);
   font: 750 12px var(--sans);
   text-align: left;
   cursor: pointer;
+  transition-property: background-color, color, transform;
+  transition-duration: var(--dur-hover);
+  transition-timing-function: var(--ease-out);
 }
 
 .sort-option:hover {
@@ -364,6 +388,10 @@ details.advanced[open] > summary::before {
   color: var(--white);
 }
 
+.sort-option:active {
+  transform: scale(0.96);
+}
+
 .capture-card {
   position: relative;
   width: 100%;
@@ -372,13 +400,16 @@ details.advanced[open] > summary::before {
   grid-template-rows: minmax(0, 1fr) auto;
   gap: 18px;
   padding: 28px 24px 22px;
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   border: 2px solid var(--black);
   background: rgba(19, 40, 75, 0.85);
-  box-shadow: 3px 3px 0 var(--black);
+  box-shadow: var(--card-shadow);
   color: var(--white);
   cursor: pointer;
-  transition: transform 120ms ease, background 120ms ease;
+  transform-origin: center;
+  transition-property: transform, background-color, box-shadow;
+  transition-duration: var(--dur-press);
+  transition-timing-function: var(--ease-out);
 }
 
 /* Edit mode: reveal the per-card delete control. */
@@ -401,7 +432,9 @@ details.advanced[open] > summary::before {
   line-height: 1;
   cursor: pointer;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-  transition: transform 90ms ease, background 90ms ease;
+  transition-property: transform, background-color, box-shadow;
+  transition-duration: var(--dur-press);
+  transition-timing-function: var(--ease-out);
 }
 
 .card-row.editing .card-delete {
@@ -417,10 +450,14 @@ details.advanced[open] > summary::before {
   transform: scale(1.06);
 }
 
+.card-delete:active {
+  transform: scale(0.96);
+}
+
 .card-favorite {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 6px;
+  right: 6px;
   z-index: 2;
   width: 28px;
   height: 28px;
@@ -437,7 +474,9 @@ details.advanced[open] > summary::before {
     1px 0 0 var(--black),
     0 -1px 0 var(--black),
     -1px 0 0 var(--black);
-  transition: transform var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out);
+  transition-property: transform, color;
+  transition-duration: var(--dur-hover);
+  transition-timing-function: var(--ease-out);
 }
 
 .card-favorite.active,
@@ -451,6 +490,10 @@ details.advanced[open] > summary::before {
   outline: none;
 }
 
+.card-favorite:active {
+  transform: scale(0.96);
+}
+
 .card-row.editing .capture-card {
   cursor: default;
 }
@@ -459,7 +502,12 @@ details.advanced[open] > summary::before {
 .capture-card:focus-visible {
   transform: translateY(-2px);
   background: rgba(19, 40, 75, 0.92);
+  box-shadow: var(--card-shadow-hover);
   outline: none;
+}
+
+.capture-card:active {
+  transform: translateY(0) scale(0.96);
 }
 
 .card-copy {
@@ -479,6 +527,7 @@ details.advanced[open] > summary::before {
   line-height: 1.18;
   font-weight: 780;
   letter-spacing: 0;
+  text-wrap: balance;
 }
 
 time {
@@ -496,7 +545,7 @@ time {
   align-self: start;
   max-width: 360px;
   border: 2px solid var(--white);
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   background: rgba(19, 40, 75, 0.85);
   padding: 18px;
   color: var(--white);
@@ -523,7 +572,7 @@ time {
   justify-items: center;
   gap: 14px;
   border: var(--control-border);
-  border-radius: 18px;
+  border-radius: 24px;
   background: var(--white);
   color: var(--black);
   padding: 11px 38px 37px;
@@ -560,7 +609,7 @@ time {
   min-height: 46px;
   padding: 10px 16px;
   border: var(--control-border);
-  border-radius: 12px;
+  border-radius: var(--control-radius);
   background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--control-shadow-small);
   text-align: left;
@@ -1093,7 +1142,7 @@ time {
 .topic-chip,
 .card-favorite,
 .card-delete {
-  transition-property: transform, background, box-shadow;
+  transition-property: transform, background-color, box-shadow, color;
   transition-duration: var(--dur-press);
   transition-timing-function: var(--ease-out);
 }
