@@ -2709,17 +2709,32 @@ private final class SidebarTreeRowButton: NSButton {
             .foregroundColor: isSelectedRow ? Self.black : Self.cream.withAlphaComponent(0.86)
         ]
         let attributed = NSAttributedString(string: symbol, attributes: attributes)
-        attributed.draw(at: NSPoint(x: CGFloat(10 + indent * 15), y: bounds.midY - attributed.size().height / 2 + 0.5))
+        let size = attributed.size()
+        attributed.draw(at: NSPoint(x: glyphCenter.x - size.width / 2, y: glyphCenter.y - size.height / 2 + 0.5))
     }
 
     private func drawPinnedMarker() {
         guard scope == .favorites else { return }
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9, weight: .bold),
-            .foregroundColor: isSelectedRow ? Self.black : Self.cream.withAlphaComponent(0.86)
-        ]
-        let attributed = NSAttributedString(string: "★", attributes: attributes)
-        attributed.draw(at: NSPoint(x: CGFloat(10 + indent * 15), y: bounds.midY - attributed.size().height / 2 + 0.5))
+        let center = glyphCenter
+        let outerRadius: CGFloat = 4
+        let innerRadius: CGFloat = 1.9
+        let path = NSBezierPath()
+        for index in 0..<10 {
+            let angle = (-CGFloat.pi / 2) + CGFloat(index) * CGFloat.pi / 5
+            let radius = index.isMultiple(of: 2) ? outerRadius : innerRadius
+            let point = NSPoint(
+                x: center.x + cos(angle) * radius,
+                y: center.y + sin(angle) * radius
+            )
+            index == 0 ? path.move(to: point) : path.line(to: point)
+        }
+        path.close()
+        (isSelectedRow ? Self.black : Self.cream.withAlphaComponent(0.86)).setFill()
+        path.fill()
+    }
+
+    private var glyphCenter: NSPoint {
+        NSPoint(x: CGFloat(13 + indent * 15), y: bounds.midY + 0.5)
     }
 
     private var disclosureHitRect: NSRect {
