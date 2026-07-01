@@ -2686,6 +2686,7 @@ private final class SidebarTreeRowButton: NSButton {
         }
 
         drawDisclosure()
+        drawPinnedMarker()
         drawLabel()
     }
 
@@ -2709,6 +2710,16 @@ private final class SidebarTreeRowButton: NSButton {
         ]
         let attributed = NSAttributedString(string: symbol, attributes: attributes)
         attributed.draw(at: NSPoint(x: CGFloat(10 + indent * 15), y: bounds.midY - attributed.size().height / 2 + 0.5))
+    }
+
+    private func drawPinnedMarker() {
+        guard scope == .favorites else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9, weight: .bold),
+            .foregroundColor: isSelectedRow ? Self.black : Self.cream.withAlphaComponent(0.86)
+        ]
+        let attributed = NSAttributedString(string: "★", attributes: attributes)
+        attributed.draw(at: NSPoint(x: 9, y: bounds.midY - attributed.size().height / 2 + 0.5))
     }
 
     private var disclosureHitRect: NSRect {
