@@ -2657,7 +2657,6 @@ private final class SidebarTreeRowButton: NSButton {
 
         drawDisclosure()
         drawLabel()
-        drawCount()
     }
 
     private func drawSectionHeader() {
@@ -2684,15 +2683,7 @@ private final class SidebarTreeRowButton: NSButton {
 
     private func drawLabel() {
         let x = CGFloat(12 + indent * 15 + (hasChildren ? 17 : 0))
-        let countWidth: CGFloat
-        if let count {
-            countWidth = NSAttributedString(
-                string: "\(count)",
-                attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)]
-            ).size().width + 26
-        } else {
-            countWidth = 12
-        }
+        let trailingPadding: CGFloat = 12
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         let fontSize: CGFloat = isPrimaryLibrary ? 14.5 : 12.5
@@ -2703,29 +2694,8 @@ private final class SidebarTreeRowButton: NSButton {
             .paragraphStyle: paragraph
         ]
         let text = NSAttributedString(string: rowLabel, attributes: attributes)
-        let maxWidth = max(20, bounds.width - x - countWidth)
+        let maxWidth = max(20, bounds.width - x - trailingPadding)
         text.draw(in: NSRect(x: x, y: bounds.midY - text.size().height / 2, width: maxWidth, height: text.size().height))
-    }
-
-    private func drawCount() {
-        guard let count else { return }
-        let text = "\(count)"
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: isSelectedRow ? Self.black.withAlphaComponent(0.72) : Self.cream.withAlphaComponent(0.82)
-        ]
-        let attributed = NSAttributedString(string: text, attributes: attributes)
-        let size = attributed.size()
-        let pillRect = NSRect(
-            x: bounds.maxX - size.width - 19,
-            y: bounds.midY - 10,
-            width: size.width + 12,
-            height: 20
-        )
-        let pill = NSBezierPath(roundedRect: pillRect, xRadius: 10, yRadius: 10)
-        (isSelectedRow ? Self.black.withAlphaComponent(0.08) : Self.black.withAlphaComponent(0.16)).setFill()
-        pill.fill()
-        attributed.draw(at: NSPoint(x: pillRect.midX - size.width / 2, y: pillRect.midY - size.height / 2))
     }
 }
 
