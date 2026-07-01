@@ -2719,7 +2719,7 @@ private final class SidebarTreeRowButton: NSButton {
             .foregroundColor: isSelectedRow ? Self.black : Self.cream.withAlphaComponent(0.86)
         ]
         let attributed = NSAttributedString(string: "★", attributes: attributes)
-        attributed.draw(at: NSPoint(x: 9, y: bounds.midY - attributed.size().height / 2 + 0.5))
+        attributed.draw(at: NSPoint(x: CGFloat(10 + indent * 15), y: bounds.midY - attributed.size().height / 2 + 0.5))
     }
 
     private var disclosureHitRect: NSRect {
@@ -2727,7 +2727,8 @@ private final class SidebarTreeRowButton: NSButton {
     }
 
     private func drawLabel() {
-        let x = CGFloat(12 + indent * 15 + (hasChildren ? 17 : 0))
+        let hasLeadingGlyph = hasChildren || scope == .favorites
+        let x = CGFloat(12 + indent * 15 + (hasLeadingGlyph ? 17 : 0))
         let trailingPadding: CGFloat = 12
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
